@@ -1,0 +1,15 @@
+[submodule "external/imgui"]
+	path = external/imgui
+	url = https://github.com/ocornut/imgui
+[submodule "external/OpenXR-SDK"]
+	path = external/OpenXR-SDK
+	url = https://github.com/KhronosGroup/OpenXR-SDK
+[submodule "external/cpp-httplib"]
+	path = external/cpp-httplib
+	url = https://github.com/yhirose/cpp-httplib
+[submodule "external/json"]
+	path = external/json
+	url = https://github.com/nlohmann/json
+[submodule "external/fmt"]
+	path = external/fmt
+	url = https://github.com/fmtlib/fmt

@@ -1,0 +1,88 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.2'
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+apply plugin: 'com.android.application'
+
+def properties = new Properties();
+properties.load(project.rootProject.file('local.properties').newDataInputStream())
+def ovr_openxr_mobile_sdk_dir = properties.getProperty('ovr_openxr_mobile_sdk.dir')
+def gstreamer_sdk_dir = properties.getProperty('gstreamer_sdk.dir')
+def boost_dir = properties.getProperty('boost.dir')
+
+android {
+    compileSdkVersion 34
+    buildToolsVersion "34.0.0"
+    ndkVersion "21.4.7075529"
+    namespace "cz.but.telepresence"
+
+    defaultConfig {
+        applicationId "cz.but.telepresence"
+        // for Vulkan, need at least 24
+        minSdkVersion 24
+        compileSdkVersion 26
+
+        versionName = "1.0"
+        versionCode = 1
+
+        externalNativeBuild {
+            ndk {
+                //noinspection ChromeOsAbiSupport
+                abiFilters 'arm64-v8a'
+            }
+            cmake {
+                arguments "-DOVR_OPENXR_MOBILE_SDK_DIR:STRING=${ovr_openxr_mobile_sdk_dir}"
+                arguments "-DGSTREAMER_SDK_DIR:STRING=${gstreamer_sdk_dir}"
+                arguments "-DBOOST_DIR:STRING=${boost_dir}"
+                arguments "-DANDROID_STL=c++_shared"
+                cppFlags ''
+            }
+        }
+    }
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            res.srcDir 'android_resources'
+            java.srcDirs = ['java']
+        }
+        OpenGLES {
+            res.srcDir 'android_resources/opengles'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("CMakeLists.txt")
+        }
+    }
+
+    flavorDimensions 'api'
+
+    productFlavors {
+        OpenGLES {
+            dimension 'api'
+            applicationIdSuffix '.opengles'
+            externalNativeBuild.cmake.cppFlags '-DDEFAULT_GRAPHICS_PLUGIN_OPENGLES'
+
+            resValue "string", "app_name", "BUT Telepresence (Opengl ES)"
+        }
+    }
+}
+
