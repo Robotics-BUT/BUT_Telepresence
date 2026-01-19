@@ -23,7 +23,7 @@ def boost_dir = properties.getProperty('boost.dir')
 
 android {
     compileSdkVersion 34
-    buildToolsVersion "34.0.0"
+    buildToolsVersion "35.0.0"
     ndkVersion "21.4.7075529"
     namespace "cz.but.telepresence"
 
