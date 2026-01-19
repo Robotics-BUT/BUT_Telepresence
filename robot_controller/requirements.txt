@@ -1,0 +1,2 @@
+PyYAML>=6.0.1
+influxdb3-python>=0.17.0

@@ -31,3 +31,12 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+
+build*
+cmake-build*
+.idea/*
+.venv/
+venv/
+__pycache/*
+

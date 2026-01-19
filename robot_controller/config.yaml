@@ -1,0 +1,55 @@
+# Robot Controller Relay Service Configuration
+# Copy this file to config.yaml and adjust values as needed
+
+# Network Configuration
+network:
+  # Ingest socket - receives commands from external controllers
+  ingest:
+    host: "0.0.0.0"        # Listen on all interfaces
+    port: 32115            # UDP port for incoming commands
+
+  # Servo driver configuration
+  servo:
+    ip: "192.168.1.150"    # IP address of the servo driver
+    port: 502              # Port of the servo driver
+    response_timeout: 1.0  # Timeout for servo responses (seconds)
+    translator: "tg_drives"  # Servo translator type (tg_drives)
+
+  # Robot controller configuration
+  robot:
+    ip: "10.0.31.11"       # IP address of the robot controller
+    port: 5555             # Port of the robot controller
+    response_timeout: 0.5  # Timeout for robot responses (seconds)
+
+# TG Drives Servo Configuration
+tg_drives:
+  elevation_min: -2000000000 # Minimum elevation in motor units
+  elevation_max: 200000000   # Maximum elevation in motor units
+  azimuth_min: -600000000    # Minimum azimuth in motor units
+  azimuth_max: 1100000000    # Maximum azimuth in motor units
+  speed_max: 1000000         # Maximum servo speed
+  speed_multiplier: 1.5      # Speed multiplier for accelerated movement
+  filter_alpha: 0.15         # Low-pass filter (0-1, higher = less filtering)
+  swap_axes: true            # Swap azimuth and elevation axes (true/false)
+  invert_azimuth: true       # Invert azimuth direction (true/false)
+  invert_elevation: true     # Invert elevation direction (true/false)
+
+# Logging Configuration
+logging:
+  level: "DEBUG"            # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null               # Log file path, or null for stdout only
+  # file: "/var/log/robot_relay.log"  # Example log file path
+
+# Telemetry Configuration - InfluxDB + Grafana
+telemetry:
+  enabled: true           # Enable telemetry data collection
+  influxdb_host: "http://localhost:8181"
+  influxdb_database: "but_telepresence_telemetry"
+  influxdb_token: ""
+
+# Performance Configuration
+performance:
+  socket_buffer_size: 8192          # UDP socket buffer size (bytes)
+  max_consecutive_errors: 3          # Max errors before service restart
+  socket_error_backoff: 5.0          # Backoff time after socket errors (seconds)

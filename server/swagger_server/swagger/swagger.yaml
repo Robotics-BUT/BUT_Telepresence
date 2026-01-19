@@ -1,0 +1,259 @@
+openapi: 3.0.1
+info:
+  title: Camera Streaming API
+  description: API for controlling the camera streaming module.
+  version: 1.0.1
+servers:
+- url: /
+paths:
+  /api/v1/stream/start:
+    post:
+      summary: Start the video streaming with configuration.
+      operationId: api_v1_stream_start_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequiredStreamConfiguration'
+        required: true
+      responses:
+        "200":
+          description: Streaming started successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200'
+        "500":
+          description: An error occurred while starting the stream.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_500'
+      x-openapi-router-controller: swagger_server.controllers.default_controller
+  /api/v1/stream/stop:
+    post:
+      summary: Stop the video streaming.
+      operationId: api_v1_stream_stop_post
+      responses:
+        "200":
+          description: Streaming stopped successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200_1'
+        "500":
+          description: An error occurred while stopping the stream.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_500_1'
+      x-openapi-router-controller: swagger_server.controllers.default_controller
+  /api/v1/stream/update:
+    put:
+      summary: Update the stream configuration dynamically.
+      operationId: api_v1_stream_update_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/stream_update_body'
+        required: true
+      responses:
+        "200":
+          description: Configuration updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200_2'
+        "500":
+          description: An error occurred while updating the configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_500_2'
+      x-openapi-router-controller: swagger_server.controllers.default_controller
+  /api/v1/stream/state:
+    get:
+      summary: Get the current state of the video streaming.
+      operationId: api_v1_stream_state_get
+      responses:
+        "200":
+          description: State retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamState'
+        "500":
+          description: An error occurred while retrieving the state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_500_3'
+      x-openapi-router-controller: swagger_server.controllers.default_controller
+components:
+  schemas:
+    StreamConfiguration:
+      type: object
+      properties:
+        ip_address:
+          type: string
+          example: 192.168.1.100
+        port_left:
+          type: integer
+          example: 8554
+        port_right:
+          type: integer
+          example: 8556
+        codec:
+          type: string
+          example: JPEG
+          enum:
+          - H264
+          - H265
+          - VP8
+          - VP9
+          - JPEG
+        encoding_quality:
+          type: integer
+          example: 60
+        bitrate:
+          type: integer
+          example: 4000000
+        resolution:
+          $ref: '#/components/schemas/apiv1streamupdate_resolution'
+        video_mode:
+          type: string
+          example: stereo
+          enum:
+          - stereo
+          - mono
+        fps:
+          type: integer
+          example: 60
+    RequiredStreamConfiguration:
+      allOf:
+      - $ref: '#/components/schemas/StreamConfiguration'
+      - required:
+        - bitrate
+        - codec
+        - encoding_quality
+        - fps
+        - ip_address
+        - port_left
+        - port_right
+        - resolution
+        - video_mode
+        type: object
+    StreamState:
+      allOf:
+      - $ref: '#/components/schemas/StreamConfiguration'
+      - type: object
+        properties:
+          is_streaming:
+            type: boolean
+            example: true
+    inline_response_200:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Streaming started successfully.
+        state:
+          $ref: '#/components/schemas/StreamState'
+      example:
+        state: ""
+        message: Streaming started successfully.
+    inline_response_500:
+      type: object
+      properties:
+        error:
+          type: string
+          example: An error occurred while starting the stream.
+    inline_response_200_1:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Streaming stopped successfully.
+        state:
+          $ref: '#/components/schemas/StreamState'
+      example:
+        state: ""
+        message: Streaming stopped successfully.
+    inline_response_500_1:
+      type: object
+      properties:
+        error:
+          type: string
+          example: An error occurred while stopping the stream.
+    apiv1streamupdate_resolution:
+      type: object
+      properties:
+        width:
+          type: integer
+          example: 1920
+        height:
+          type: integer
+          example: 1080
+    stream_update_body:
+      type: object
+      properties:
+        ip_address:
+          type: string
+          example: 192.168.1.100
+        port_left:
+          type: integer
+          example: 8554
+        port_right:
+          type: integer
+          example: 8556
+        codec:
+          type: string
+          example: JPEG
+          enum:
+          - H264
+          - H265
+          - VP8
+          - VP9
+          - JPEG
+        encoding_quality:
+          type: integer
+          example: 60
+        bitrate:
+          type: integer
+          example: 4000000
+        resolution:
+          $ref: '#/components/schemas/apiv1streamupdate_resolution'
+        video_mode:
+          type: string
+          example: stereo
+          enum:
+          - stereo
+          - mono
+        fps:
+          type: integer
+          example: 60
+    inline_response_200_2:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Configuration updated successfully.
+        state:
+          $ref: '#/components/schemas/StreamState'
+      example:
+        state: ""
+        message: Configuration updated successfully.
+    inline_response_500_2:
+      type: object
+      properties:
+        error:
+          type: string
+          example: An error occurred while updating the configuration.
+    inline_response_500_3:
+      type: object
+      properties:
+        error:
+          type: string
+          example: An error occurred while retrieving the state.
+
