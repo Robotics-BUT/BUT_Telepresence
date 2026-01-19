@@ -526,6 +526,12 @@ void TelepresenceProgram::SendControllerDatagram() {
                                               userState_.thumbstickPose[Side::LEFT].x,
                                               threadPool_);
         }
+
+        // Send debug/validation information
+        if (appState_->cameraStreamingStates.first.stats) {
+            auto snapshot = appState_->cameraStreamingStates.first.stats->snapshot();
+            robotControlSender_->sendDebugInfo(snapshot, threadPool_);
+        }
     }
 }
 

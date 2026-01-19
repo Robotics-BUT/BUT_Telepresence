@@ -63,6 +63,20 @@ void RobotControlSender::sendRobotControl(float linearX, float linearY, float an
     });
 }
 
+void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &stats, BS::thread_pool<BS::tp::none> &threadPool) {
+    if (!isInitialized_) {
+        return;
+    }
+
+    threadPool.detach_task([this, stats]() {
+        // Get current timestamp
+        uint64_t timestamp = ntpTimer_->GetCurrentTimeUs();
+
+        // Send the packet
+        sendDebugInfoPacket(stats, timestamp);
+    });
+}
+
 void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp) {
     std::vector<uint8_t> packet;
     packet.reserve(21);
@@ -116,6 +130,37 @@ void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, fl
 
     if (sent < 0) {
         LOG_ERROR("RobotControlSender: Failed to send robot control packet - errno: %d", errno);
+    }
+}
+
+void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, uint64_t timestamp) {
+    std::vector<uint8_t> packet;
+    packet.reserve(98);
+
+    // Message type
+    packet.push_back(MSG_DEBUG_INFO);
+
+    serializeLittleEndian(packet, timestamp);
+    serializeLittleEndian(packet, stats.frameId);
+    serializeLittleEndian(packet, stats.fps);
+
+    serializeLittleEndian(packet, stats.vidConv);
+    serializeLittleEndian(packet, stats.enc);
+    serializeLittleEndian(packet, stats.rtpPay);
+    serializeLittleEndian(packet, stats.udpStream);
+    serializeLittleEndian(packet, stats.rtpDepay);
+    serializeLittleEndian(packet, stats.dec);
+    serializeLittleEndian(packet, stats.presentation);
+
+    serializeLittleEndian(packet, ntpTimer_->GetSmoothedOffsetUs());
+    packet.push_back(ntpTimer_->HasInitialOffset() ? 1 : 0);
+    serializeLittleEndian(packet, ntpTimer_->GetTimeSinceLastSyncUs());
+
+    ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
+                          (sockaddr*)&destAddr_, sizeof(destAddr_));
+
+    if (sent < 0) {
+        LOG_ERROR("RobotControlSender: Failed to send debug info packet - errno: %d", errno);
     }
 }
 

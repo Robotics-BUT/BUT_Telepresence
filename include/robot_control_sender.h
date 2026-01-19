@@ -24,6 +24,12 @@
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
  *
+ * Message Type 0x03 - Debug Info (78 bytes):
+ *   [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (float)]
+ *   [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)] [udpStream_us (uint64)]
+ *   [rtpDepay_us (uint64)] [dec_us (uint64)] [presentation_us (uint64)]
+ *   [ntp_offset_us (int64)] [ntp_synced (uint8)] [time_since_ntp_sync_us (uint64)]
+ *
  * This simple protocol allows the receiving server to implement its own
  * robot-specific control logic without coupling the VR headset to specific hardware.
  */
@@ -39,6 +45,9 @@ public:
 
     // Send robot control commands (for mobile base control)
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);
+
+    // Send debug/validation information
+    void sendDebugInfo(const CameraStatsSnapshot &stats, BS::thread_pool<BS::tp::none> &threadPool);
 
 private:
     struct AzimuthElevation {
@@ -58,6 +67,7 @@ private:
 
     void sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp);
     void sendRobotControlPacket(float linearX, float linearY, float angular, uint64_t timestamp);
+    void sendDebugInfoPacket(const CameraStatsSnapshot &stats, uint64_t timestamp);
 
     int socket_{-1};
     struct sockaddr_in destAddr_{};
@@ -67,4 +77,5 @@ private:
     // Message types
     static constexpr uint8_t MSG_HEAD_POSE = 0x01;
     static constexpr uint8_t MSG_ROBOT_CONTROL = 0x02;
+    static constexpr uint8_t MSG_DEBUG_INFO = 0x03;
 };

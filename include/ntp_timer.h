@@ -22,6 +22,13 @@ public:
 
     [[nodiscard]] uint64_t GetCurrentTimeUs() const;
 
+    // Debug/validation methods
+    [[nodiscard]] int64_t GetSmoothedOffsetUs() const { return smoothedOffsetUs_; }
+    [[nodiscard]] bool HasInitialOffset() const { return hasInitialOffset_; }
+    [[nodiscard]] uint64_t GetTimeSinceLastSyncUs() const {
+        return GetCurrentTimeUsNonAdjusted() - lastSyncedTimestampLocal_;
+    }
+
 private:
     void SyncWithServer(boost::asio::io_context& io);
 
