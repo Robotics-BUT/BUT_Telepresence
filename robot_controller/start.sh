@@ -38,6 +38,9 @@ if [ ! -f "config.yaml" ]; then
     exit 1
 fi
 
+echo "Serving the database..."
+influxdb3 serve --without-auth --node-id=but_telepresence_telemetry &
+
 # Run the service
 echo "Starting Robot Controller Relay Service..."
 echo "Press Ctrl+C to stop"
