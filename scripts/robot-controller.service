@@ -3,7 +3,8 @@ Description="Service that handles movement and logging of the telepresence robot
 After=network.target
 
 [Service]
-ExecStart=/bin/bash -c 'cd /home/defuser/BUT_Telepresence/robot_controller && ./start.sh'
+WorkingDirectory=/home/defuser/BUT_Telepresence/robot_controller
+ExecStart=./start.sh
 Restart=on-failure
 RestartSec=5s
 
