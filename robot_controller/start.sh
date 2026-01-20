@@ -41,8 +41,16 @@ fi
 echo "Cleaning WAL from previous unclean shutdown..."
 rm -rf ~/.influxdb/but_telepresence_telemetry/wal/*
 
+# Find influxdb3 binary
+INFLUXDB3_BIN="${HOME}/.influxdb/influxdb3"
+if [ ! -x "$INFLUXDB3_BIN" ]; then
+    echo "ERROR: influxdb3 not found at $INFLUXDB3_BIN"
+    echo "Please install influxdb3 first."
+    exit 1
+fi
+
 echo "Serving the database..."
-influxdb3 serve --without-auth --node-id=but_telepresence_telemetry &
+"$INFLUXDB3_BIN" serve --without-auth --node-id=but_telepresence_telemetry &
 INFLUX_PID=$!
 
 # Wait for InfluxDB to be ready
