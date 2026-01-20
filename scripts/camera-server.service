@@ -3,8 +3,10 @@ Description="REST API for the stereo camera stream"
 After=network.target
 
 [Service]
+User=defuser
+Environment="HOME=/home/defuser"
 WorkingDirectory=/home/defuser/BUT_Telepresence/server
-ExecStart=venv/bin/python3 -m swagger_server
+ExecStart=/home/defuser/BUT_Telepresence/server/venv/bin/python3 -m swagger_server
 Restart=on-failure
 RestartSec=5s
 

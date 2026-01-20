@@ -3,8 +3,10 @@ Description="Service that handles movement and logging of the telepresence robot
 After=network.target
 
 [Service]
+User=defuser
+Environment="HOME=/home/defuser"
 WorkingDirectory=/home/defuser/BUT_Telepresence/robot_controller
-ExecStart=./start.sh
+ExecStart=/home/defuser/BUT_Telepresence/robot_controller/start.sh
 Restart=on-failure
 RestartSec=5s
 
