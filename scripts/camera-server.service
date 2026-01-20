@@ -1,0 +1,11 @@
+[Unit]
+Description="REST API for the stereo camera stream"
+After=network.target
+
+[Service]
+ExecStart=/bin/bash -c 'cd /home/defuser/BUT_Telepresence/server && venv/bin/python3 -m swagger_server'
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
