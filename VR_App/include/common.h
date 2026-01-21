@@ -369,7 +369,7 @@ private:
 struct CameraStatsSnapshot {
     double prevTimestamp, currTimestamp;
     double fps;
-    uint64_t vidConv, enc, rtpPay, udpStream, rtpDepay, dec, queue;
+    uint64_t camera, vidConv, enc, rtpPay, udpStream, rtpDepay, dec, queue;
     uint64_t rtpPayTimestamp, udpSrcTimestamp, rtpDepayTimestamp, decTimestamp, queueTimestamp;
     uint64_t totalLatency;
     uint64_t frameId;
@@ -381,7 +381,7 @@ struct CameraStatsSnapshot {
 struct CameraStats {
     std::atomic<double> prevTimestamp{0.0}, currTimestamp{0.0};
     std::atomic<double> fps{0.0};
-    std::atomic<uint64_t> vidConv{0}, enc{0}, rtpPay{0}, udpStream{0}, rtpDepay{0}, dec{0}, queue{0};
+    std::atomic<uint64_t> camera{0}, vidConv{0}, enc{0}, rtpPay{0}, udpStream{0}, rtpDepay{0}, dec{0}, queue{0};
     std::atomic<uint64_t> rtpPayTimestamp{0}, udpSrcTimestamp{0}, rtpDepayTimestamp{0}, decTimestamp{0}, queueTimestamp{0};
     std::atomic<uint64_t> totalLatency{0};
     std::atomic<uint64_t> frameId{0};
@@ -399,7 +399,7 @@ struct CameraStats {
         return CameraStatsSnapshot{
             prevTimestamp.load(), currTimestamp.load(),
             fps.load(),
-            vidConv.load(), enc.load(), rtpPay.load(), udpStream.load(),
+            camera.load(), vidConv.load(), enc.load(), rtpPay.load(), udpStream.load(),
             rtpDepay.load(), dec.load(), queue.load(),
             rtpPayTimestamp.load(), udpSrcTimestamp.load(), rtpDepayTimestamp.load(),
             decTimestamp.load(), queueTimestamp.load(),
@@ -434,6 +434,7 @@ struct CameraStats {
             avg.prevTimestamp += snap.prevTimestamp;
             avg.currTimestamp += snap.currTimestamp;
             avg.fps += snap.fps;
+            avg.camera += snap.camera;
             avg.vidConv += snap.vidConv;
             avg.enc += snap.enc;
             avg.rtpPay += snap.rtpPay;
@@ -450,6 +451,7 @@ struct CameraStats {
         avg.prevTimestamp /= count;
         avg.currTimestamp /= count;
         avg.fps /= count;
+        avg.camera /= count;
         avg.vidConv /= count;
         avg.enc /= count;
         avg.rtpPay /= count;

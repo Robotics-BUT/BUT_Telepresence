@@ -215,15 +215,14 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState) {
         if (s) {
             // Get averaged snapshot over last 50 frames for smoother display
             auto snapshot = s->averagedSnapshot();
-            double cameraExposing = 1000000.0f / snapshot.fps;
             ImGui::Text(
                     "camera: %lu, vidConv: %lu, enc: %lu, rtpPay: %lu\nudpStream: %lu\nrtpDepay: %lu, dec: %lu, display: %lu",
-                    long(cameraExposing / 1000),
+                    snapshot.camera / 1000,
                     snapshot.vidConv / 1000, snapshot.enc / 1000, snapshot.rtpPay / 1000,
                     snapshot.udpStream / 1000, snapshot.rtpDepay / 1000, snapshot.dec / 1000,
                     snapshot.presentation / 1000);
             ImGui::Text("In Total: %lu: \n",
-                        (long(cameraExposing) + snapshot.vidConv + snapshot.enc + snapshot.rtpPay +
+                        (snapshot.camera + snapshot.vidConv + snapshot.enc + snapshot.rtpPay +
                          snapshot.udpStream +
                          snapshot.rtpDepay + snapshot.dec + snapshot.presentation) / 1000);
         }
