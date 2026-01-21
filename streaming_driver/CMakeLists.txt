@@ -10,8 +10,6 @@ pkg_search_module(GSTREAMER_RTP REQUIRED gstreamer-rtp-1.0)
 
 add_definitions(${GSTREAMER_CFLAGS_OTHER})
 
-add_definitions(-DJETSON)
-
 add_executable(telepresence_streaming_driver main.cpp)
 target_compile_definitions(telepresence_streaming_driver PRIVATE STREAMING)
 

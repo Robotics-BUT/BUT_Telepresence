@@ -7,15 +7,72 @@
 #include <vector>
 #include <exception>
 #include <gst/rtp/gstrtpbuffer.h>
+#include <string_view>
 
-inline std::map<std::string, std::vector<long> > timestampsStreaming;
-inline std::map<std::string, std::vector<long> > timestampsStreamingFiltered;
-static inline uint16_t cameraLeftFrameId = 0, cameraRightFrameId = 0;
-inline bool cameraLeftFrameIdIncremented = false, cameraRightFrameIdIncremented = false;
+// ============================================================================
+// Constants
+// ============================================================================
 
-inline uint64_t lastCameraFrameTimeLeft = 0, lastCameraFrameTimeRight = 0;
+namespace PipelineNames {
+    constexpr std::string_view LEFT = "pipeline_left";
+    constexpr std::string_view RIGHT = "pipeline_right";
+}
 
-inline bool finishing = false;
+namespace IdentityNames {
+    constexpr std::string_view CAMERA_SRC = "camsrc_ident";
+    constexpr std::string_view VIDEO_CONVERT = "vidconv_ident";
+    constexpr std::string_view ENCODER = "enc_ident";
+    constexpr std::string_view RTP_PAYLOADER = "rtppay_ident";
+}
+
+// Pipeline stages in order (indices for timestamp arrays)
+enum class Stage : size_t {
+    CAMERA_SRC = 0,
+    VIDEO_CONVERT = 1,
+    ENCODER = 2,
+    RTP_PAYLOADER = 3
+};
+
+// ============================================================================
+// Per-Pipeline State
+// ============================================================================
+
+struct PipelineState {
+    uint16_t frameId = 0;
+    bool frameIdIncremented = false;
+    uint64_t lastCameraFrameTime = 0;
+    uint64_t cameraFrameDuration = 0;
+
+    uint16_t getAndIncrementFrameId() {
+        frameIdIncremented = true;
+        return frameId++;
+    }
+
+    void markFrameSent() {
+        frameIdIncremented = false;
+    }
+
+    void updateCameraFrameDuration(uint64_t currentTime) {
+        if (lastCameraFrameTime != 0) {
+            cameraFrameDuration = currentTime - lastCameraFrameTime;
+        }
+        lastCameraFrameTime = currentTime;
+    }
+};
+
+// ============================================================================
+// Global State
+// ============================================================================
+
+// Timestamps collected during current frame processing for each pipeline
+inline std::map<std::string, std::vector<long>> timestampsStreaming;
+
+// Per-pipeline state for left and right cameras
+inline std::map<std::string, PipelineState> pipelineStates;
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
 inline uint64_t GetCurrentUs() {
     using namespace std::chrono;
@@ -25,89 +82,92 @@ inline uint64_t GetCurrentUs() {
     return static_cast<uint64_t>(res.tv_sec) * 1'000'000 + res.tv_nsec / 1000;
 }
 
-inline uint16_t GetFrameId(const std::string &pipelineName) {
-    return pipelineName == "pipeline_left" ? cameraLeftFrameId : cameraRightFrameId;
+inline PipelineState& GetState(const std::string& pipelineName) {
+    return pipelineStates[pipelineName];
 }
 
-inline uint16_t IncrementFrameId(const std::string &pipelineName) {
-    if (pipelineName == "pipeline_left") {
-        cameraLeftFrameIdIncremented = true;
-        return cameraLeftFrameId++;
-    } else {
-        cameraRightFrameIdIncremented = true;
-        return cameraRightFrameId++;
-    }
-}
+// ============================================================================
+// Event Handlers
+// ============================================================================
 
-inline bool IsFrameIncremented(const std::string &pipelineName) {
-    return pipelineName == "pipeline_left" ? cameraLeftFrameIdIncremented : cameraRightFrameIdIncremented;
-}
+inline void HandleCameraSourceEvent(const std::string& pipelineName, uint64_t currentTime) {
+    auto& state = GetState(pipelineName);
 
-inline void FrameSent(const std::string &pipelineName) {
-    pipelineName == "pipeline_left" ? cameraLeftFrameIdIncremented = false : cameraRightFrameIdIncremented = false;
-}
+    // Calculate frame duration (time between consecutive frames)
+    state.updateCameraFrameDuration(currentTime);
 
-inline void OnIdentityHandoffCameraStreaming(const GstElement *identity, GstBuffer *buffer, gpointer data) {
-    if (finishing) { return; }
-    const auto timeMicro = GetCurrentUs();
-
-    const std::string pipelineName = identity->object.parent->name;
-
-    // Calculate camera frame duration (inverse of framerate)
-    static uint64_t cameraFrameDurationLeft = 0, cameraFrameDurationRight = 0;
-    if (std::string(identity->object.name) == "camsrc_ident") {
-        if (pipelineName == "pipeline_left") {
-            if (lastCameraFrameTimeLeft != 0) {
-                cameraFrameDurationLeft = timeMicro - lastCameraFrameTimeLeft;
-            }
-            lastCameraFrameTimeLeft = timeMicro;
-        } else if (pipelineName == "pipeline_right") {
-            if (lastCameraFrameTimeRight != 0) {
-                cameraFrameDurationRight = timeMicro - lastCameraFrameTimeRight;
-            }
-            lastCameraFrameTimeRight = timeMicro;
-        }
-    }
-
-    if (std::string(identity->object.name) == "camsrc_ident" && !timestampsStreaming[pipelineName].empty()) {
-        // Frame successfully sent, new one just got into the pipeline
+    // If we have timestamps from previous frame, mark it as sent
+    if (!timestampsStreaming[pipelineName].empty()) {
         timestampsStreaming[pipelineName].clear();
-        FrameSent(pipelineName);
+        state.markFrameSent();
+    }
+}
+
+inline void AddRtpHeaderMetadata(GstBuffer* buffer, const std::string& pipelineName) {
+    auto& state = GetState(pipelineName);
+
+    // Only process first RTP packet per frame
+    if (state.frameIdIncremented) {
+        return;
     }
 
-    timestampsStreaming[pipelineName].emplace_back(timeMicro);
+    auto& currentTimestamps = timestampsStreaming[pipelineName];
 
-    // Add metadata to the RTP header on the first call of rtpjpegpay
-    if (std::string(identity->object.name) == "rtppay_ident" && !IsFrameIncremented(pipelineName)) {
-        timestampsStreamingFiltered[pipelineName].emplace_back(timestampsStreaming[pipelineName][0]);
-        timestampsStreamingFiltered[pipelineName].emplace_back(timestampsStreaming[pipelineName][1]);
-        timestampsStreamingFiltered[pipelineName].emplace_back(timestampsStreaming[pipelineName][2]);
-        timestampsStreamingFiltered[pipelineName].emplace_back(timestampsStreaming[pipelineName][3]);
+    // Validate we have all required timestamps
+    if (currentTimestamps.size() < 4) {
+        std::cerr << "Not enough timestamps: " << currentTimestamps.size() << "\n";
+        return;
+    }
 
-        const unsigned long d = timestampsStreamingFiltered[pipelineName].size();
+    // Calculate stage durations in microseconds
+    uint64_t videoConvertDuration = currentTimestamps[static_cast<size_t>(Stage::VIDEO_CONVERT)] - currentTimestamps[static_cast<size_t>(Stage::CAMERA_SRC)];
+    uint64_t encoderDuration = currentTimestamps[static_cast<size_t>(Stage::ENCODER)] - currentTimestamps[static_cast<size_t>(Stage::VIDEO_CONVERT)];
+    uint64_t rtpPayloaderDuration = currentTimestamps[static_cast<size_t>(Stage::RTP_PAYLOADER)] - currentTimestamps[static_cast<size_t>(Stage::ENCODER)];
 
-        uint64_t nvvidconv = timestampsStreamingFiltered[pipelineName][d - 3] - timestampsStreamingFiltered[pipelineName][d - 4];
-        uint64_t jpegenc = timestampsStreamingFiltered[pipelineName][d - 2] - timestampsStreamingFiltered[pipelineName][d - 3];
-        uint64_t rtpjpegpay = timestampsStreamingFiltered[pipelineName][d - 1] - timestampsStreamingFiltered[pipelineName][d - 2];
+    // Pack metadata into RTP header extension
+    GstRTPBuffer rtpBuf = GST_RTP_BUFFER_INIT;
+    if (!gst_rtp_buffer_map(buffer, GST_MAP_READWRITE, &rtpBuf)) {
+        return;
+    }
 
-        GstRTPBuffer rtp_buf = GST_RTP_BUFFER_INIT;
-        if (gst_rtp_buffer_map(buffer, GST_MAP_READWRITE, &rtp_buf)) {
-            // Add FrameId
-            uint64_t frameId = IncrementFrameId(pipelineName);
-            uint64_t rtpjpegpayTimestamp = timestampsStreamingFiltered[pipelineName][d - 1];
-            uint64_t cameraFrameDuration = (pipelineName == "pipeline_left") ? cameraFrameDurationLeft : cameraFrameDurationRight;
-            if (
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &frameId, sizeof(frameId)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &cameraFrameDuration, sizeof(cameraFrameDuration)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &nvvidconv, sizeof(nvvidconv)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &jpegenc, sizeof(jpegenc)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &rtpjpegpay, sizeof(rtpjpegpay)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &rtpjpegpayTimestamp, sizeof(rtpjpegpayTimestamp))
-            ) {
-                std::cerr << "Couldn't add the RTP header with metadata! \n";
-            }
+    uint64_t frameId = state.getAndIncrementFrameId();
+    uint64_t rtpPayloaderTimestamp = currentTimestamps[static_cast<size_t>(Stage::RTP_PAYLOADER)];
+    uint64_t cameraFrameDuration = state.cameraFrameDuration;
 
-            gst_rtp_buffer_unmap(&rtp_buf);
-        }
+    bool success =
+        gst_rtp_buffer_add_extension_onebyte_header(&rtpBuf, 1, &frameId, sizeof(frameId)) &&
+        gst_rtp_buffer_add_extension_onebyte_header(&rtpBuf, 1, &cameraFrameDuration, sizeof(cameraFrameDuration)) &&
+        gst_rtp_buffer_add_extension_onebyte_header(&rtpBuf, 1, &videoConvertDuration, sizeof(videoConvertDuration)) &&
+        gst_rtp_buffer_add_extension_onebyte_header(&rtpBuf, 1, &encoderDuration, sizeof(encoderDuration)) &&
+        gst_rtp_buffer_add_extension_onebyte_header(&rtpBuf, 1, &rtpPayloaderDuration, sizeof(rtpPayloaderDuration)) &&
+        gst_rtp_buffer_add_extension_onebyte_header(&rtpBuf, 1, &rtpPayloaderTimestamp, sizeof(rtpPayloaderTimestamp));
+
+    if (!success) {
+        std::cerr << "Failed to add RTP header metadata\n";
+    }
+
+    gst_rtp_buffer_unmap(&rtpBuf);
+}
+
+// ============================================================================
+// Main GStreamer Callback
+// ============================================================================
+
+inline void OnIdentityHandoffCameraStreaming(const GstElement* identity, GstBuffer* buffer, gpointer data) {
+    const uint64_t currentTime = GetCurrentUs();
+    const std::string pipelineName = identity->object.parent->name;
+    const std::string identityName = identity->object.name;
+
+    // Handle camera source: update frame duration and reset state for new frame
+    if (identityName == IdentityNames::CAMERA_SRC) {
+        HandleCameraSourceEvent(pipelineName, currentTime);
+    }
+
+    // Record timestamp for this pipeline stage
+    timestampsStreaming[pipelineName].emplace_back(currentTime);
+
+    // Handle RTP payloader: add timing metadata to RTP header
+    if (identityName == IdentityNames::RTP_PAYLOADER) {
+        AddRtpHeaderMetadata(buffer, pipelineName);
     }
 }
