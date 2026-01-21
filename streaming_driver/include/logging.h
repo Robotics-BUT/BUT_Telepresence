@@ -115,7 +115,7 @@ inline void AddRtpHeaderMetadata(GstBuffer* buffer, const std::string& pipelineN
 
     // Validate we have all required timestamps
     if (currentTimestamps.size() < 4) {
-        std::cerr << "Not enough timestamps: " << currentTimestamps.size() << "\n";
+        //std::cerr << "Not enough timestamps: " << currentTimestamps.size() << "\n";
         return;
     }
 

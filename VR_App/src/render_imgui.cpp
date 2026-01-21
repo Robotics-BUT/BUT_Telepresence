@@ -215,21 +215,24 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState) {
         if (s) {
             // Get averaged snapshot over last 50 frames for smoother display
             auto snapshot = s->averagedSnapshot();
+
+            uint16_t cameraMs = snapshot.camera / 1000;
+            uint16_t vidConvMs = snapshot.vidConv / 1000;
+            uint16_t encMs = snapshot.enc / 1000;
+            uint16_t rtpPayMs = snapshot.rtpPay / 1000;
+            uint16_t udpStreamMs = snapshot.udpStream / 1000;
+            uint16_t rtpDepayMs = snapshot.rtpDepay / 1000;
+            uint16_t decMs = snapshot.dec / 1000;
+            uint16_t queueMs = snapshot.queue / 1000;
+            uint16_t displayMs = snapshot.presentation / 1000;
+
             ImGui::Text(
-                    "camera: %lu, vidConv: %lu, enc: %lu, rtpPay: %lu\nudpStream: %lu\nrtpDepay: %lu, dec: %lu, display: %lu",
-                    snapshot.camera / 1000,
-                    snapshot.vidConv / 1000, snapshot.enc / 1000, snapshot.rtpPay / 1000,
-                    snapshot.udpStream / 1000, snapshot.rtpDepay / 1000, snapshot.dec / 1000,
-                    snapshot.presentation / 1000);
-            ImGui::Text("In Total: %lu: \n",
-                        (snapshot.camera + snapshot.vidConv + snapshot.enc + snapshot.rtpPay +
-                         snapshot.udpStream +
-                         snapshot.rtpDepay + snapshot.dec + snapshot.presentation) / 1000);
+                    "camera: %u vidConv: %u enc: %u\nrtpPay: %u udpStream: %u rtpDepay: %u\ndec: %u queue: %u display: %u",
+                    cameraMs, vidConvMs, encMs, rtpPayMs, udpStreamMs, rtpDepayMs, decMs, queueMs,
+                    displayMs);
+            ImGui::Text("In Total: %u: \n", cameraMs + vidConvMs + encMs + rtpPayMs + udpStreamMs +
+                                             rtpDepayMs + decMs + queueMs + displayMs);
         }
-
-
-        ImGui::SeparatorText("Movement");
-
 
         s_win_pos[s_win_num] = ImGui::GetWindowPos();
         s_win_size[s_win_num] = ImGui::GetWindowSize();

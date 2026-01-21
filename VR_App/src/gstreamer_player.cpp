@@ -461,7 +461,7 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
         //LOG_INFO("GSTREAMER: New camera from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 2, &myInfoBuf, &size_64) != 0) {
-        stats->vidconv = *(static_cast<uint64_t *>(myInfoBuf));
+        stats->vidConv = *(static_cast<uint64_t *>(myInfoBuf));
         //LOG_INFO("GSTREAMER: New vidconv from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 3, &myInfoBuf, &size_64) != 0) {
@@ -469,7 +469,7 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
         //LOG_INFO("GSTREAMER: New enc from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 4, &myInfoBuf, &size_64) != 0) {
-        stats->rtppay = *(static_cast<uint64_t *>(myInfoBuf));
+        stats->rtpPay = *(static_cast<uint64_t *>(myInfoBuf));
         //LOG_INFO("GSTREAMER: New rtppay timestamp from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 5, &myInfoBuf, &size_64) != 0) {
@@ -503,15 +503,16 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
         stats->queueTimestamp = ntpTimer->GetCurrentTimeUs();
         stats->queue = stats->queueTimestamp - stats->decTimestamp;
         stats->totalLatency =
-                stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream + stats->rtpDepay +
+                stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream + stats->rtpDepay +
                 stats->dec + stats->queue;
 
         // Update running average history after all stats are computed
         stats->updateHistory();
 
 //        LOG_INFO(
-//                "GSTREAMER: %s Pipeline latencies: vidconv: %lu, enc: %lu, rtpPay: %lu, udpStream: %lu, rtpDepay: %lu, dec: %lu, queue: %lu, total: %lu",
+//                "GSTREAMER: %s Pipeline latencies: camera: %lu, vidconv: %lu, enc: %lu, rtpPay: %lu, udpStream: %lu, rtpDepay: %lu, dec: %lu, queue: %lu, total: %lu",
 //                identity->object.parent->name,
+//                (unsigned long) stats->camera,
 //                (unsigned long) stats->vidConv, (unsigned long) stats->enc,
 //                (unsigned long) stats->rtpPay, (unsigned long) stats->udpStream,
 //                (unsigned long) stats->rtpDepay, (unsigned long) stats->dec,
