@@ -163,11 +163,19 @@ inline void OnIdentityHandoffCameraStreaming(const GstElement* identity, GstBuff
         HandleCameraSourceEvent(pipelineName, currentTime);
     }
 
-    // Record timestamp for this pipeline stage
-    timestampsStreaming[pipelineName].emplace_back(currentTime);
-
     // Handle RTP payloader: add timing metadata to RTP header
+    // For H264/H265, only process first packet per frame to avoid late packets from previous frame
     if (identityName == IdentityNames::RTP_PAYLOADER) {
-        AddRtpHeaderMetadata(buffer, pipelineName);
+        auto& state = GetState(pipelineName);
+        if (!state.frameIdIncremented) {
+            // First RTP packet for this frame - record timestamp and add metadata
+            timestampsStreaming[pipelineName].emplace_back(currentTime);
+            AddRtpHeaderMetadata(buffer, pipelineName);
+        }
+        // Skip subsequent RTP packets (they're fragments of the same frame)
+        return;
     }
+
+    // Record timestamp for non-RTP pipeline stages
+    timestampsStreaming[pipelineName].emplace_back(currentTime);
 }
