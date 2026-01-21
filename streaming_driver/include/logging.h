@@ -7,7 +7,6 @@
 #include <vector>
 #include <exception>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <experimental/filesystem>
 
 inline std::map<std::string, std::vector<long> > timestampsStreaming;
 inline std::map<std::string, std::vector<long> > timestampsStreamingFiltered;
@@ -98,12 +97,12 @@ inline void OnIdentityHandoffCameraStreaming(const GstElement *identity, GstBuff
             uint64_t rtpjpegpayTimestamp = timestampsStreamingFiltered[pipelineName][d - 1];
             uint64_t cameraFrameDuration = (pipelineName == "pipeline_left") ? cameraFrameDurationLeft : cameraFrameDurationRight;
             if (
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, 1, &frameId, sizeof(frameId)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, 1, &cameraFrameDuration, sizeof(cameraFrameDuration)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, 1, &nvvidconv, sizeof(nvvidconv)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, 1, &jpegenc, sizeof(jpegenc)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, 1, &rtpjpegpay, sizeof(rtpjpegpay)) ||
-                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, 1, &rtpjpegpayTimestamp, sizeof(rtpjpegpayTimestamp)) ||
+                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &frameId, sizeof(frameId)) ||
+                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &cameraFrameDuration, sizeof(cameraFrameDuration)) ||
+                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &nvvidconv, sizeof(nvvidconv)) ||
+                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &jpegenc, sizeof(jpegenc)) ||
+                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &rtpjpegpay, sizeof(rtpjpegpay)) ||
+                !gst_rtp_buffer_add_extension_onebyte_header(&rtp_buf, 1, &rtpjpegpayTimestamp, sizeof(rtpjpegpayTimestamp))
             ) {
                 std::cerr << "Couldn't add the RTP header with metadata! \n";
             }
