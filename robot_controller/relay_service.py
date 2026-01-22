@@ -18,6 +18,7 @@ from .config import load_configuration, RelayConfig
 from .exceptions import RelayServiceError
 from .protocol import MessageDetector, MessageType
 from .servo_translators import ServoTranslator, TGDrivesTranslator
+from .robot_translators import RobotTranslator, SpotTranslator
 
 try:
     from influxdb_client_3 import InfluxDBClient3, Point
@@ -54,6 +55,9 @@ class UDPRelayService:
 
         # Servo translator (initialized based on config)
         self.servo_translator: Optional[ServoTranslator] = None
+
+        # Robot translator (initialized based on config)
+        self.robot_translator: Optional[RobotTranslator] = None
 
         # State
         self.running = False
@@ -162,6 +166,23 @@ class UDPRelayService:
         else:
             raise RelayServiceError(f"Unknown servo translator type: {translator_type}")
 
+    def _create_robot_translator(self) -> RobotTranslator:
+        """
+        Create robot translator based on configuration.
+
+        Returns:
+            Robot translator instance
+
+        Raises:
+            RelayServiceError: If translator type is unknown
+        """
+        translator_type = self.config.robot_translator.lower()
+
+        if translator_type == 'spot':
+            return SpotTranslator()
+        else:
+            raise RelayServiceError(f"Unknown robot translator type: {translator_type}")
+
     def _initialize_sockets(self) -> bool:
         """
         Initialize UDP sockets.
@@ -188,6 +209,10 @@ class UDPRelayService:
             if not self.servo_translator.initialize():
                 self.logger.error("Failed to initialize servo translator")
                 return False
+
+            # Initialize robot translator
+            self.robot_translator = self._create_robot_translator()
+            self.logger.info(f"Robot translator initialized: {self.robot_translator.get_name()}")
 
             self.logger.info("All sockets initialized successfully")
             return True
@@ -219,6 +244,10 @@ class UDPRelayService:
             except Exception as e:
                 self.logger.warning(f"Error closing servo translator: {e}")
             self.servo_translator = None
+
+        if self.robot_translator:
+            self.logger.info("Robot translator closed")
+            self.robot_translator = None
 
         if self.influx_client:
             try:
@@ -286,19 +315,31 @@ class UDPRelayService:
 
     def _forward_to_robot(self, data: bytes, client_addr: Tuple[str, int]):
         """
-        Forward message to robot controller.
+        Forward message to robot controller via translator.
 
         Args:
-            data: Robot command data
+            data: Robot command data from VR client
             client_addr: Client address (not used for robot commands)
         """
         if not self.robot_socket:
             self.logger.error("Robot socket not initialized")
             return
 
+        if not self.robot_translator:
+            self.logger.error("Robot translator not initialized")
+            return
+
         try:
-            self.robot_socket.sendto(data, (self.config.robot_ip, self.config.robot_port))
-            self.logger.debug(f"Forwarded robot command to {self.config.robot_ip}:{self.config.robot_port}")
+            # Translate VR client packet to robot-specific protocol
+            translated_packet = self.robot_translator.translate(data)
+
+            if translated_packet is None:
+                self.logger.error("Failed to translate robot control packet")
+                return
+
+            # Send translated packet to robot
+            self.robot_socket.sendto(translated_packet, (self.config.robot_ip, self.config.robot_port))
+            self.logger.debug(f"Forwarded translated robot command to {self.config.robot_ip}:{self.config.robot_port}")
 
             # Robot commands typically don't expect responses
             # If they do in the future, add response handling here

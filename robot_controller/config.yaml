@@ -20,6 +20,7 @@ network:
     ip: "10.0.31.11"       # IP address of the robot controller
     port: 5555             # Port of the robot controller
     response_timeout: 0.5  # Timeout for robot responses (seconds)
+    translator: "spot"     # Robot translator type (spot)
 
 # TG Drives Servo Configuration
 tg_drives:

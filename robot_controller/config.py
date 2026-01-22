@@ -43,6 +43,7 @@ class RelayConfig:
     # Network settings - Robot
     robot_ip: str = "10.0.31.11"
     robot_port: int = 5555
+    robot_translator: str = "spot"
 
     # Timeouts (seconds)
     servo_response_timeout: float = 1.0
@@ -91,10 +92,17 @@ class RelayConfig:
             raise ConfigurationError(f"Invalid log_level: {self.log_level}. Must be one of {valid_levels}")
 
         # Validate servo translator
-        valid_translators = ['tg_drives']
-        if self.servo_translator not in valid_translators:
+        valid_servo_translators = ['tg_drives']
+        if self.servo_translator not in valid_servo_translators:
             raise ConfigurationError(
-                f"Invalid servo_translator: {self.servo_translator}. Must be one of {valid_translators}"
+                f"Invalid servo_translator: {self.servo_translator}. Must be one of {valid_servo_translators}"
+            )
+
+        # Validate robot translator
+        valid_robot_translators = ['spot']
+        if self.robot_translator not in valid_robot_translators:
+            raise ConfigurationError(
+                f"Invalid robot_translator: {self.robot_translator}. Must be one of {valid_robot_translators}"
             )
 
     @classmethod
@@ -142,6 +150,9 @@ class RelayConfig:
                     config_dict['robot_response_timeout'] = data['network']['robot'].get(
                         'response_timeout', cls.robot_response_timeout
                     )
+                    config_dict['robot_translator'] = data['network']['robot'].get(
+                        'translator', cls.robot_translator
+                    )
 
             if 'logging' in data:
                 config_dict['log_level'] = data['logging'].get('level', cls.log_level)
@@ -186,7 +197,7 @@ class RelayConfig:
             f"RelayConfig("
             f"ingest={self.ingest_host}:{self.ingest_port}, "
             f"servo={self.servo_ip}:{self.servo_port} (translator={self.servo_translator}), "
-            f"robot={self.robot_ip}:{self.robot_port}, "
+            f"robot={self.robot_ip}:{self.robot_port} (translator={self.robot_translator}), "
             f"log_level={self.log_level})"
         )
 
