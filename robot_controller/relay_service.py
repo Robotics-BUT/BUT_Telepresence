@@ -359,16 +359,16 @@ class UDPRelayService:
             data: Debug info data
             client_addr: Client address
 
-        Message format (78 bytes):
+        Message format (106 bytes):
             [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (float)]
-            [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)] [udpStream_us (uint64)]
+            [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)] [udpStream_us (uint64)]
             [rtpDepay_us (uint64)] [dec_us (uint64)] [presentation_us (uint64)]
             [ntp_offset_us (int64)] [ntp_synced (uint8)] [time_since_ntp_sync_us (uint64)]
         """
         try:
-            # Validate packet length (currently 98 bytes)
+            # Validate packet length (currently 106 bytes)
             # Note: FPS appears to be serialized as 8 bytes (double) instead of 4 bytes (float)
-            expected_length = 98
+            expected_length = 106
             if len(data) != expected_length:
                 self.logger.warning(f"Invalid debug info packet length: {len(data)} bytes, expected {expected_length}")
                 return

@@ -143,7 +143,7 @@ void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, fl
 
 void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, uint64_t timestamp) {
     std::vector<uint8_t> packet;
-    packet.reserve(98);
+    packet.reserve(106);
 
     // Message type
     packet.push_back(MSG_DEBUG_INFO);
