@@ -232,7 +232,7 @@
       "targets": [
         {
           "datasource": null,
-          "rawSql": "SELECT time, \"vidConv_us\", enc_us, \"rtpPay_us\", \"udpStream_us\", \"rtpDepay_us\", dec_us, presentation_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "rawSql": "SELECT time, camera_us, \"vidConv_us\", enc_us, \"rtpPay_us\", \"udpStream_us\", \"rtpDepay_us\", dec_us, presentation_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
           "refId": "A",
           "format": "time_series"
         }

@@ -385,6 +385,9 @@ class UDPRelayService:
             fps = struct.unpack('<d', data[offset:offset+8])[0]
             offset += 8
 
+            camera_us = struct.unpack('<Q', data[offset:offset+8])[0]
+            offset += 8
+
             vidConv_us = struct.unpack('<Q', data[offset:offset+8])[0]
             offset += 8
 
@@ -419,7 +422,7 @@ class UDPRelayService:
             self.logger.debug(
                 f"DEBUG INFO from {client_addr[0]}:{client_addr[1]} - "
                 f"frame_id={frame_id}, fps={fps:.1f}, ts={timestamp}, "
-                f"pipeline_us=[vidConv={vidConv_us}, enc={enc_us}, rtpPay={rtpPay_us}, "
+                f"pipeline_us=[camera={camera_us}, vidConv={vidConv_us}, enc={enc_us}, rtpPay={rtpPay_us}, "
                 f"udpStream={udpStream_us}, rtpDepay={rtpDepay_us}, dec={dec_us}, pres={presentation_us}], "
                 f"ntp=[offset_us={ntp_offset_us}, synced={ntp_synced}, time_since_sync_us={time_since_ntp_sync_us}]"
             )
@@ -428,7 +431,7 @@ class UDPRelayService:
             if self.influx_client:
                 try:
                     # Calculate total pipeline latency
-                    total_latency_us = vidConv_us + enc_us + rtpPay_us + udpStream_us + rtpDepay_us + dec_us + presentation_us
+                    total_latency_us = camera_us +  vidConv_us + enc_us + rtpPay_us + udpStream_us + rtpDepay_us + dec_us + presentation_us
 
                     # Create Point using influxdb3-python API
                     # Use current time instead of packet timestamp (which is relative, not Unix epoch)
@@ -439,6 +442,7 @@ class UDPRelayService:
                         .tag("source", client_addr[0])
                         .field("frame_id", int(frame_id))
                         .field("fps", float(fps))
+                        .field("camera_us", int(camera_us))
                         .field("vidConv_us", int(vidConv_us))
                         .field("enc_us", int(enc_us))
                         .field("rtpPay_us", int(rtpPay_us))

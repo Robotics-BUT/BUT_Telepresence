@@ -6,7 +6,7 @@
 #include <unistd.h>
 
 RobotControlSender::RobotControlSender(StreamingConfig &config, NtpTimer *ntpTimer)
-    : ntpTimer_(ntpTimer), socket_(socket(AF_INET, SOCK_DGRAM, 0)) {
+        : ntpTimer_(ntpTimer), socket_(socket(AF_INET, SOCK_DGRAM, 0)) {
 
     if (socket_ < 0) {
         LOG_ERROR("RobotControlSender: socket creation failed - errno: %d", errno);
@@ -32,7 +32,8 @@ RobotControlSender::~RobotControlSender() {
     }
 }
 
-void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, float speed, BS::thread_pool<BS::tp::none> &threadPool) {
+void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, float speed,
+                                      BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
@@ -49,7 +50,8 @@ void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, float speed, BS::t
     });
 }
 
-void RobotControlSender::sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool) {
+void RobotControlSender::sendRobotControl(float linearX, float linearY, float angular,
+                                          BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
@@ -60,10 +62,14 @@ void RobotControlSender::sendRobotControl(float linearX, float linearY, float an
 
         // Send the packet
         sendRobotControlPacket(linearX, linearY, angular, timestamp);
+        LOG_INFO(
+                "RobotControlSender: Sending robot control message: linearX=%f, linearY=%f, angular=%f",
+                linearX, linearY, angular);
     });
 }
 
-void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &stats, BS::thread_pool<BS::tp::none> &threadPool) {
+void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &stats,
+                                       BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
@@ -77,7 +83,8 @@ void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &stats, BS::thr
     });
 }
 
-void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp) {
+void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed,
+                                            uint64_t timestamp) {
     std::vector<uint8_t> packet;
     packet.reserve(21);
 
@@ -98,14 +105,15 @@ void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, floa
 
     // Send UDP packet
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
-                          (sockaddr*)&destAddr_, sizeof(destAddr_));
+                          (sockaddr *) &destAddr_, sizeof(destAddr_));
 
     if (sent < 0) {
         LOG_ERROR("RobotControlSender: Failed to send head pose packet - errno: %d", errno);
     }
 }
 
-void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, float angular, uint64_t timestamp) {
+void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, float angular,
+                                                uint64_t timestamp) {
     std::vector<uint8_t> packet;
     packet.reserve(21);
 
@@ -126,7 +134,7 @@ void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, fl
 
     // Send UDP packet
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
-                          (sockaddr*)&destAddr_, sizeof(destAddr_));
+                          (sockaddr *) &destAddr_, sizeof(destAddr_));
 
     if (sent < 0) {
         LOG_ERROR("RobotControlSender: Failed to send robot control packet - errno: %d", errno);
@@ -144,6 +152,7 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, u
     serializeLittleEndian(packet, stats.frameId);
     serializeLittleEndian(packet, stats.fps);
 
+    serializeLittleEndian(packet, stats.camera);
     serializeLittleEndian(packet, stats.vidConv);
     serializeLittleEndian(packet, stats.enc);
     serializeLittleEndian(packet, stats.rtpPay);
@@ -157,14 +166,15 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, u
     serializeLittleEndian(packet, ntpTimer_->GetTimeSinceLastSyncUs());
 
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
-                          (sockaddr*)&destAddr_, sizeof(destAddr_));
+                          (sockaddr *) &destAddr_, sizeof(destAddr_));
 
     if (sent < 0) {
         LOG_ERROR("RobotControlSender: Failed to send debug info packet - errno: %d", errno);
     }
 }
 
-RobotControlSender::AzimuthElevation RobotControlSender::quaternionToAzimuthElevation(XrQuaternionf q) {
+RobotControlSender::AzimuthElevation
+RobotControlSender::quaternionToAzimuthElevation(XrQuaternionf q) {
     // Convert quaternion to Euler angles (yaw/pitch) for OpenXR coordinate system
     // OpenXR uses right-handed: +X right, +Y up, +Z backward (forward is -Z)
     // Azimuth = yaw (rotation around Y axis)
@@ -183,7 +193,7 @@ RobotControlSender::AzimuthElevation RobotControlSender::quaternionToAzimuthElev
         // Normal case
         elevation = std::asin(sinp);
         azimuth = std::atan2(2.0 * (q.w * q.y + q.z * q.x),
-                            1.0 - 2.0 * (q.x * q.x + q.y * q.y));
+                             1.0 - 2.0 * (q.x * q.x + q.y * q.y));
     }
 
     // Normalize angles to [-π, π] range
