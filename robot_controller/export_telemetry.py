@@ -5,7 +5,8 @@ Export telemetry data from InfluxDB to CSV.
 Usage:
     python export_telemetry.py                     # Export all data
     python export_telemetry.py -o data.csv         # Custom output file
-    python export_telemetry.py --last 1h           # Export last hour
+    python export_telemetry.py --last "1 hour"     # Export last hour
+    python export_telemetry.py --last "30 minutes" # Export last 30 minutes
     python export_telemetry.py --host http://192.168.1.100:8181  # Remote host
 """
 
@@ -37,16 +38,17 @@ def export_to_csv(
     )
 
     # Select specific columns: time, all latency stages, and fps
+    # Mixed-case names need double quotes in SQL
     columns = [
         "time",
         "frame_id",
         "fps",
         "camera_us",
-        "vidConv_us",
+        '"vidConv_us"',
         "enc_us",
-        "rtpPay_us",
-        "udpStream_us",
-        "rtpDepay_us",
+        '"rtpPay_us"',
+        '"udpStream_us"',
+        '"rtpDepay_us"',
         "dec_us",
         "presentation_us",
         "total_latency_us",
@@ -55,7 +57,7 @@ def export_to_csv(
     select_clause = ", ".join(columns)
 
     if time_filter:
-        query = f"SELECT {select_clause} FROM pipeline_metrics WHERE time > now() - {time_filter} ORDER BY time"
+        query = f"SELECT {select_clause} FROM pipeline_metrics WHERE time > now() - INTERVAL '{time_filter}' ORDER BY time"
     else:
         query = f"SELECT {select_clause} FROM pipeline_metrics ORDER BY time"
 
@@ -112,7 +114,7 @@ def main():
         "--last",
         type=str,
         default=None,
-        help="Export only last N time (e.g., 1h, 30m, 1d)"
+        help="Export only last N time (e.g., '1 hour', '30 minutes', '1 day')"
     )
     parser.add_argument(
         "--host",

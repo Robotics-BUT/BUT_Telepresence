@@ -50,7 +50,11 @@ if [ ! -x "$INFLUXDB3_BIN" ]; then
 fi
 
 echo "Serving the database..."
-"$INFLUXDB3_BIN" serve --without-auth --node-id=but_telepresence_telemetry &
+"$INFLUXDB3_BIN" serve \
+    --object-store file \
+    --data-dir "${HOME}/.influxdb/but_telepresence_telemetry" \
+    --without-auth \
+    --node-id=but_telepresence_telemetry &
 INFLUX_PID=$!
 
 # Wait for InfluxDB to be ready
