@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 DEFAULT_LATENCY_MAX = 150.0      # ms
 DEFAULT_FPS_MIN = None           # fps
 DEFAULT_FPS_MAX = 120            # fps
-DEFAULT_TIME_START = "2026-01-26T16:39:10"        # ISO string, e.g., "2026-01-26T12:00:00"
-DEFAULT_TIME_END = "2026-01-26T16:42:35"          # ISO string, e.g., "2026-01-26T12:05:00"
+DEFAULT_TIME_START = "2026-01-26T16:29:23"        # ISO string, e.g., "2026-01-26T12:00:00"
+DEFAULT_TIME_END = "2026-01-26T16:32:05"          # ISO string, e.g., "2026-01-26T12:05:00"
 
 
 def load_data(csv_path: Path) -> pd.DataFrame:
@@ -50,12 +50,12 @@ def plot_latency_breakdown(df: pd.DataFrame, ax: plt.Axes, latency_max: float = 
     ax.stackplot(df['time'], [df[s] for s in stages],
                  labels=[s.replace('_ms', '') for s in stages],
                  alpha=0.8)
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:39:10"), color=(0, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/20Mbit/Stereo/60FPS')
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:40:22"), color=(0, 0, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/30Mbit/Stereo/60FPS')
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:41:01"), color=(0, 1, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/30Mbit/Stereo/30FPS')
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:41:40"), color=(0, 1, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.264/30Mbit/Stereo/30FPS')
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:41:50"), color=(1, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.264/30Mbit/Stereo/60FPS')
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:42:25"), color=(1, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.264/30Mbit/Mono /60FPS')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:29:23"), color=(0, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/1Mbit/Stereo/60FPS')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:29:54"), color=(0, 0, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/1Mbit/Stereo/60FPS')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:30:23"), color=(0, 1, 0), alpha=0.75, linestyle='-', linewidth=1, label='Headset menu opened')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:30:29"), color=(0, 1, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/3Mbit/Stereo/30FPS')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:31:10"), color=(1, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.264/3Mbit/Stereo/60FPS')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:31:47"), color=(1, 0, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.264/3Mbit/Mono /60FPS')
 
     ax.set_ylabel('Latency (ms)')
     ax.set_title('Pipeline Latency Breakdown')
