@@ -40,7 +40,7 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 //        testFrame_[i] = rand() % 255;  // Generate a random number between 0 and 254
 //    }
 
-    ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip));
+    ntpTimer_ = std::make_unique<NtpTimer>("195.113.144.201");
     ntpTimer_->StartAutoSync();
     gstreamerPlayer_ = std::make_unique<GstreamerPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();

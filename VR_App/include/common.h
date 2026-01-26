@@ -16,8 +16,8 @@
 #include <mutex>
 
 // <!-- IP CONFIGURATION SECTION --!>
-constexpr uint8_t IP_CONFIG_JETSON_ADDR[4] = {192,168,1,105};
-constexpr uint8_t IP_CONFIG_HEADSET_ADDR[4] = {10,0,24,42};
+constexpr uint8_t IP_CONFIG_JETSON_ADDR[4] = {10,0,31,42};
+constexpr uint8_t IP_CONFIG_HEADSET_ADDR[4] = {10,0,31,220};
 constexpr int IP_CONFIG_REST_API_PORT = 32281;
 constexpr int IP_CONFIG_SERVO_PORT = 32115;
 constexpr int IP_CONFIG_LEFT_CAMERA_PORT = 8554;
