@@ -1,6 +1,6 @@
 # BUT Telepresence
 
-A low-latency VR telepresence system for remote robot control. This system enables an operator to control a robot (Boston Dynamics Spot) through a Meta Quest VR headset with live stereo camera streaming and head/hand tracking.
+A low-latency standalone VR telepresence system for remote robot control. This system enables researchers to control a mobile robot through a Meta Quest VR headset with live stereo camera streaming and head tracking.
 
 **Paper:** [TODO: Add IEEE Access link]
 
@@ -8,17 +8,17 @@ A low-latency VR telepresence system for remote robot control. This system enabl
 
 ```
 ┌─────────────────┐         UDP          ┌─────────────────────────────────────┐
-│   VR Headset    │◄────────────────────►│           Robot Platform            │
+│   VR Headset    │─────────────────────►│           Robot Platform            │
 │  (Meta Quest)   │   Head pose/Control  │                                     │
-│                 │                      │  ┌─────────────┐  ┌──────────────┐  │
-│  ┌───────────┐  │    RTP/UDP (stereo)  │  │   Robot     │  │   Servo      │  │
-│  │  VR_App   │◄─┼──────────────────────┼──┤  Controller │  │   Driver     │  │
-│  └───────────┘  │                      │  └─────────────┘  └──────────────┘  │
+│                 │                      │  ┌───────────────────────────────┐  │
+│  ┌───────────┐  │Stereo Video (RTP/UDP)│  │             Robot             │  │
+│  │  VR_App   │  │◄─────────────────────│  │           Controller          │  │
+│  └───────────┘  │                      │  └───────────────────────────────┘  │
 └─────────────────┘                      │         │                │          │
                                          │         ▼                ▼          │
                                          │  ┌─────────────┐  ┌──────────────┐  │
-                                         │  │ Spot Robot  │  │ Pan-Tilt     │  │
-                                         │  │ (movement)  │  │ (camera)     │  │
+                                         │  │  Robot      │  │  Camera      │  │
+                                         │  │  movement   │  │  Pan-Tilt    │  │
                                          │  └─────────────┘  └──────────────┘  │
                                          │                                     │
                                          │  ┌─────────────────────────────┐    │
@@ -35,7 +35,7 @@ BUT_Telepresence/
 ├── VR_App/              # Android VR application (C++/OpenXR)
 ├── robot_controller/    # Head pose & robot control relay (Python)
 ├── streaming_driver/    # Camera streaming pipeline (C++/GStreamer)
-├── server/              # REST API for stream control (Python/Flask)
+├── server/              # REST API for video stream control (Python/Flask)
 ├── services/            # systemd unit files
 └── scripts/             # Telemetry visualization utilities
 ```
@@ -46,16 +46,21 @@ BUT_Telepresence/
 
 ## Prerequisites
 
+To setup your environment to build & side-load the VR app you'll need the following:
+
 - Android Studio with NDK 21.4.7075529
-- [GStreamer Android SDK](https://gstreamer.freedesktop.org/download/) (arm64)
-- [Oculus OpenXR Mobile SDK](https://developer.oculus.com/downloads/package/oculus-openxr-mobile-sdk/)
-- Boost 1.72.0 built for Android NDK 21
+- [GStreamer Android SDK](https://gstreamer.freedesktop.org/download/#android) (arm64 1.18.x - 1.22.x)
+- [Oculus OpenXR Mobile SDK](https://developer.oculus.com/downloads/package/oculus-openxr-mobile-sdk/) (tested with version 49.0)
+- Boost 1.72.0 built for Android NDK 21 (available in this repository)
+- Meta Quest 2/Pro/3 or different compatible headset with a developer mode enabled and connected via USB
+
+In the gstreamer android SDK, rename these folders: arm64 -> arm64-v8a & armv7 -> armeabi-v7a
 
 ## Setup
 
 1. Clone with submodules:
    ```bash
-   git clone --recursive <repo-url>
+   git clone --recursive https://github.com/Robotics-BUT/BUT_Telepresence
    ```
 
 2. Create `VR_App/local.properties`:
@@ -67,23 +72,15 @@ BUT_Telepresence/
    ```
 
 3. Build:
-   ```bash
-   cd VR_App
-   ./gradlew assembleDebug
-   ```
-
-4. Install on headset (developer mode required):
-   ```bash
-   adb install -r app/build/outputs/apk/openGLES/debug/app-openGLES-debug.apk
-   ```
+ - use the Android Studio GUI to build and deploy the app
 
 ## Configuration
 
 Network addresses are configured in `VR_App/src/common.h`:
 
 ```cpp
-#define IP_CONFIG_JETSON_ADDR "10.0.31.42"      // Robot platform IP
-#define IP_CONFIG_HEADSET_ADDR "10.0.31.220"    // Headset IP (for RTP sink)
+#define IP_CONFIG_JETSON_ADDR "10.0.31.42"      // Robot platform IP (can be configured from GUI once the app starts)
+#define IP_CONFIG_HEADSET_ADDR "10.0.31.220"    // Headset IP (This is also auto-detected once the app starts)
 #define REST_API_PORT 32281
 #define SERVO_PORT 32115
 #define LEFT_CAMERA_PORT 8554
@@ -107,38 +104,22 @@ adb logcat -s VR_App
 
 # All app output
 adb logcat | grep -E "(GStreamer|OpenXR|VR_App)"
+
+# Or just use the in-built logcat interface in Android Studio
 ```
-
-**Common issues:**
-
-| Symptom | Cause | Solution |
-|---------|-------|----------|
-| Black screen, no video | Stream not started or wrong IP | Check `IP_CONFIG_*` in common.h, verify streaming_driver is running |
-| Laggy head tracking | Network congestion | Reduce video bitrate, check WiFi channel interference |
-| App crashes on start | OpenXR runtime missing | Ensure headset firmware is up to date |
-| "No XR runtime" error | Oculus services not running | Reboot headset, check developer mode |
-
 **Performance profiling:**
 
-The app reports telemetry to InfluxDB including FPS, pipeline latency at each stage, and NTP sync status. See `scripts/visualize_telemetry.py` for analysis.
+The app reports telemetry to InfluxDB (when enabled in *robot_controller*) including FPS, pipeline latency at each stage, and NTP sync status. See `scripts/visualize_telemetry.py` for analysis.
 
 ---
 
 # Robot Side
 
-The robot platform runs three services: the robot controller (command relay), the streaming driver (camera pipeline), and optionally the REST API server.
+The robot platform runs two services: the robot controller (command relay), and optionally the REST API server that runs the streaming driver internally (camera pipeline).
 
 ## Robot Controller
 
 Relays head pose commands to the pan-tilt servo driver and movement commands to the robot.
-
-### Setup
-
-```bash
-cd robot_controller
-cp config.yaml.example config.yaml  # if not present, use existing config.yaml
-# Edit config.yaml with your network addresses
-```
 
 ### Configuration
 
@@ -152,19 +133,21 @@ network:
   servo:
     ip: "192.168.1.150"    # Pan-tilt servo driver
     port: 502
-    translator: tg_drives
+    translator: tg_drives  # Head movement translator used for the reference measurements, you will need to create your own
   robot:
-    ip: "10.0.31.11"       # Spot robot
+    ip: "10.0.31.11"       # Your robot IP
     port: 5555
-    translator: spot
+    translator: spot       # Spot has been used for the reference measurements, you will have to provide your own translator
 
+# Configuration specific to the reference servo translator
 tg_drives:
   elevation_min: -2000000000
   elevation_max: 200000000
   azimuth_min: -600000000
   azimuth_max: 1100000000
-  filter_alpha: 0.15       # Low-pass filter (0-1, lower = smoother)
+  filter_alpha: 0.15       # Low-pass filter (0-1, higher = smoother)
 
+# This enables the built-in telemetry logging and Grafana display.
 telemetry:
   enabled: true
   influxdb_host: "http://localhost:8181"
@@ -185,46 +168,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 python -m robot_controller
 ```
-
-### Debugging
-
-**Log levels** in `config.yaml`:
-```yaml
-logging:
-  level: DEBUG  # DEBUG, INFO, WARNING, ERROR
-  file: null    # null=stdout, or path like "/var/log/robot_controller.log"
-```
-
-**Common issues:**
-
-| Symptom | Cause | Solution |
-|---------|-------|----------|
-| "Connection refused" to servo | Servo driver not reachable | Check IP/port, verify servo driver is powered on |
-| Jerky servo movement | filter_alpha too high | Lower `filter_alpha` (e.g., 0.1) |
-| Commands ignored | Out-of-order packets | Check network stability; controller drops stale packets automatically |
-| No telemetry data | InfluxDB not running | See `robot_controller/TELEMETRY_SETUP.md` |
-
-**Protocol debugging:**
-
-Capture UDP traffic to inspect messages:
-```bash
-# Head pose packets (0x01 prefix, 17 bytes)
-tcpdump -i any udp port 32115 -X
-
-# Verify message format
-python -c "
-import struct
-# Head pose: [0x01][azimuth:f32][elevation:f32][timestamp:u64]
-data = bytes.fromhex('01 00 00 80 3f 00 00 00 40 ...')
-msg_type, az, el, ts = struct.unpack('<Bffq', data[:17])
-print(f'Type: {msg_type}, Az: {az}, El: {el}, TS: {ts}')
-"
-```
+Or setup permanently through the provided service in *services/*
 
 ## Streaming Driver
 
-GStreamer-based stereo camera streaming pipeline.
-
+GStreamer-based stereo camera streaming pipeline. For this, make sure you have a gstreamer installed with the HW accelerated codecs included.
+Once your certain you have all necessary elements or you made needed changes in the *pipelines.h*, you need to build the project first.
 ### Build
 
 ```bash
@@ -234,34 +183,11 @@ cmake ..
 make
 ```
 
+## REST API Server
+
+Provides HTTP endpoints for stream control and runs the streaming driver internally.
+
 ### Running
-
-Configure the pipeline parameters in the source or via command-line arguments. The driver streams RTP/UDP to the headset IP.
-
-### Debugging
-
-```bash
-# Test pipeline manually
-gst-launch-1.0 -v videotestsrc ! x264enc ! rtph264pay ! udpsink host=10.0.31.220 port=8554
-
-# Check GStreamer plugin availability
-gst-inspect-1.0 x264enc
-gst-inspect-1.0 rtph264pay
-```
-
-## REST API Server (Optional)
-
-Provides HTTP endpoints for stream control.
-
-### Running with Docker
-
-```bash
-cd server
-docker build -t swagger_server .
-docker run -p 8080:8080 swagger_server
-```
-
-### Running locally
 
 ```bash
 cd server
@@ -271,6 +197,8 @@ pip install -r requirements.txt
 python -m swagger_server
 # Swagger UI: http://localhost:8080/ui/
 ```
+
+Or setup permanently through the provided service in *services/*
 
 ## systemd Services
 
@@ -306,4 +234,4 @@ python visualize_telemetry.py data.csv
 
 # License
 
-MIT License - see individual component directories for details.
+MIT License
