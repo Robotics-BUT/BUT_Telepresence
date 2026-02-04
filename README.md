@@ -54,9 +54,9 @@ To setup your environment to build & side-load the VR app you'll need the follow
 - Boost 1.72.0 built for Android NDK 21 (available in this repository)
 - Meta Quest 2/Pro/3 or different compatible headset with a developer mode enabled and connected via USB
 
-In the gstreamer android SDK, rename these folders: arm64 -> arm64-v8a & armv7 -> armeabi-v7a
-
 ## Setup
+
+> **Note:** In the GStreamer Android SDK, rename these folders: `arm64` → `arm64-v8a` and `armv7` → `armeabi-v7a`
 
 1. Clone with submodules:
    ```bash
@@ -68,11 +68,10 @@ In the gstreamer android SDK, rename these folders: arm64 -> arm64-v8a & armv7 -
    sdk.dir=/path/to/Android/Sdk
    gstreamer_sdk.dir=/path/to/gstreamer-1.0-android-universal
    ovr_openxr_mobile_sdk.dir=/path/to/ovr_openxr_mobile_sdk
-   boost.dir=/path/to/ndk21_boost_1.72.0
+   boost.dir=/path/to/ndk_21_boost_1.72.0
    ```
 
-3. Build:
- - use the Android Studio GUI to build and deploy the app
+3. Build and deploy using Android Studio GUI
 
 ## Configuration
 
@@ -107,6 +106,7 @@ adb logcat | grep -E "(GStreamer|OpenXR|VR_App)"
 
 # Or just use the in-built logcat interface in Android Studio
 ```
+
 **Performance profiling:**
 
 The app reports telemetry to InfluxDB (when enabled in *robot_controller*) including FPS, pipeline latency at each stage, and NTP sync status. See `scripts/visualize_telemetry.py` for analysis.
@@ -168,12 +168,14 @@ source venv/bin/activate
 pip install -r requirements.txt
 python -m robot_controller
 ```
-Or setup permanently through the provided service in *services/*
+Or set up permanently through the provided service in *services/*
 
 ## Streaming Driver
 
-GStreamer-based stereo camera streaming pipeline. For this, make sure you have a gstreamer installed with the HW accelerated codecs included.
-Once your certain you have all necessary elements or you made needed changes in the *pipelines.h*, you need to build the project first.
+GStreamer-based stereo camera streaming pipeline. Make sure you have GStreamer installed with the HW accelerated codecs included.
+
+Once you're certain you have all necessary elements (or you've made the needed changes in `pipelines.h`), build the project:
+
 ### Build
 
 ```bash
@@ -198,7 +200,7 @@ python -m swagger_server
 # Swagger UI: http://localhost:8080/ui/
 ```
 
-Or setup permanently through the provided service in *services/*
+Or set up permanently through the provided service in *services/*
 
 ## systemd Services
 
