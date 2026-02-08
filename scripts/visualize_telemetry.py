@@ -164,7 +164,7 @@ def main():
     print(f"Rendering {len(df)} samples")
 
     fig, axes = plt.subplots(2, figsize=(14, 10))
-    fig.suptitle(f'Telemetry Analysis: {args.csv_file.name}', fontsize=14)
+    #fig.suptitle(f'Telemetry Analysis: {args.csv_file.name}', fontsize=14)
 
     plot_latency_breakdown(df, axes[0], latency_max=args.latency_max)
     plot_total_latency(df, axes[1], latency_max=args.latency_max)

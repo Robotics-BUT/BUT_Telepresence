@@ -1,6 +1,3 @@
-//
-// Created by stand on 30.07.2024.
-//
 #include <GLES3/gl32.h>
 #include "pch.h"
 #include "util_egl.h"

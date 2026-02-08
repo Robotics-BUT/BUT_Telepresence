@@ -1,8 +1,6 @@
-//
-// Created by standa on 10/6/25.
-//
-
 #include "ros_network_gateway_client.h"
+#include "config.h"
+#include <unistd.h>
 
 constexpr int BUFFER_SIZE = 65535;  // Max UDP packet size
 constexpr int RESPONSE_TIMEOUT_US = 50000;
@@ -11,36 +9,65 @@ RosNetworkGatewayClient::RosNetworkGatewayClient()
         : socket_(socket(AF_INET, SOCK_DGRAM, 0)), serverAddrLen_(sizeof(serverAddr_)) {
 
     if (socket_ < 0) {
-        LOG_ERROR("socket creation failed");
+        LOG_ERROR("RosNetworkGatewayClient: Socket creation failed (errno=%d: %s). "
+                  "ROS topic data will not be available.",
+                  errno, strerror(errno));
+        isInitialized_ = false;
         return;
     }
 
     memset(&myAddr_, 0, sizeof(myAddr_));
     myAddr_.sin_family = AF_INET;
     myAddr_.sin_addr.s_addr = INADDR_ANY;
-    myAddr_.sin_port = htons(IP_CONFIG_ROS_GATEWAY_PORT);
+    myAddr_.sin_port = htons(Config::ROS_GATEWAY_PORT);
 
     if (bind(socket_, (sockaddr *) &myAddr_, sizeof(myAddr_)) < 0) {
-        LOG_ERROR("bind socket failed");
+        LOG_ERROR("RosNetworkGatewayClient: Bind to port %d failed (errno=%d: %s). "
+                  "Another process may be using this port. ROS topic data unavailable.",
+                  Config::ROS_GATEWAY_PORT, errno, strerror(errno));
+        close(socket_);
+        socket_ = -1;
+        isInitialized_ = false;
+        return;
     }
 
+    isInitialized_ = true;
+    running_ = true;
+    LOG_INFO("RosNetworkGatewayClient: Listening for ROS messages on port %d",
+             Config::ROS_GATEWAY_PORT);
     listenerThread_ = std::thread(&RosNetworkGatewayClient::listenForMessages, this);
 }
 
 RosNetworkGatewayClient::~RosNetworkGatewayClient() {
-    if (listenerThread_.joinable()) listenerThread_.join();
-    if (socket_ >= 0) close(socket_);
+    running_ = false;
+    if (socket_ >= 0) {
+        shutdown(socket_, SHUT_RDWR);  // Unblock recvfrom
+        close(socket_);
+        socket_ = -1;
+    }
+    if (listenerThread_.joinable()) {
+        listenerThread_.join();
+    }
 }
 
 void RosNetworkGatewayClient::listenForMessages() {
-    while (true) {
+    if (!isInitialized_) {
+        LOG_ERROR("RosNetworkGatewayClient: Listener started without initialization, exiting");
+        return;
+    }
+
+    LOG_INFO("RosNetworkGatewayClient: Listener thread started");
+
+    while (running_) {
         std::vector<uint8_t> buffer(BUFFER_SIZE);
 
         ssize_t received = recvfrom(socket_, buffer.data(), buffer.size(), 0,
                                     (sockaddr *) &serverAddr_, &serverAddrLen_);
 
-        if (received <= 0)
+        if (received <= 0) {
+            if (!running_) break;  // Normal shutdown
             continue;
+        }
 
         buffer.resize(received);
 
@@ -52,13 +79,8 @@ void RosNetworkGatewayClient::listenForMessages() {
             continue;
         }
 
-//        double now = std::chrono::duration<double>(
-//                std::chrono::system_clock::now().time_since_epoch())
-//                .count();
-//        double delay_ms = (now - timestamp) * 1000.0;
-//
-//        LOG_INFO("ROS Topic: %s (%s)\n  Timestamp: %.3f  Delay: %.1f ms\n  Payload: %s",
-//                 topic.c_str(), type.c_str(), timestamp, delay_ms, payload.c_str());
+        LOG_DEBUG("ROS Topic: %s (%s), timestamp: %.3f, payload: %s",
+                  topic.c_str(), type.c_str(), timestamp, payload.c_str());
 
         try {
             if (schemaRegistry_.registerIfSchema(type, payload)) { continue; };

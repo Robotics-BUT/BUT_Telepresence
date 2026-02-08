@@ -1,11 +1,9 @@
-//
-// Created by standa on 05.01.25.
-//
 #pragma once
 
 #include <jni.h>
 #include <android_native_app_glue.h>
-#include "common.h"
+#include "types/app_state.h"
+#include "utils/network_utils.h"
 
 class StateStorage {
 public:

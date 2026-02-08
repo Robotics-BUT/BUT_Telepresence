@@ -1,9 +1,19 @@
-//
-// Created by stand on 30.07.2024.
-//
 #pragma once
 
 #include <GLES3/gl3.h>
+#include <string>
+#include "utils/string_utils.h"
+#include "types/input_types.h"
+
+/**
+ * Convert OpenXR version to human-readable string
+ */
+inline std::string GetXrVersionString(XrVersion ver) {
+    return Fmt("%d.%d.%d",
+               XR_VERSION_MAJOR(ver),
+               XR_VERSION_MINOR(ver),
+               XR_VERSION_PATCH(ver));
+}
 
 struct render_target_t {
     GLuint texc_id; /* color */

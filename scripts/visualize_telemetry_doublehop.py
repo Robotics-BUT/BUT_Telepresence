@@ -51,7 +51,7 @@ def plot_latency_breakdown(df: pd.DataFrame, ax: plt.Axes, latency_max: float = 
                  labels=[s.replace('_ms', '') for s in stages],
                  alpha=0.8)
     ax.axvline(x=pd.Timestamp("2026-01-26T16:29:23"), color=(0, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/1Mbit/Stereo/60FPS')
-    ax.axvline(x=pd.Timestamp("2026-01-26T16:29:54"), color=(0, 0, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/1Mbit/Stereo/60FPS')
+    ax.axvline(x=pd.Timestamp("2026-01-26T16:29:54"), color=(0, 0, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/3Mbit/Stereo/60FPS')
     ax.axvline(x=pd.Timestamp("2026-01-26T16:30:23"), color=(0, 1, 0), alpha=0.75, linestyle='-', linewidth=1, label='Headset menu opened')
     ax.axvline(x=pd.Timestamp("2026-01-26T16:30:29"), color=(0, 1, 1), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.265/3Mbit/Stereo/30FPS')
     ax.axvline(x=pd.Timestamp("2026-01-26T16:31:10"), color=(1, 0, 0), alpha=0.75, linestyle='-', linewidth=1, label='FullHD/H.264/3Mbit/Stereo/60FPS')
@@ -164,7 +164,7 @@ def main():
     print(f"Rendering {len(df)} samples")
 
     fig, axes = plt.subplots(2, figsize=(14, 10))
-    fig.suptitle(f'Telemetry Analysis: {args.csv_file.name}', fontsize=14)
+    fig.suptitle(f"Telemetry Analysis: Double-Hop 2.4 GHz Test (Lab AP)", fontsize=14)
 
     plot_latency_breakdown(df, axes[0], latency_max=args.latency_max)
     plot_total_latency(df, axes[1], latency_max=args.latency_max)
@@ -180,7 +180,7 @@ def main():
     plt.tight_layout()
 
     if args.output:
-        plt.savefig(args.output, dpi=150)
+        plt.savefig(args.output, dpi=300)
         print(f"Saved to {args.output}")
     else:
         plt.show()

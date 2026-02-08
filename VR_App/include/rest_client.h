@@ -1,11 +1,8 @@
-//
-// Created by standa on 27.08.24.
-//
-#include "pch.h"
-#include "common.h"
-#include "httplib.h"
-
 #pragma once
+
+#include "pch.h"
+#include "types/app_state.h"
+#include "httplib.h"
 
 class RestClient {
 public:

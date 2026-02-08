@@ -1,20 +1,21 @@
-//
-// Created by stand on 28.07.2025.
-//
 #include <boost/asio.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <array>
 #include <chrono>
+#include <sys/socket.h>
 #include "pch.h"
 #include "log.h"
 #include "ntp_timer.h"
 
 using boost::asio::ip::udp;
 
-NtpTimer::NtpTimer(const std::string &ntpServerAddress) : ntpServerAddress_(ntpServerAddress) {};
+NtpTimer::NtpTimer(const std::string &ntpServerAddress, const std::string &fallbackServerAddress)
+        : ntpServerAddress_(ntpServerAddress), fallbackServerAddress_(fallbackServerAddress) {
+    LOG_INFO("NtpTimer: Initializing with NTP server '%s' (fallback: '%s')",
+             ntpServerAddress_.c_str(), fallbackServerAddress_.c_str());
+};
 
 void NtpTimer::StartAutoSync() {
-    //LOG_INFO("NTPCLIENT: Starting auto sync with %s every 5 seconds...", ntpServerAddress_.c_str());
     timer_ = std::make_unique<boost::asio::steady_timer>(io_);
     auto syncLoop = std::make_shared<std::function<void()>>();
     *syncLoop = [this, syncLoop]() {
@@ -23,13 +24,10 @@ void NtpTimer::StartAutoSync() {
         auto handler = [this, syncLoop](const boost::system::error_code &ec) {
             try {
                 if (!ec) {
-                    //LOG_INFO("NTPCLIENT: Timer triggered, scheduling next sync...");
-                    (*syncLoop)();  // safe if alive
-                } else {
-                    //LOG_ERROR("NTPCLIENT: Timer error: %s", ec.message().c_str());
+                    (*syncLoop)();
                 }
             } catch (const std::exception &e) {
-                //LOG_ERROR("NTPCLIENT: Exception in timer callback: %s", e.what());
+                LOG_ERROR("NtpTimer: Exception in timer callback: %s", e.what());
             }
         };
         timer_->async_wait(handler);
@@ -43,7 +41,6 @@ void NtpTimer::StartAutoSync() {
 }
 
 void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
-    //LOG_INFO("NTPCLIENT: Sync underway...");
     std::vector<Sample> goodSamples;
 
     for (int i = 0; i < 3; ++i) {
@@ -53,6 +50,20 @@ void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }
+
+    // Fall back to public NTP server if primary is unreachable
+    if (goodSamples.empty() && !usingFallback_ &&
+        consecutiveSyncFailures_ >= FALLBACK_THRESHOLD && !fallbackServerAddress_.empty()) {
+        LOG_INFO("NtpTimer: Primary NTP server '%s' unreachable after %d attempts, "
+                 "falling back to '%s'",
+                 ntpServerAddress_.c_str(), consecutiveSyncFailures_.load(),
+                 fallbackServerAddress_.c_str());
+        ntpServerAddress_ = fallbackServerAddress_;
+        usingFallback_ = true;
+        consecutiveSyncFailures_ = 0;
+        return;
+    }
+
     if (goodSamples.empty()) return;
 
     uint64_t bestRtt = std::numeric_limits<uint64_t>::max();
@@ -76,21 +87,37 @@ void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
 
     lastSyncedTimestampLocal_ = GetCurrentTimeUsNonAdjusted();
 
-    //LOG_INFO("NTPCLIENT: Selected sample Offset=%ld ms | RTT=%lu us | Diff=%ld us",
-    //         best.offset / 1000, best.rtt, best.diff);
-
-    //LOG_INFO("NTPCLIENT: Current offset=%ld ms", smoothedOffsetUs_ / 1000);
+    LOG_DEBUG("NtpTimer: Selected sample Offset=%ld ms | RTT=%lu us | Diff=%ld us",
+              best.offset / 1000, (unsigned long)best.rtt, best.diff);
+    LOG_DEBUG("NtpTimer: Current smoothed offset=%ld ms", smoothedOffsetUs_ / 1000);
 }
 
 std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
     try {
-        //LOG_INFO("NTPCLIENT: Fetching NTP sample...");
         udp::resolver resolver(io);
-        udp::endpoint serverEndpoint = *resolver.resolve(udp::v4(), ntpServerAddress_, "123").begin();
+        boost::system::error_code ec;
+        auto results = resolver.resolve(udp::v4(), ntpServerAddress_, "123", ec);
 
+        if (ec || results.empty()) {
+            int failures = ++consecutiveSyncFailures_;
+            if (failures == 1) {
+                LOG_ERROR("NtpTimer: Failed to resolve NTP server '%s': %s. "
+                          "Time sync unavailable - latency measurements may be inaccurate.",
+                          ntpServerAddress_.c_str(), ec.message().c_str());
+            }
+            syncHealthy_ = false;
+            return std::nullopt;
+        }
+
+        udp::endpoint serverEndpoint = *results.begin();
         udp::socket socket(io);
         socket.open(udp::v4());
-        //socket.set_option(boost::asio::socket_base::receive_timeout(std::chrono::seconds(1)));
+
+        // Set receive timeout to prevent blocking indefinitely
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        setsockopt(socket.native_handle(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         std::array<uint8_t, 48> request{};
         request[0] = 0b11100011;  // LI = 3 (unsynchronized), Version = 4, Mode = 3 (client)
@@ -108,14 +135,20 @@ std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
 
         std::array<uint8_t, 48> response{};
         udp::endpoint senderEndpoint;
-        boost::system::error_code ec;
+        boost::system::error_code recv_ec;
 
-        size_t len = socket.receive_from(boost::asio::buffer(response), senderEndpoint, 0, ec);
+        size_t len = socket.receive_from(boost::asio::buffer(response), senderEndpoint, 0, recv_ec);
         auto T4 = GetCurrentTimeUsNonAdjusted();
-        //LOG_INFO("NTPCLIENT: Received a response from the NTP server...");
+        LOG_DEBUG("NtpTimer: Received response from NTP server");
 
-        if (ec || len < 48) {
-            //LOG_ERROR("NTPCLIENT: Failed to receive NTP response!");
+        if (recv_ec || len < 48) {
+            int failures = ++consecutiveSyncFailures_;
+            if (failures == 1) {
+                LOG_ERROR("NtpTimer: Failed to receive NTP response from '%s': %s. "
+                          "Using local time only.",
+                          ntpServerAddress_.c_str(), recv_ec ? recv_ec.message().c_str() : "incomplete response");
+            }
+            syncHealthy_ = false;
             return std::nullopt;
         }
 
@@ -136,14 +169,24 @@ std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
         int64_t offset = ((int64_t)(T2 - T1) + (int64_t)(T3 - T4)) / 2;
         uint64_t delay = ((T4 - T1) - (T3 - T2));
 
-
-        //("NTPCLIENT: Offset=%ld us | RTT=%lu us", offset, delay);
+        LOG_DEBUG("NtpTimer: Sample offset=%ld us | RTT=%lu us", offset, (unsigned long)delay);
 
         if (delay > 20000) return std::nullopt; // reject bad RTTs
 
+        // Successful sync
+        if (consecutiveSyncFailures_ > 0) {
+            LOG_INFO("NtpTimer: Sync recovered after %d failures", consecutiveSyncFailures_.load());
+        }
+        consecutiveSyncFailures_ = 0;
+        syncHealthy_ = true;
+
         return Sample{offset, delay, GetCurrentTimeUs() - T3};
     } catch (const std::exception &e) {
-        //LOG_ERROR("NTPCLIENT: Exception during sync: %s", e.what());
+        int failures = ++consecutiveSyncFailures_;
+        if (failures == 1) {
+            LOG_ERROR("NtpTimer: Sync exception: %s. Using local time.", e.what());
+        }
+        syncHealthy_ = false;
         return std::nullopt;
     }
 }

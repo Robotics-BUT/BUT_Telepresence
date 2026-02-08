@@ -1,6 +1,3 @@
-//
-// Created by standa on 05.01.25.
-//
 #include "state_storage.h"
 
 StateStorage::StateStorage(android_app *app) {
@@ -38,11 +35,11 @@ void StateStorage::SaveAppState(const AppState &appState) {
         SaveKeyValuePair(editor, putString, "jetson_ip", IpToString(appState.streamingConfig.jetson_ip));
         SaveKeyValuePair(editor, putString, "port_left", appState.streamingConfig.portLeft);
         SaveKeyValuePair(editor, putString, "port_right", appState.streamingConfig.portRight);
-        SaveKeyValuePair(editor, putString, "codec", appState.streamingConfig.codec);
+        SaveKeyValuePair(editor, putString, "codec", static_cast<int>(appState.streamingConfig.codec));
         SaveKeyValuePair(editor, putString, "encoding_quality", appState.streamingConfig.encodingQuality);
         SaveKeyValuePair(editor, putString, "bitrate", appState.streamingConfig.bitrate);
         SaveKeyValuePair(editor, putString, "resolution", appState.streamingConfig.resolution.getLabel());
-        SaveKeyValuePair(editor, putString, "video_mode", appState.streamingConfig.videoMode);
+        SaveKeyValuePair(editor, putString, "video_mode", static_cast<int>(appState.streamingConfig.videoMode));
         SaveKeyValuePair(editor, putString, "fps", appState.streamingConfig.fps);
 
         SaveKeyValuePair(editor, putString, "aspect_ratio_mode", static_cast<int>(appState.aspectRatioMode));
@@ -140,6 +137,9 @@ std::string StateStorage::LoadValue(jobject& sharedPreferences, jmethodID& getSt
 
     const char* resultCStr = env_->GetStringUTFChars(jResult, nullptr);
     std::string result(resultCStr);
+
+    env_->ReleaseStringUTFChars(jResult, resultCStr);
+    env_->DeleteLocalRef(jResult);
 
     return result;
 }

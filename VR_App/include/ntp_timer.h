@@ -1,10 +1,8 @@
-//
-// Created by stand on 28.07.2025.
-//
 #pragma once
 #include <string>
 #include <cstdint>
 #include <tuple>
+#include <atomic>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 
@@ -16,7 +14,8 @@ struct Sample {
 
 class NtpTimer {
 public:
-    explicit NtpTimer(const std::string& ntpServerAddress);
+    explicit NtpTimer(const std::string& ntpServerAddress,
+                      const std::string& fallbackServerAddress = "pool.ntp.org");
 
     void StartAutoSync();
 
@@ -29,6 +28,10 @@ public:
         return GetCurrentTimeUsNonAdjusted() - lastSyncedTimestampLocal_;
     }
 
+    // Connection health status
+    [[nodiscard]] bool IsSyncHealthy() const { return syncHealthy_; }
+    [[nodiscard]] int GetConsecutiveFailures() const { return consecutiveSyncFailures_; }
+
 private:
     void SyncWithServer(boost::asio::io_context& io);
 
@@ -37,14 +40,21 @@ private:
     static uint64_t GetCurrentTimeUsNonAdjusted();
 
     std::string ntpServerAddress_;
+    std::string fallbackServerAddress_;
+    bool usingFallback_{false};
 
     int64_t smoothedOffsetUs_ = 0;
 
     bool hasInitialOffset_ = false;
     uint64_t lastSyncedTimestampLocal_ = 0;
 
+    // Sync health tracking
+    std::atomic<bool> syncHealthy_{false};
+    std::atomic<int> consecutiveSyncFailures_{0};
+
     static constexpr uint32_t NTP_TIMESTAMP_DELTA = 2208988800U;
     static constexpr double alpha = 0.1;
+    static constexpr int FALLBACK_THRESHOLD = 5;
 
     boost::asio::io_context io_;
     std::unique_ptr<boost::asio::steady_timer> timer_;

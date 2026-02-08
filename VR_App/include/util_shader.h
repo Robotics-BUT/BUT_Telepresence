@@ -1,6 +1,3 @@
-//
-// Created by stand on 16.08.2024.
-//
 #pragma once
 struct shader_obj_t {
     GLuint program;

@@ -24,11 +24,38 @@ GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair
 
     EGLDisplay egl_dpy = egl_get_display();
     EGLContext egl_ctx = egl_get_context();
+
+    if (egl_dpy == EGL_NO_DISPLAY) {
+        LOG_ERROR("GstreamerPlayer: EGL display not available");
+        return;
+    }
+    if (egl_ctx == EGL_NO_CONTEXT) {
+        LOG_ERROR("GstreamerPlayer: EGL context not available");
+        return;
+    }
+
     auto *gst_display = reinterpret_cast<GstGLDisplay *>(gst_gl_display_egl_new_with_egl_display(
             egl_dpy));
+    if (!gst_display) {
+        LOG_ERROR("GstreamerPlayer: Failed to create GstGLDisplay from EGL display");
+        return;
+    }
+
     glContext_ = gst_gl_context_new_wrapped(gst_display, (guintptr) egl_ctx, GST_GL_PLATFORM_EGL,
                                             GST_GL_API_GLES2);
+    if (!glContext_) {
+        LOG_ERROR("GstreamerPlayer: Failed to wrap GL context");
+        gst_object_unref(gst_display);
+        return;
+    }
+
     gContext_ = gst_context_new("gst.gl.app_context", TRUE);
+    if (!gContext_) {
+        LOG_ERROR("GstreamerPlayer: Failed to create GStreamer context");
+        gst_object_unref(gst_display);
+        return;
+    }
+
     GstStructure *s = gst_context_writable_structure(gContext_);
     gst_structure_set(s, "display", GST_TYPE_GL_DISPLAY, gst_display, "context",
                       GST_TYPE_GL_CONTEXT, glContext_, nullptr);
@@ -37,6 +64,8 @@ GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair
     /* Create our own GLib Main Context and make it the default one */
     gMainContext_ = g_main_context_new();
     g_main_context_push_thread_default(gMainContext_);
+
+    LOG_INFO("GstreamerPlayer: GL context initialized successfully");
 }
 
 GstreamerPlayer::~GstreamerPlayer() {
@@ -193,11 +222,24 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
 void
 GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
                                     const StreamingConfig &config) {
-    GstBus *bus;
-    GSource *bus_source;
     GError *error = nullptr;
 
     LOG_INFO("(Re)configuring GStreamer pipelines");
+
+    // Validate prerequisites
+    if (!gContext_) {
+        LOG_ERROR("GStreamer GL context not initialized - cannot configure pipelines");
+        return;
+    }
+    if (!camPair_) {
+        LOG_ERROR("Camera pair not initialized - cannot configure pipelines");
+        return;
+    }
+    if (config.resolution.getWidth() <= 0 || config.resolution.getHeight() <= 0) {
+        LOG_ERROR("Invalid resolution %dx%d - cannot configure pipelines",
+                  config.resolution.getWidth(), config.resolution.getHeight());
+        return;
+    }
 
     // Stop and clean up existing pipelines if they exist
     if (pipelineLeft_) {
@@ -304,8 +346,8 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     int payload = (config.codec == Codec::JPEG) ? 26 : 96;
 
     // Configure left and right pipelines
-    configureSinglePipeline(pipelineLeft_, "left", IP_CONFIG_LEFT_CAMERA_PORT, config, xDimString, payload);
-    configureSinglePipeline(pipelineRight_, "right", IP_CONFIG_RIGHT_CAMERA_PORT, config, xDimString, payload);
+    configureSinglePipeline(pipelineLeft_, "left", Config::LEFT_CAMERA_PORT, config, xDimString, payload);
+    configureSinglePipeline(pipelineRight_, "right", Config::RIGHT_CAMERA_PORT, config, xDimString, payload);
 
     // Start both pipelines
     gst_element_set_state(pipelineLeft_, GST_STATE_PLAYING);
@@ -333,7 +375,7 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
         return GST_FLOW_ERROR;
     }
 
-    //LOG_INFO("GSTREAMER - sample arrived");
+    LOG_DEBUG("GStreamer: sample arrived");
 
     CamPair *pair = callbackObj->first;
 
@@ -423,7 +465,7 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
 
         // vframe.data[0] contains a GLuint* with the texture ID
         GLuint tex_id = *(guint *) vframe.data[0];
-        //LOG_INFO("GSTREAMER GL frame: texture id = %u", tex_id);
+        LOG_DEBUG("GStreamer: GL frame texture id=%u", tex_id);
 
         frame.glTexture = tex_id;
         frame.hasGlTexture = true;
@@ -453,36 +495,33 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
 
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 0, &myInfoBuf, &size_64) != 0) {
         stats->frameId = *(static_cast<uint64_t *>(myInfoBuf));
-        //LOG_INFO("GSTREAMER: New frameid from %s - number of packets: %s", identity->object.parent->name, std::to_string(stats->_packetsPerFrame).c_str());
-        stats->_packetsPerFrame = 0;
+        LOG_DEBUG("GStreamer: New frameid from %s, packets in prev frame: %u",
+                  identity->object.parent->name, stats->packetsPerFrame.load());
+        stats->packetsPerFrame = 0;
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 1, &myInfoBuf, &size_64) != 0) {
         stats->camera = *(static_cast<uint64_t *>(myInfoBuf));
-        //LOG_INFO("GSTREAMER: New camera from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 2, &myInfoBuf, &size_64) != 0) {
         stats->vidConv = *(static_cast<uint64_t *>(myInfoBuf));
-        //LOG_INFO("GSTREAMER: New vidconv from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 3, &myInfoBuf, &size_64) != 0) {
         stats->enc = *(static_cast<uint64_t *>(myInfoBuf));
-        //LOG_INFO("GSTREAMER: New enc from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 4, &myInfoBuf, &size_64) != 0) {
         stats->rtpPay = *(static_cast<uint64_t *>(myInfoBuf));
-        //LOG_INFO("GSTREAMER: New rtppay timestamp from %s", identity->object.parent->name);
     }
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 5, &myInfoBuf, &size_64) != 0) {
         stats->rtpPayTimestamp = *(static_cast<uint64_t *>(myInfoBuf));
-        //LOG_INFO("GSTREAMER: New udpsink timestamp from %s", identity->object.parent->name);
     }
     gst_rtp_buffer_unmap(&rtp_buf);
 
-    //LOG_INFO("GSTREAMER: New rtp header from %s frame: %s", identity->object.parent->name, std::to_string(stats->frameId).c_str());
+    LOG_DEBUG("GStreamer: RTP header from %s, frame %lu",
+              identity->object.parent->name, (unsigned long)stats->frameId.load());
     // This is so the last packet of rtp gets saved
     stats->udpSrcTimestamp = ntpTimer->GetCurrentTimeUs();
     stats->udpStream = stats->udpSrcTimestamp - stats->rtpPayTimestamp;
-    stats->_packetsPerFrame += 1;
+    stats->packetsPerFrame += 1;
 }
 
 void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpointer data) {
@@ -509,15 +548,15 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
         // Update running average history after all stats are computed
         stats->updateHistory();
 
-//        LOG_INFO(
-//                "GSTREAMER: %s Pipeline latencies: camera: %lu, vidconv: %lu, enc: %lu, rtpPay: %lu, udpStream: %lu, rtpDepay: %lu, dec: %lu, queue: %lu, total: %lu",
-//                identity->object.parent->name,
-//                (unsigned long) stats->camera,
-//                (unsigned long) stats->vidConv, (unsigned long) stats->enc,
-//                (unsigned long) stats->rtpPay, (unsigned long) stats->udpStream,
-//                (unsigned long) stats->rtpDepay, (unsigned long) stats->dec,
-//                (unsigned long) stats->queue,
-//                (unsigned long) stats->totalLatency);
+        LOG_DEBUG("GStreamer: %s latencies (us): camera=%lu vidconv=%lu enc=%lu rtpPay=%lu "
+                  "udpStream=%lu rtpDepay=%lu dec=%lu queue=%lu total=%lu",
+                  identity->object.parent->name,
+                  (unsigned long) stats->camera.load(),
+                  (unsigned long) stats->vidConv.load(), (unsigned long) stats->enc.load(),
+                  (unsigned long) stats->rtpPay.load(), (unsigned long) stats->udpStream.load(),
+                  (unsigned long) stats->rtpDepay.load(), (unsigned long) stats->dec.load(),
+                  (unsigned long) stats->queue.load(),
+                  (unsigned long) stats->totalLatency.load());
     }
 }
 
@@ -568,7 +607,7 @@ GstreamerPlayer::udpPacketProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpoi
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
     last_time = now;
 
-    //LOG_INFO("[UDP Packet] Arrived. Interval: %lld ms", elapsed);
+    LOG_DEBUG("GStreamer: UDP packet arrived, interval: %lld ms", elapsed);
 
     return GST_PAD_PROBE_OK;
 }

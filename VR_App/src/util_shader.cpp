@@ -1,6 +1,3 @@
-//
-// Created by stand on 16.08.2024.
-//
 #include <string>
 #include <GLES3/gl3.h>
 #include "pch.h"

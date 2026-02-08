@@ -144,8 +144,7 @@ void android_main(struct android_app *app) {
         std::string nativeLibraryPath = GetNativeLibraryPath(Env, app->activity->clazz);
         LOG_INFO("Native Library Path: %s", nativeLibraryPath.c_str());
 
-        // Log hardware-accelerated codecs
-        //LogHardwareAcceleratedCodecs(Env);
+        LogHardwareAcceleratedCodecs(Env);
 
         // Initialize GST
         jobject activity = app->activity->clazz;

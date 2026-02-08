@@ -1,6 +1,3 @@
-//
-// Created by standa on 10/6/25.
-//
 #pragma once
 
 #include "pch.h"
@@ -8,6 +5,8 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unordered_map>
+#include <atomic>
+#include <cstring>
 #include "BS_thread_pool.hpp"
 #include <nlohmann/json.hpp>
 
@@ -156,9 +155,14 @@ public:
     explicit RosNetworkGatewayClient();
     ~RosNetworkGatewayClient();
 
+    [[nodiscard]] bool isInitialized() const { return isInitialized_; }
+
 private:
 
     void listenForMessages();
+
+    std::atomic<bool> isInitialized_{false};
+    std::atomic<bool> running_{true};
 
     static bool parseMessage(const std::vector<uint8_t> &buffer,
                              double &timestamp,

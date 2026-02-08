@@ -6,10 +6,13 @@
 #include <unistd.h>
 
 RobotControlSender::RobotControlSender(StreamingConfig &config, NtpTimer *ntpTimer)
-        : ntpTimer_(ntpTimer), socket_(socket(AF_INET, SOCK_DGRAM, 0)) {
+        : ntpTimer_(ntpTimer), socket_(socket(AF_INET, SOCK_DGRAM, 0)),
+          destIpString_(IpToString(config.jetson_ip)) {
 
     if (socket_ < 0) {
-        LOG_ERROR("RobotControlSender: socket creation failed - errno: %d", errno);
+        LOG_ERROR("RobotControlSender: Socket creation failed (errno=%d: %s). "
+                  "Head tracking and robot control will not work.",
+                  errno, strerror(errno));
         isInitialized_ = false;
         return;
     }
@@ -17,12 +20,12 @@ RobotControlSender::RobotControlSender(StreamingConfig &config, NtpTimer *ntpTim
     // Configure destination address
     memset(&destAddr_, 0, sizeof(destAddr_));
     destAddr_.sin_family = AF_INET;
-    destAddr_.sin_addr.s_addr = inet_addr(IpToString(config.jetson_ip).c_str());
-    destAddr_.sin_port = htons(IP_CONFIG_SERVO_PORT);
+    destAddr_.sin_addr.s_addr = inet_addr(destIpString_.c_str());
+    destAddr_.sin_port = htons(Config::SERVO_PORT);
 
     isInitialized_ = true;
-    LOG_INFO("RobotControlSender: Initialized successfully, sending to %s:%d",
-             IpToString(config.jetson_ip).c_str(), IP_CONFIG_SERVO_PORT);
+    LOG_INFO("RobotControlSender: Initialized, sending to %s:%d",
+             destIpString_.c_str(), Config::SERVO_PORT);
 }
 
 RobotControlSender::~RobotControlSender() {
@@ -108,7 +111,23 @@ void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, floa
                           (sockaddr *) &destAddr_, sizeof(destAddr_));
 
     if (sent < 0) {
-        LOG_ERROR("RobotControlSender: Failed to send head pose packet - errno: %d", errno);
+        int failures = ++consecutiveFailures_;
+        if (failures == 1) {
+            LOG_ERROR("RobotControlSender: Head pose send failed (errno=%d: %s). "
+                      "Robot may not be receiving head tracking data.",
+                      errno, strerror(errno));
+        } else if (failures == FAILURE_THRESHOLD) {
+            LOG_ERROR("RobotControlSender: %d consecutive send failures to %s:%d. "
+                      "Check network connection and robot controller status.",
+                      failures, destIpString_.c_str(), Config::SERVO_PORT);
+        }
+    } else {
+        if (consecutiveFailures_ > 0) {
+            LOG_INFO("RobotControlSender: Connection recovered after %d failures",
+                     consecutiveFailures_.load());
+        }
+        consecutiveFailures_ = 0;
+        ++successfulSends_;
     }
 }
 
@@ -137,7 +156,14 @@ void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, fl
                           (sockaddr *) &destAddr_, sizeof(destAddr_));
 
     if (sent < 0) {
-        LOG_ERROR("RobotControlSender: Failed to send robot control packet - errno: %d", errno);
+        int failures = ++consecutiveFailures_;
+        if (failures == 1) {
+            LOG_ERROR("RobotControlSender: Robot control send failed (errno=%d: %s). "
+                      "Robot movement commands may not be received.",
+                      errno, strerror(errno));
+        }
+    } else {
+        consecutiveFailures_ = 0;
     }
 }
 
@@ -169,7 +195,10 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, u
                           (sockaddr *) &destAddr_, sizeof(destAddr_));
 
     if (sent < 0) {
-        LOG_ERROR("RobotControlSender: Failed to send debug info packet - errno: %d", errno);
+        // Debug info failures are less critical, just increment counter
+        consecutiveFailures_++;
+    } else {
+        consecutiveFailures_ = 0;
     }
 }
 

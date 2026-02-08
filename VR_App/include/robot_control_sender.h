@@ -1,11 +1,10 @@
-//
-// RobotControlSender - Sends robot control commands over UDP
-//
 #pragma once
 
 #include "pch.h"
 #include "log.h"
-#include "common.h"
+#include "types/app_state.h"
+#include "types/camera_types.h"
+#include "utils/network_utils.h"
 #include "BS_thread_pool.hpp"
 #include "ntp_timer.h"
 #include <sys/socket.h>
@@ -39,6 +38,9 @@ public:
     ~RobotControlSender();
 
     [[nodiscard]] bool isInitialized() const { return isInitialized_; }
+    [[nodiscard]] bool hasConnectionIssue() const { return consecutiveFailures_ >= FAILURE_THRESHOLD; }
+    [[nodiscard]] int getConsecutiveFailures() const { return consecutiveFailures_; }
+    [[nodiscard]] bool hasEverSucceeded() const { return successfulSends_ > 0; }
 
     // Send head pose (quaternion is converted to azimuth/elevation internally)
     void sendHeadPose(XrQuaternionf quatPose, float speed, BS::thread_pool<BS::tp::none> &threadPool);
@@ -73,6 +75,12 @@ private:
     struct sockaddr_in destAddr_{};
     std::atomic<bool> isInitialized_{false};
     NtpTimer *ntpTimer_;
+    std::string destIpString_;  // For error messages
+
+    // Connection health tracking
+    std::atomic<int> consecutiveFailures_{0};
+    std::atomic<int> successfulSends_{0};
+    static constexpr int FAILURE_THRESHOLD = 10;
 
     // Message types
     static constexpr uint8_t MSG_HEAD_POSE = 0x01;

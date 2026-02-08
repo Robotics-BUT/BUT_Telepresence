@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common.h"
+#include "utils/string_utils.h"
 
 #define ENUM_CASE_STR(name, val) case name: return #name;
 #define MAKE_TO_STRING_FUNC(enumType)                  \
