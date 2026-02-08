@@ -9,9 +9,7 @@
 #include "ntp_timer.h"
 #include "state_storage.h"
 #include "ros_network_gateway_client.h"
-
-#define HANDL_IN    "/user/hand/left/input"
-#define HANDR_IN    "/user/hand/right/input"
+#include "types/gui_setting.h"
 
 class TelepresenceProgram {
 
@@ -40,6 +38,8 @@ private:
 
     void HandleControllers();
 
+    void BuildSettings();
+
     XrInstance openxr_instance_ = XR_NULL_HANDLE;
     XrSystemId openxr_system_id_ = XR_NULL_SYSTEM_ID;
     XrSession openxr_session_ = XR_NULL_HANDLE;
@@ -54,6 +54,8 @@ private:
 
     bool mono_ = false;
     bool renderGui_ = true;
+    bool controlLockMovement_ = false;
+    bool controlLockGui_ = false;
 
     BS::thread_pool<BS::tp::none> gstreamerThreadPool_{1};
     BS::thread_pool<BS::tp::none> threadPool_{3};
@@ -70,4 +72,6 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> prevFrameStart_, frameStart_;
 
     std::shared_ptr<AppState> appState_{};
+
+    std::vector<GuiSetting> settings_;
 };

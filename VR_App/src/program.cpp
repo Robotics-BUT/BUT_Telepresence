@@ -6,9 +6,14 @@
 #include "render_imgui.h"
 
 #include <utility>
+#include <algorithm>
 #include <GLES3/gl32.h>
 
 #include "program.h"
+#include "utils/network_utils.h"
+
+#define HANDL_IN "/user/hand/left/input"
+#define HANDR_IN "/user/hand/right/input"
 
 TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
@@ -36,7 +41,7 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
     viewsurfaces_ = openxr_create_swapchains(&openxr_instance_, &openxr_system_id_, &openxr_session_);
 
-    ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip));//"195.113.144.201");
+    ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip));
     ntpTimer_->StartAutoSync();
     gstreamerPlayer_ = std::make_unique<GstreamerPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();
@@ -49,10 +54,14 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
     InitializeActions();
     InitializeStreaming();
+    BuildSettings();
 }
 
 TelepresenceProgram::~TelepresenceProgram() {
-    restClient_->StopStream();
+    if (restClient_ && appState_->connectionState.cameraServer == ConnectionStatus::Connected) {
+        LOG_INFO("TelepresenceProgram: Stopping camera stream...");
+        restClient_->StopStream();
+    }
 }
 
 void TelepresenceProgram::UpdateFrame() {
@@ -61,6 +70,17 @@ void TelepresenceProgram::UpdateFrame() {
 
     if (!openxr_is_session_running()) {
         return;
+    }
+
+    // Update NTP sync status for HUD display
+    if (ntpTimer_) {
+        if (ntpTimer_->IsSyncHealthy()) {
+            appState_->connectionState.ntpSync = ConnectionStatus::Connected;
+            appState_->ntpSyncStatus = "Synced";
+        } else if (ntpTimer_->GetConsecutiveFailures() > 0) {
+            appState_->connectionState.ntpSync = ConnectionStatus::Failed;
+            appState_->ntpSyncStatus = "Not Synced";
+        }
     }
 
     PollActions();
@@ -73,7 +93,7 @@ void TelepresenceProgram::RenderFrame() {
     prevFrameStart_ = frameStart_;
     frameStart_ = std::chrono::high_resolution_clock::now();
 
-    XrTime display_time, elapsed_us;
+    XrTime display_time;
     openxr_begin_frame(&openxr_session_, &display_time);
 
     PollPoses(display_time);
@@ -124,7 +144,7 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
     Quad quad{};
     quad.Pose.position = {0.0f, 0.0f, 0.0f};
     quad.Pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
-    if (appState_->aspectRatioMode == AspectRatioMode::FULLFOV) {
+    if (appState_->aspectRatioMode == AspectRatioMode::FullFOV) {
         quad.Scale = {3.56f, 3.56f / appState_->streamingConfig.resolution.getAspectRatio(), 0.0f};
     } else {
         quad.Scale = {3.56f * appState_->streamingConfig.resolution.getAspectRatio(), 3.56f, 0.0f};
@@ -155,10 +175,9 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
             imageHandle->stats->presentation.store(renderTime - frameReadyTime);
         }
 
-        render_scene(layerViews[i], rtarget, quad, appState_, imageHandle, renderGui_, false);
+        render_scene(layerViews[i], rtarget, quad, appState_, imageHandle, renderGui_, settings_);
 
         openxr_release_viewsurface(viewsurfaces_[i]);
-        auto end = std::chrono::high_resolution_clock::now();
     }
 
     layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -510,7 +529,16 @@ void TelepresenceProgram::SendControllerDatagram() {
     // Robot control sender (sends head pose and robot movement commands)
     if (robotControlSender_ == nullptr) {
         robotControlSender_ = std::make_unique<RobotControlSender>(appState_->streamingConfig, ntpTimer_.get());
+        if (robotControlSender_->isInitialized()) {
+            // UDP is connectionless - we can't know if destination is reachable until we try sending
+            appState_->connectionState.robotControl = ConnectionStatus::Connecting;
+            appState_->robotControlStatus = "Connecting";
+        } else {
+            appState_->connectionState.robotControl = ConnectionStatus::Failed;
+            appState_->robotControlStatus = "Socket Failed";
+        }
     }
+
     if (robotControlSender_->isInitialized()) {
         // Always send head pose
         robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, appState_->headMovementMaxSpeed, threadPool_);
@@ -528,21 +556,196 @@ void TelepresenceProgram::SendControllerDatagram() {
             auto snapshot = appState_->cameraStreamingStates.first.stats->snapshot();
             robotControlSender_->sendDebugInfo(snapshot, threadPool_);
         }
+
+        // Update connection status based on health
+        if (robotControlSender_->hasConnectionIssue()) {
+            if (appState_->connectionState.robotControl != ConnectionStatus::Failed) {
+                appState_->connectionState.robotControl = ConnectionStatus::Failed;
+                appState_->robotControlStatus = "Connection Lost";
+            }
+        } else if (robotControlSender_->hasEverSucceeded() &&
+                   appState_->connectionState.robotControl != ConnectionStatus::Connected) {
+            // Transition to Connected only after confirmed successful sends
+            appState_->connectionState.robotControl = ConnectionStatus::Connected;
+            appState_->robotControlStatus = "Connected";
+        }
     }
 }
 
 void TelepresenceProgram::InitializeStreaming() {
     restClient_ = std::make_unique<RestClient>(appState_->streamingConfig);
-    restClient_->StopStream();
-    restClient_->StartStream();
+    appState_->connectionState.cameraServer = ConnectionStatus::Connecting;
+    appState_->cameraServerStatus = "Connecting...";
 
+    // Stop any existing stream (OK to fail if not running)
+    restClient_->StopStream();
+
+    int startResult = restClient_->StartStream();
+    if (startResult != 0) {
+        appState_->connectionState.cameraServer = ConnectionStatus::Failed;
+        appState_->connectionState.lastError = "Camera server unreachable at " +
+            IpToString(appState_->streamingConfig.jetson_ip) + ":" +
+            std::to_string(Config::REST_API_PORT);
+        appState_->cameraServerStatus = "Failed";
+        LOG_ERROR("InitializeStreaming: Failed to start stream - camera server at %s:%d is unreachable. "
+                  "Verify the server is running and the IP address is correct in the GUI settings.",
+                  IpToString(appState_->streamingConfig.jetson_ip).c_str(), Config::REST_API_PORT);
+    } else {
+        appState_->connectionState.cameraServer = ConnectionStatus::Connected;
+        appState_->cameraServerStatus = "Connected";
+        LOG_INFO("InitializeStreaming: Successfully connected to camera server at %s:%d",
+                 IpToString(appState_->streamingConfig.jetson_ip).c_str(), Config::REST_API_PORT);
+    }
+
+    // Configure pipelines regardless - they will wait for data
     gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
 }
 
+void TelepresenceProgram::BuildSettings() {
+    auto noop = []() {};
+
+    settings_ = {
+        // --- Network ---
+        {
+            "Headset IP", GuiSettingType::IpAddress, "Network",
+            [this]() { return fmt::format("Headset IP: {}", IpToString(appState_->streamingConfig.headset_ip)); },
+            noop, noop, nullptr, 4
+        },
+        {
+            "Telepresence IP", GuiSettingType::IpAddress, "",
+            [this]() { return fmt::format("Telepresence IP: {}", IpToString(appState_->streamingConfig.jetson_ip)); },
+            [this]() { appState_->streamingConfig.jetson_ip[appState_->guiControl.focusedSegment] += 1; },
+            [this]() { appState_->streamingConfig.jetson_ip[appState_->guiControl.focusedSegment] -= 1; },
+            nullptr, 4
+        },
+
+        // --- Streaming & Rendering ---
+        {
+            "Codec", GuiSettingType::Text, "Streaming & Rendering",
+            [this]() { return fmt::format("Codec: {}", CodecToString(appState_->streamingConfig.codec)); },
+            [this]() {
+                auto& codec = appState_->streamingConfig.codec;
+                codec = static_cast<Codec>(
+                    (static_cast<int>(codec) + 1 + static_cast<int>(Codec::Count)) % static_cast<int>(Codec::Count));
+                if (codec == Codec::VP8 || codec == Codec::VP9) codec = Codec::H264;
+            },
+            [this]() {
+                auto& codec = appState_->streamingConfig.codec;
+                codec = static_cast<Codec>(
+                    (static_cast<int>(codec) - 1 + static_cast<int>(Codec::Count)) % static_cast<int>(Codec::Count));
+                if (codec == Codec::VP8 || codec == Codec::VP9) codec = Codec::JPEG;
+            }
+        },
+        {
+            "Encoding quality", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Encoding quality: {}", appState_->streamingConfig.encodingQuality); },
+            [this]() { appState_->streamingConfig.encodingQuality = std::min(appState_->streamingConfig.encodingQuality + 1, 100); },
+            [this]() { appState_->streamingConfig.encodingQuality = std::max(appState_->streamingConfig.encodingQuality - 1, 0); }
+        },
+        {
+            "Bitrate", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Bitrate: {}", appState_->streamingConfig.bitrate); },
+            [this]() { appState_->streamingConfig.bitrate = std::min(appState_->streamingConfig.bitrate + 1000000, 100000000); },
+            [this]() { appState_->streamingConfig.bitrate = std::max(appState_->streamingConfig.bitrate - 1000000, 1000000); }
+        },
+        {
+            "Video Mode", GuiSettingType::Text, "",
+            [this]() { return fmt::format("{}", VideoModeToString(appState_->streamingConfig.videoMode)); },
+            [this]() {
+                auto& vm = appState_->streamingConfig.videoMode;
+                vm = static_cast<VideoMode>(
+                    (static_cast<int>(vm) + 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
+                mono_ = (vm == VideoMode::Mono);
+            },
+            [this]() {
+                auto& vm = appState_->streamingConfig.videoMode;
+                vm = static_cast<VideoMode>(
+                    (static_cast<int>(vm) - 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
+                mono_ = (vm == VideoMode::Mono);
+            }
+        },
+        {
+            "Aspect Ratio", GuiSettingType::Text, "",
+            [this]() { return fmt::format("{}", AspectRatioModeToString(appState_->aspectRatioMode)); },
+            [this]() {
+                appState_->aspectRatioMode = static_cast<AspectRatioMode>(
+                    (static_cast<int>(appState_->aspectRatioMode) + 1 + static_cast<int>(AspectRatioMode::Count)) % static_cast<int>(AspectRatioMode::Count));
+            },
+            [this]() {
+                appState_->aspectRatioMode = static_cast<AspectRatioMode>(
+                    (static_cast<int>(appState_->aspectRatioMode) - 1 + static_cast<int>(AspectRatioMode::Count)) % static_cast<int>(AspectRatioMode::Count));
+            }
+        },
+        {
+            "FPS", GuiSettingType::Text, "",
+            [this]() { return fmt::format("FPS: {}", appState_->streamingConfig.fps); },
+            [this]() { if (appState_->streamingConfig.fps < 80) appState_->streamingConfig.fps += 1; },
+            [this]() { if (appState_->streamingConfig.fps > 1) appState_->streamingConfig.fps -= 1; }
+        },
+        {
+            "Resolution", GuiSettingType::Text, "",
+            [this]() {
+                auto& r = appState_->streamingConfig.resolution;
+                return fmt::format("Resolution: {}x{}({})", r.getWidth(), r.getHeight(), r.getLabel());
+            },
+            [this]() {
+                auto& r = appState_->streamingConfig.resolution;
+                if (r.getIndex() < CameraResolution::count() - 1)
+                    appState_->streamingConfig.resolution = CameraResolution::fromIndex(r.getIndex() + 1);
+            },
+            [this]() {
+                auto& r = appState_->streamingConfig.resolution;
+                if (r.getIndex() > 0)
+                    appState_->streamingConfig.resolution = CameraResolution::fromIndex(r.getIndex() - 1);
+            }
+        },
+
+        // --- Apply button ---
+        {
+            "Apply", GuiSettingType::Button, "",
+            nullptr, noop, noop,
+            [this]() {
+                stateStorage_->SaveAppState(*appState_);
+                init_scene(appState_->streamingConfig.resolution.getWidth(),
+                           appState_->streamingConfig.resolution.getHeight(), true);
+                gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
+
+                int updateResult = restClient_->UpdateStreamingConfig(appState_->streamingConfig);
+                if (updateResult != 0) {
+                    appState_->connectionState.cameraServer = ConnectionStatus::Failed;
+                    appState_->cameraServerStatus = "Update Failed";
+                    LOG_ERROR("HandleControllers: Failed to update streaming config - camera server not responding");
+                } else {
+                    appState_->connectionState.cameraServer = ConnectionStatus::Connected;
+                    appState_->cameraServerStatus = "Connected";
+                }
+            }
+        },
+
+        // --- Status Information ---
+        {
+            "Head movement max speed", GuiSettingType::Text, "Status Information",
+            [this]() { return fmt::format("Camera head movement max speed: {}", appState_->headMovementMaxSpeed); },
+            [this]() { if (appState_->headMovementMaxSpeed < 990000) appState_->headMovementMaxSpeed += 10000; },
+            [this]() { if (appState_->headMovementMaxSpeed > 110000) appState_->headMovementMaxSpeed -= 10000; }
+        },
+        {
+            "Head movement speed multiplier", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Head movement speed multiplier: {:.2}", appState_->headMovementSpeedMultiplier); },
+            [this]() { if (appState_->headMovementSpeedMultiplier < 2.0f) appState_->headMovementSpeedMultiplier += 0.1f; },
+            [this]() { if (appState_->headMovementSpeedMultiplier > 0.5f) appState_->headMovementSpeedMultiplier -= 0.1f; }
+        },
+        {
+            "Headset movement prediction", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Headset movement prediction: {} ms", appState_->headMovementPredictionMs); },
+            [this]() { if (appState_->headMovementPredictionMs < 100) appState_->headMovementPredictionMs += 1; },
+            [this]() { if (appState_->headMovementPredictionMs > 0) appState_->headMovementPredictionMs -= 1; }
+        },
+    };
+}
+
 void TelepresenceProgram::HandleControllers() {
-    static bool controlLockMovement = false;
-    static bool controlLockGui = false;
-    if (userState_.thumbstickPressed[Side::RIGHT] && !controlLockMovement) {
+    if (userState_.thumbstickPressed[Side::RIGHT] && !controlLockMovement_) {
         appState_->robotControlEnabled = !appState_->robotControlEnabled;
         if (!appState_->robotControlEnabled) {
             // Send stop command (all zeros) when disabling robot control
@@ -550,22 +753,22 @@ void TelepresenceProgram::HandleControllers() {
                 robotControlSender_->sendRobotControl(0.0f, 0.0f, 0.0f, threadPool_);
             }
         }
-        controlLockMovement = true;
+        controlLockMovement_ = true;
     }
-    if (!userState_.thumbstickPressed[Side::RIGHT] && controlLockMovement) {
-        controlLockMovement = false;
+    if (!userState_.thumbstickPressed[Side::RIGHT] && controlLockMovement_) {
+        controlLockMovement_ = false;
     }
 
     // Toggling GUI rendering
-    if (userState_.thumbstickPressed[Side::LEFT] && !controlLockGui) {
+    if (userState_.thumbstickPressed[Side::LEFT] && !controlLockGui_) {
         renderGui_ = !renderGui_;
         if (!renderGui_) {
             stateStorage_->SaveAppState(*appState_);
         }
-        controlLockGui = true;
+        controlLockGui_ = true;
     }
-    if (!userState_.thumbstickPressed[Side::LEFT] && controlLockGui) {
-        controlLockGui = false;
+    if (!userState_.thumbstickPressed[Side::LEFT] && controlLockGui_) {
+        controlLockGui_ = false;
     }
 
     // GUI interaction
@@ -599,171 +802,27 @@ void TelepresenceProgram::HandleControllers() {
             appState_->guiControl.changesEnqueued = true;
         }
 
-            // Selection move UP
+            // Value increment (Y button)
         else if (userState_.yPressed) {
-            switch (appState_->guiControl.focusedElement) {
-                case 0: // Headset IP
-                    break; // Block changing headset IP for now
-                    appState_->streamingConfig.headset_ip[appState_->guiControl.focusedSegment] += 1;
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 1: // Camera IP
-                    appState_->streamingConfig.jetson_ip[appState_->guiControl.focusedSegment] += 1;
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 2: // Codec
-                    appState_->streamingConfig.codec = static_cast<Codec>(
-                            (static_cast<int>(appState_->streamingConfig.codec) + 1 +
-                             static_cast<int>(Codec::Count)) % static_cast<int>(Codec::Count));
-                    if (appState_->streamingConfig.codec == Codec::VP8 || appState_->streamingConfig.codec == Codec::VP9) {
-                        appState_->streamingConfig.codec = Codec::H264; // Skip VP8 & VP9 for now
-                    }
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 3: // Encoding quality
-                    if (appState_->streamingConfig.encodingQuality < 100) {
-                        appState_->streamingConfig.encodingQuality += 1;
-                    }
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 4: // Bitrate
-                    if (appState_->streamingConfig.bitrate < 100000000) {
-                        appState_->streamingConfig.bitrate += 1000000;
-                    }
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 5: // Mono / Stereo
-                    appState_->streamingConfig.videoMode = static_cast<VideoMode>(
-                            (static_cast<int>(appState_->streamingConfig.videoMode) + 1 +
-                             static_cast<int>(VideoMode::CNT)) % static_cast<int>(VideoMode::CNT));
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 6: // FullScreen / FullFOV
-                    appState_->aspectRatioMode = static_cast<AspectRatioMode>((static_cast<int>(appState_->aspectRatioMode) + 1 +
-                                                                               static_cast<int>(AspectRatioMode::CNT2)) %
-                                                                              static_cast<int>(AspectRatioMode::CNT2));
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 7: // FPS
-                    if (appState_->streamingConfig.fps < 80) {
-                        appState_->streamingConfig.fps += 1;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 8: // Resolution
-                    if (appState_->streamingConfig.resolution.getIndex() < CameraResolution::count() - 1) {
-                        appState_->streamingConfig.resolution = CameraResolution::fromIndex(appState_->streamingConfig.resolution.getIndex() + 1);
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 10: // Camera head movement max speed
-                    if (appState_->headMovementMaxSpeed < 990000) {
-                        appState_->headMovementMaxSpeed += 10000;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 11: // Camera head movement speed multiplier
-                    if (appState_->headMovementSpeedMultiplier < 2.0f) {
-                        appState_->headMovementSpeedMultiplier += 0.1f;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 12: // Headset movement prediction time in ms
-                    if (appState_->headMovementPredictionMs < 100) {
-                        appState_->headMovementPredictionMs += 1;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-            }
-        }
-
-            // Selection move DOWN
-        else if (userState_.xPressed) {
-            switch (appState_->guiControl.focusedElement) {
-                case 0: // Headset IP
-                    break; // Block changing headset IP for now
-                    appState_->streamingConfig.headset_ip[appState_->guiControl.focusedSegment] -= 1;
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 1: // Camera IP
-                    appState_->streamingConfig.jetson_ip[appState_->guiControl.focusedSegment] -= 1;
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 2: // Codec
-                    appState_->streamingConfig.codec = static_cast<Codec>(
-                            (static_cast<int>(appState_->streamingConfig.codec) - 1 +
-                             static_cast<int>(Codec::Count)) % static_cast<int>(Codec::Count));
-                    if (appState_->streamingConfig.codec == Codec::VP8 || appState_->streamingConfig.codec == Codec::VP9) {
-                        appState_->streamingConfig.codec = Codec::JPEG; // Skip VP8 & VP9 for now
-                    }
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 3: // Encoding quality
-                    if (appState_->streamingConfig.encodingQuality > 0) {
-                        appState_->streamingConfig.encodingQuality -= 1;
-                    }
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 4: // Bitrate
-                    if (appState_->streamingConfig.bitrate > 1000000) {
-                        appState_->streamingConfig.bitrate -= 1000000;
-                    }
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 5: // Mono / Stereo
-                    appState_->streamingConfig.videoMode = static_cast<VideoMode>(
-                            (static_cast<int>(appState_->streamingConfig.videoMode) - 1 +
-                             static_cast<int>(VideoMode::CNT)) % static_cast<int>(VideoMode::CNT));
-                    appState_->guiControl.changesEnqueued = true;
-                    mono_ = appState_->streamingConfig.videoMode == VideoMode::MONO;
-                    break;
-                case 6: // FullScreen / FullFOV
-                    appState_->aspectRatioMode = static_cast<AspectRatioMode>((static_cast<int>(appState_->aspectRatioMode) - 1 +
-                                                                               static_cast<int>(AspectRatioMode::CNT2)) %
-                                                                              static_cast<int>(AspectRatioMode::CNT2));
-                    appState_->guiControl.changesEnqueued = true;
-                    break;
-                case 7: // FPS
-                    if (appState_->streamingConfig.fps > 1) {
-                        appState_->streamingConfig.fps -= 1;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 8: // Resolution
-                    if (appState_->streamingConfig.resolution.getIndex() > 0) {
-                        appState_->streamingConfig.resolution = CameraResolution::fromIndex(appState_->streamingConfig.resolution.getIndex() - 1);
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 10: // Camera head movement max speed
-                    if (appState_->headMovementMaxSpeed > 110000) {
-                        appState_->headMovementMaxSpeed -= 10000;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 11: // Camera head movement speed multiplier
-                    if (appState_->headMovementSpeedMultiplier > 0.5f) {
-                        appState_->headMovementSpeedMultiplier -= 0.1f;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-                case 12: // Headset movement prediction time in ms
-                    if (appState_->headMovementPredictionMs > 0) {
-                        appState_->headMovementPredictionMs -= 1;
-                        appState_->guiControl.changesEnqueued = true;
-                    }
-                    break;
-            }
-        }
-
-
-            // Apply streaming config button
-        else if (userState_.triggerValue[Side::LEFT] > 0.9f && appState_->guiControl.focusedElement == 9) {
-            stateStorage_->SaveAppState(*appState_);
-            init_scene(appState_->streamingConfig.resolution.getWidth(), appState_->streamingConfig.resolution.getHeight(), true);
-            gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
-            restClient_->UpdateStreamingConfig(appState_->streamingConfig);
+            auto& setting = settings_[appState_->guiControl.focusedElement];
+            if (setting.onIncrement) setting.onIncrement();
             appState_->guiControl.changesEnqueued = true;
+        }
+
+            // Value decrement (X button)
+        else if (userState_.xPressed) {
+            auto& setting = settings_[appState_->guiControl.focusedElement];
+            if (setting.onDecrement) setting.onDecrement();
+            appState_->guiControl.changesEnqueued = true;
+        }
+
+            // Button activation (left trigger)
+        else if (userState_.triggerValue[Side::LEFT] > 0.9f) {
+            auto& setting = settings_[appState_->guiControl.focusedElement];
+            if (setting.type == GuiSettingType::Button && setting.onActivate) {
+                setting.onActivate();
+                appState_->guiControl.changesEnqueued = true;
+            }
         }
     }
 }

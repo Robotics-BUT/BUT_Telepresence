@@ -6,6 +6,7 @@
 #include "imgui_impl_opengl3.h"
 #include "render_imgui.h"
 #include "openxr/openxr.h"
+#include "utils/string_utils.h"
 
 #define DISPLAY_SCALE_X 1.0f
 #define DISPLAY_SCALE_Y 1.0f
@@ -16,9 +17,6 @@ static ImVec2 s_win_size[10];
 static ImVec2 s_win_pos[10];
 static int s_win_num = 0;
 static ImVec2 s_mouse_pos;
-
-static int numberOfElements = 13;
-static int numberOfSegments = 5;
 
 int
 init_imgui() {
@@ -58,52 +56,17 @@ imgui_mousemove(int x, int y) {
     s_mouse_pos.y = y;
 }
 
-bool
-imgui_is_anywindow_hovered() {
-#if 1
-    int x = _X(s_mouse_pos.x);
-    int y = _Y(s_mouse_pos.y);
-    for (int i = 0; i < s_win_num; i++) {
-        int x0 = s_win_pos[i].x;
-        int y0 = s_win_pos[i].y;
-        int x1 = x0 + s_win_size[i].x;
-        int y1 = y0 + s_win_size[i].y;
-        if ((x >= x0) && (x < x1) && (y >= y0) && (y < y1))
-            return true;
-    }
-    return false;
-#else
-    return ImGui::IsAnyWindowHovered();
-#endif
-}
-
-static void render_settings_gui(const std::shared_ptr<AppState> &appState) {
+static void render_settings_gui(const std::shared_ptr<AppState> &appState,
+                                const std::vector<GuiSetting> &settings) {
     int win_w = 300;
     int win_h = 0;
     int win_x = 0;
     int win_y = 0;
 
+    int numberOfElements = static_cast<int>(settings.size());
+
     s_win_num = 0;
 
-    /* Show main window */
-//    win_y += win_h;
-//    win_h = 140;
-//    ImGui::SetNextWindowPos(ImVec2(_X(win_x), _Y(win_y)), ImGuiCond_FirstUseEver);
-//    ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_FirstUseEver);
-//    ImGui::Begin("Runtime");
-//    {
-//        ImGui::Text("OXR_RUNTIME: %s", appState->systemInfo.openXrRuntime.c_str());
-//        ImGui::Text("OXR_SYSTEM : %s", appState->systemInfo.openXrSystem.c_str());
-//        ImGui::Text("GL_VERSION : %s", appState->systemInfo.openGlVersion);
-//        ImGui::Text("GL_VENDOR  : %s", appState->systemInfo.openGlVendor);
-//        ImGui::Text("GL_RENDERER: %s", appState->systemInfo.openGlRenderer);
-//        ImGui::Text("Framerate: %f, Frametime: %f", appState->appFrameRate,
-//                    appState->appFrameTime / 1000.0f);
-//        s_win_pos[s_win_num] = ImGui::GetWindowPos();
-//        s_win_size[s_win_num] = ImGui::GetWindowSize();
-//        s_win_num++;
-//    }
-//    ImGui::End();
     if (appState->guiControl.changesEnqueued) {
         if (appState->guiControl.focusMoveUp) {
             appState->guiControl.focusedElement -= 1;
@@ -115,19 +78,23 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState) {
         if (appState->guiControl.focusMoveDown) {
             appState->guiControl.focusedElement += 1;
             appState->guiControl.focusedSegment = 0;
-            if (appState->guiControl.focusedElement >=
-                numberOfElements) { appState->guiControl.focusedElement = 0; }
+            if (appState->guiControl.focusedElement >= numberOfElements) {
+                appState->guiControl.focusedElement = 0;
+            }
         }
         if (appState->guiControl.focusMoveLeft) {
+            int maxSegments = settings[appState->guiControl.focusedElement].segments;
             appState->guiControl.focusedSegment -= 1;
             if (appState->guiControl.focusedSegment < 0) {
-                appState->guiControl.focusedSegment = numberOfSegments - 1;
+                appState->guiControl.focusedSegment = maxSegments - 1;
             }
         }
         if (appState->guiControl.focusMoveRight) {
+            int maxSegments = settings[appState->guiControl.focusedElement].segments;
             appState->guiControl.focusedSegment += 1;
-            if (appState->guiControl.focusedSegment >=
-                numberOfSegments) { appState->guiControl.focusedSegment = 0; }
+            if (appState->guiControl.focusedSegment >= maxSegments) {
+                appState->guiControl.focusedSegment = 0;
+            }
         }
         appState->guiControl.focusMoveUp = false;
         appState->guiControl.focusMoveDown = false;
@@ -138,82 +105,60 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState) {
     }
 
     win_y += win_h;
-    win_h = 480;
+    win_h = 560;
     ImGui::SetNextWindowPos(ImVec2(_X(win_x), _Y(win_y)), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_FirstUseEver);
     ImGui::Begin("Settings");
     {
-        ImGui::SeparatorText("Network");
-        focusable_text_ip(
-                fmt::format("Headset IP: {}", IpToString(appState->streamingConfig.headset_ip)),
-                appState->guiControl.focusedElement == 0,
-                appState->guiControl.focusedSegment
-        );
-        focusable_text_ip(
-                fmt::format("Telepresence IP: {}", IpToString(appState->streamingConfig.jetson_ip)),
-                appState->guiControl.focusedElement == 1,
-                appState->guiControl.focusedSegment
-        );
+        for (int i = 0; i < numberOfElements; i++) {
+            auto& s = settings[i];
+            bool focused = (appState->guiControl.focusedElement == i);
 
-        ImGui::SeparatorText("Streaming & Rendering");
+            if (!s.sectionHeader.empty()) {
+                ImGui::SeparatorText(s.sectionHeader.c_str());
+            }
 
-        focusable_text(
-                fmt::format("Codec: {}", CodecToString(appState->streamingConfig.codec)),
-                appState->guiControl.focusedElement == 2
-        );
-        focusable_text(
-                fmt::format("Encoding quality: {}", appState->streamingConfig.encodingQuality),
-                appState->guiControl.focusedElement == 3
-        );
-        focusable_text(
-                fmt::format("Bitrate: {}", appState->streamingConfig.bitrate),
-                appState->guiControl.focusedElement == 4
-        );
-        focusable_text(
-                fmt::format("{}", VideoModeToString(appState->streamingConfig.videoMode)),
-                appState->guiControl.focusedElement == 5
-        );
-        focusable_text(
-                fmt::format("{}", AspectRatioModeToString(appState->aspectRatioMode)),
-                appState->guiControl.focusedElement == 6
-        );
-        focusable_text(
-                fmt::format("FPS: {}", appState->streamingConfig.fps),
-                appState->guiControl.focusedElement == 7
-        );
-        focusable_text(
-                fmt::format("Resolution: {}x{}({})",
-                            appState->streamingConfig.resolution.getWidth(),
-                            appState->streamingConfig.resolution.getHeight(),
-                            appState->streamingConfig.resolution.getLabel()),
-                appState->guiControl.focusedElement == 8
-        );
-
-        focusable_button("Apply", appState->guiControl.focusedElement == 9);
-
-        ImGui::SeparatorText("Status Information");
-
-        focusable_text(
-                fmt::format("Camera head movement max speed: {}", appState->headMovementMaxSpeed),
-                appState->guiControl.focusedElement == 10
-        );
-        focusable_text(
-                fmt::format("Head movement speed multiplier: {:.2}",
-                            appState->headMovementSpeedMultiplier),
-                appState->guiControl.focusedElement == 11
-        );
-        focusable_text(
-                fmt::format("Headset movement prediction: {} ms",
-                            appState->headMovementPredictionMs),
-                appState->guiControl.focusedElement == 12
-        );
+            switch (s.type) {
+                case GuiSettingType::IpAddress:
+                    focusable_text_ip(s.getDisplayText(), focused, appState->guiControl.focusedSegment);
+                    break;
+                case GuiSettingType::Button:
+                    focusable_button(s.label, focused);
+                    break;
+                case GuiSettingType::Text:
+                    focusable_text(s.getDisplayText(), focused);
+                    break;
+            }
+        }
 
         ImGui::Text("Robot control: %s", BoolToString(appState->robotControlEnabled));
+
+        ImGui::SeparatorText("Connection Status");
+        {
+            ImVec4 color = (appState->cameraServerStatus == "Connected")
+                ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
+                : (appState->cameraServerStatus == "Connecting...")
+                    ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)
+                    : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+            ImGui::TextColored(color, "Camera Server: %s", appState->cameraServerStatus.c_str());
+        }
+        {
+            ImVec4 color = (appState->robotControlStatus == "Connected")
+                ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
+                : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+            ImGui::TextColored(color, "Robot Control: %s", appState->robotControlStatus.c_str());
+        }
+        {
+            ImVec4 color = (appState->ntpSyncStatus == "Synced")
+                ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
+                : ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
+            ImGui::TextColored(color, "NTP Time Sync: %s", appState->ntpSyncStatus.c_str());
+        }
+
         ImGui::Text("");
         ImGui::Text("Latencies (avg last 50 frames):");
         auto s = appState->cameraStreamingStates.first.stats;
         if (s) {
-            // Get averaged snapshot over last 50 frames for smoother display
             auto snapshot = s->averagedSnapshot();
 
             uint16_t cameraMs = snapshot.camera / 1000;
@@ -238,61 +183,6 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState) {
         s_win_size[s_win_num] = ImGui::GetWindowSize();
         s_win_num++;
     }
-
-    ImGui::End();
-}
-
-static void render_teleoperation_gui(const int win_w, const int win_h,
-                                     const std::shared_ptr<AppState> &appState) {
-    int win_x = 0;
-    int win_y = 0;
-
-    ImGui::SetNextWindowPos(ImVec2(_X(win_x), _Y(win_y)), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Teleoperation", nullptr,
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground);
-
-    std::string latency = std::to_string(int16_t(appState->hudState.teleoperationLatency));
-    std::string speed = fmt::format("{:02}",
-                                    static_cast<int>(appState->hudState.teleoperatedVehicleSpeed));
-    std::string state = appState->hudState.teleoperationState;
-    std::string latencyLabel = "Latency";
-    std::string speedLabel = "Km/h";
-    std::string stateLabel = "State";
-
-    const char *leftText = latency.c_str();
-    const char *belowLeft = latencyLabel.c_str();
-    const char *centerText = speed.c_str();
-    const char *belowCenter = speedLabel.c_str();
-    const char *rightText = state.c_str();
-    const char *belowRight = stateLabel.c_str();
-
-    const uint8_t line1_vert = 20;
-    const uint8_t line2_vert = 50;
-    const uint8_t col_left = 0;
-    const uint8_t col_mid = 100;
-    const uint8_t col_right = 160;
-
-
-    // ---- Left text ----
-    ImGui::SetCursorPos(ImVec2(col_left + 10, line1_vert + 10));
-    ImGui::Text("Latency: %s", leftText);
-
-    // ---- Center text ----
-    ImGui::SetWindowFontScale(2.0f);
-    ImGui::SetCursorPos(ImVec2(col_mid, line1_vert));
-    ImGui::Text("%s", centerText);
-    ImGui::SetWindowFontScale(1.0f);
-
-    // ---- Right text ----
-    ImGui::SetCursorPos(ImVec2(col_right, line1_vert + 10));
-    ImGui::Text("State: %s", rightText);
-
-    // ---- Center text (row 2, directly below) ----
-    ImGui::SetWindowFontScale(0.7f);
-    ImGui::SetCursorPos(ImVec2(col_mid + 3, line2_vert));
-    ImGui::Text("%s", belowCenter);
-    ImGui::SetWindowFontScale(1.0f);
 
     ImGui::End();
 }
@@ -354,7 +244,8 @@ void focusable_button(const std::string &label, bool isFocused) {
 }
 
 int
-invoke_imgui_settings(int win_w, int win_h, const std::shared_ptr<AppState> &appState) {
+invoke_imgui_settings(int win_w, int win_h, const std::shared_ptr<AppState> &appState,
+                      const std::vector<GuiSetting> &settings) {
     ImGuiIO &io = ImGui::GetIO();
     io.DisplaySize = ImVec2(_X(win_w), _Y(win_h));
     io.DisplayFramebufferScale = {DISPLAY_SCALE_X, DISPLAY_SCALE_Y};
@@ -362,24 +253,7 @@ invoke_imgui_settings(int win_w, int win_h, const std::shared_ptr<AppState> &app
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
 
-    render_settings_gui(appState);
-
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    return 0;
-}
-
-int
-invoke_imgui_teleoperation(int win_w, int win_h, const std::shared_ptr<AppState> &appState) {
-    ImGuiIO &io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(_X(win_w), _Y(win_h));
-    io.DisplayFramebufferScale = {DISPLAY_SCALE_X, DISPLAY_SCALE_Y};
-
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui::NewFrame();
-
-    render_teleoperation_gui(win_w, win_h, appState);
+    render_settings_gui(appState, settings);
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
