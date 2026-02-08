@@ -1,3 +1,13 @@
+/**
+ * enums.h - Application-wide enumeration types with string conversion
+ *
+ * Defines enums for video codec selection, stereo/mono mode, aspect ratio,
+ * robot platform type, and connection status. Each enum includes inline
+ * string conversion functions for display and logging.
+ *
+ * Enums that support cycling (Codec, VideoMode, AspectRatioMode, RobotType)
+ * include a Count sentinel for modular arithmetic in the GUI settings.
+ */
 #pragma once
 
 #include <string>
@@ -7,6 +17,7 @@
 // Video/Streaming Enums
 // =============================================================================
 
+/** Video codec for the camera streaming pipeline. */
 enum class Codec {
     JPEG,
     VP8,
@@ -27,6 +38,7 @@ inline std::string CodecToString(Codec codec) {
     }
 }
 
+/** Stereo (two independent eye streams) or mono (single stream for both eyes). */
 enum class VideoMode {
     Stereo,
     Mono,
@@ -41,6 +53,7 @@ inline std::string VideoModeToString(VideoMode mode) {
     }
 }
 
+/** How the camera image fills the VR field of view. */
 enum class AspectRatioMode {
     FullScreen,
     FullFOV,
@@ -59,6 +72,7 @@ inline std::string AspectRatioModeToString(AspectRatioMode mode) {
 // Robot Enums
 // =============================================================================
 
+/** Supported robot platforms. Determines control protocol details. */
 enum class RobotType {
     Odin,
     Spot,
@@ -84,6 +98,7 @@ inline RobotType StringToRobotType(const std::string& type) {
 // Connection Status
 // =============================================================================
 
+/** Health status for external connections (camera server, robot control, NTP). */
 enum class ConnectionStatus {
     Unknown,
     Connecting,

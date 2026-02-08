@@ -1,3 +1,9 @@
+/**
+ * rest_client.cpp - REST API client implementation
+ *
+ * Sends JSON requests to the Jetson camera streaming server.
+ * Uses nlohmann/json for serialization and cpp-httplib for HTTP.
+ */
 #include <nlohmann/json.hpp>
 #include "rest_client.h"
 #include "log.h"

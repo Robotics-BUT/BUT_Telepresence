@@ -1,3 +1,12 @@
+/**
+ * main.cpp - Android application entry point
+ *
+ * Implements the android_main() entry point for the native Android activity.
+ * Handles the Android lifecycle commands (resume, pause, window init/destroy),
+ * initializes the GStreamer multimedia framework via JNI, logs available
+ * hardware-accelerated video codecs, creates the TelepresenceProgram, and
+ * runs the main event + render loop until the app is destroyed.
+ */
 #include "pch.h"
 
 #include "log.h"
@@ -8,6 +17,7 @@
 #include "program.h"
 #include "gstreamer_android.h"
 
+/** Tracks Android app lifecycle state (window handle, resume/pause). */
 struct AndroidAppState {
     ANativeWindow *NativeWindow = nullptr;
     bool Resumed = false;
@@ -15,7 +25,7 @@ struct AndroidAppState {
 
 extern "C" void gst_amc_jni_set_java_vm(JavaVM *vm);
 
-
+/** Callback for Android lifecycle commands (resume, pause, window init/destroy). */
 static void
 ProcessAndroidCmd(struct android_app *app, int32_t cmd) {
     AndroidAppState *appState = (AndroidAppState *) app->userData;
@@ -58,7 +68,7 @@ ProcessAndroidCmd(struct android_app *app, int32_t cmd) {
     }
 }
 
-// Function to retrieve native library path
+/** Retrieve the native library directory path via JNI (ApplicationInfo.nativeLibraryDir). */
 std::string GetNativeLibraryPath(JNIEnv *env, jobject activity) {
     jclass activityClass = env->GetObjectClass(activity);
     jmethodID getAppInfoMethod = env->GetMethodID(activityClass, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;");
@@ -81,7 +91,7 @@ std::string GetNativeLibraryPath(JNIEnv *env, jobject activity) {
     return nativeLibraryPath;
 }
 
-// Function to log hardware-accelerated codecs
+/** Enumerate Android MediaCodec decoders and log hardware-accelerated ones (OMX/AMC). */
 void LogHardwareAcceleratedCodecs(JNIEnv *env) {
     jclass codecListClass = env->FindClass("android/media/MediaCodecList");
 
@@ -131,6 +141,16 @@ void LogHardwareAcceleratedCodecs(JNIEnv *env) {
     env->DeleteLocalRef(codecListClass);
 }
 
+/**
+ * Android native activity entry point.
+ *
+ * Initialization sequence:
+ *   1. Attach thread to JVM and register lifecycle callback
+ *   2. Retrieve native library path and log available HW codecs
+ *   3. Initialize GStreamer (JNI bridge, AMC codec support, static plugins)
+ *   4. Create TelepresenceProgram (sets up OpenXR, EGL, rendering, networking)
+ *   5. Run event loop: poll Android events, then call UpdateFrame() each iteration
+ */
 void android_main(struct android_app *app) {
     try {
         JNIEnv *Env;

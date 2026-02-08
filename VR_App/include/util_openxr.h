@@ -1,3 +1,10 @@
+/**
+ * util_openxr.h - OpenXR initialization, session management, and frame lifecycle
+ *
+ * Provides a procedural API wrapping the OpenXR C API. Covers the full
+ * lifecycle: loader init, instance/system/session creation, reference spaces,
+ * swapchain management, input actions, and frame begin/end.
+ */
 #pragma once
 
 #include <GLES3/gl3.h>
@@ -5,9 +12,7 @@
 #include "utils/string_utils.h"
 #include "types/input_types.h"
 
-/**
- * Convert OpenXR version to human-readable string
- */
+/** Convert an OpenXR version number to a "major.minor.patch" string. */
 inline std::string GetXrVersionString(XrVersion ver) {
     return Fmt("%d.%d.%d",
                XR_VERSION_MAJOR(ver),
@@ -15,14 +20,16 @@ inline std::string GetXrVersionString(XrVersion ver) {
                XR_VERSION_PATCH(ver));
 }
 
+/** OpenGL ES framebuffer render target (color + depth + FBO). */
 struct render_target_t {
-    GLuint texc_id; /* color */
-    GLuint texz_id; /* depth */
-    GLuint fbo_id;
+    GLuint texc_id; /* color texture */
+    GLuint texz_id; /* depth texture */
+    GLuint fbo_id;  /* framebuffer object */
     int width;
     int height;
 };
 
+/** A swapchain surface for one eye view, with its associated render targets. */
 struct viewsurface_t {
     uint32_t width, height;
     XrViewConfigurationView config_view;
@@ -30,6 +37,7 @@ struct viewsurface_t {
     std::vector<render_target_t> render_targets;
 };
 
+/** OpenXR action handles for all tracked controller inputs. */
 struct InputState {
     XrActionSet actionSet{XR_NULL_HANDLE};
     XrAction quitAction{XR_NULL_HANDLE};
@@ -56,7 +64,11 @@ struct InputState {
     std::array<XrSpace, Side::COUNT> controllerSpace;
 };
 
-// Initializes the OpenXR loader which detects, picks and interfaces with an OpenXR runtime running on the target device
+// =============================================================================
+// Initialization
+// =============================================================================
+
+/** Initialize the OpenXR loader for Android. */
 int openxr_init_loader(android_app *app);
 
 void openxr_log_layers_and_extensions();
@@ -81,6 +93,10 @@ openxr_enumerate_view_configurations(XrInstance *instance, XrSystemId *system_id
 void openxr_log_environment_blend_modes(XrInstance *instance, XrSystemId *systemId,
                                         XrViewConfigurationType type);
 
+// =============================================================================
+// Swapchain
+// =============================================================================
+
 std::vector<viewsurface_t>
 openxr_create_swapchains(XrInstance *instance, XrSystemId *system_id, XrSession *session);
 
@@ -92,6 +108,10 @@ int openxr_acquire_viewsurface(viewsurface_t &viewSurface, render_target_t &rend
 int openxr_release_viewsurface(viewsurface_t &viewsurface);
 
 int openxr_acquire_swapchain_img(XrSwapchain swapchain);
+
+// =============================================================================
+// Actions & Input
+// =============================================================================
 
 XrActionSet
 openxr_create_actionset(XrInstance *instance, std::string name, std::string localized_name,
@@ -109,6 +129,10 @@ int openxr_bind_interaction(XrInstance *instance, std::string profile,
 int openxr_attach_actionset(XrSession *session, XrActionSet actionSet);
 
 XrSpace openxr_create_action_space(XrSession *session, XrAction action, XrPath path);
+
+// =============================================================================
+// Session & Frame Lifecycle
+// =============================================================================
 
 int openxr_begin_session(XrSession *session);
 

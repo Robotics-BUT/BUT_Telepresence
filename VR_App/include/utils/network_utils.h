@@ -1,3 +1,9 @@
+/**
+ * network_utils.h - IP address conversion and socket utilities
+ *
+ * Inline utility functions for IP address format conversion (vector <-> string)
+ * and local IP address detection via a dummy UDP socket connection.
+ */
 #pragma once
 
 #include <string>
@@ -17,11 +23,7 @@
 // IP Address Utilities
 // =============================================================================
 
-/**
- * Convert IP address vector to dotted string format
- * @param ip Vector of 4 uint8_t values
- * @return String in format "X.X.X.X"
- */
+/** Convert IP address vector {a, b, c, d} to dotted string "a.b.c.d". */
 inline std::string IpToString(const std::vector<uint8_t>& ip) {
     if (ip.size() != 4) {
         return "0.0.0.0";
@@ -34,13 +36,7 @@ inline std::string IpToString(const std::vector<uint8_t>& ip) {
     return oss.str();
 }
 
-/**
- * Parse dotted IP string to vector format
- * @param ipStr String in format "X.X.X.X"
- * @return Vector of 4 uint8_t values
- * @throws std::invalid_argument if format is invalid
- * @throws std::out_of_range if segment value is out of 0-255 range
- */
+/** Parse dotted string "a.b.c.d" to IP address vector {a, b, c, d}. */
 inline std::vector<uint8_t> StringToIp(const std::string& ipStr) {
     std::vector<uint8_t> ip(4);
     std::istringstream iss(ipStr);
@@ -67,10 +63,7 @@ inline std::vector<uint8_t> StringToIp(const std::string& ipStr) {
     return ip;
 }
 
-/**
- * Get local IP address by creating a dummy socket connection
- * @return Vector of 4 uint8_t values, or empty vector on failure
- */
+/** Detect local IP address via a dummy UDP socket connection. Returns empty on failure. */
 inline std::vector<uint8_t> GetLocalIPAddr() {
     int sock = socket(PF_INET, SOCK_DGRAM, 0);
     if (sock == -1) {

@@ -1,3 +1,15 @@
+/**
+ * check.h - Error checking and assertion macros for XR, EGL, and general use
+ *
+ * Provides CHECK/THROW macros that include file:line location in exceptions.
+ * Also generates to_string() functions for OpenXR enum types using the
+ * XR_LIST_ENUM_* reflection macros from openxr_reflection.h.
+ *
+ * Usage:
+ *   CHECK_XRCMD(xrSomeFunction(...))  - throws on XR_FAILED
+ *   CHECK_EGL(eglSomeFunction(...))   - throws on EGL_FALSE
+ *   CHECK(condition)                   - throws on false
+ */
 #pragma once
 
 #include "utils/string_utils.h"

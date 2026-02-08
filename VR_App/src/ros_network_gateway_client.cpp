@@ -1,3 +1,11 @@
+/**
+ * ros_network_gateway_client.cpp - ROS UDP listener implementation
+ *
+ * Runs a background thread listening for ROS messages on Config::ROS_GATEWAY_PORT.
+ * Each UDP packet contains: [timestamp (double)] [topic\0] [type\0] [JSON payload].
+ * Proto messages (schema definitions) are registered automatically; data messages
+ * are parsed against their registered schema.
+ */
 #include "ros_network_gateway_client.h"
 #include "config.h"
 #include <unistd.h>
@@ -50,6 +58,7 @@ RosNetworkGatewayClient::~RosNetworkGatewayClient() {
     }
 }
 
+/** Background listener loop. Receives UDP packets and dispatches to schema/parse logic. */
 void RosNetworkGatewayClient::listenForMessages() {
     if (!isInitialized_) {
         LOG_ERROR("RosNetworkGatewayClient: Listener started without initialization, exiting");
@@ -100,6 +109,10 @@ void RosNetworkGatewayClient::listenForMessages() {
     }
 };
 
+/**
+ * Parse the binary message header: [timestamp(double)][topic\0][type\0][JSON payload].
+ * Returns false if the buffer is too small or missing null terminators.
+ */
 bool RosNetworkGatewayClient::parseMessage(const std::vector<uint8_t> &buffer,
                                            double &timestamp,
                                            std::string &topic,

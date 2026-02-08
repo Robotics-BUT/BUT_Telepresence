@@ -1,3 +1,12 @@
+/**
+ * camera_types.h - Camera frame data, statistics, and resolution definitions
+ *
+ * Defines the types used throughout the video pipeline:
+ * - CameraResolution: predefined resolution presets (nHD through UHD)
+ * - CameraStats / CameraStatsSnapshot: thread-safe per-frame pipeline latency tracking
+ * - CameraFrame: a single decoded video frame (GL texture or CPU buffer)
+ * - CamPair: stereo pair alias (left + right camera frames)
+ */
 #pragma once
 
 #include <string>
@@ -15,7 +24,9 @@
 // =============================================================================
 
 /**
- * Predefined camera resolutions with labels
+ * Predefined camera resolutions with human-readable labels.
+ * Resolutions are stored in a sorted list (nHD to UHD) and can be
+ * looked up by label string or by index for sequential navigation.
  */
 struct CameraResolution {
     int width;
@@ -97,14 +108,16 @@ private:
 // =============================================================================
 
 /**
- * Copyable snapshot of camera stats for passing values between threads
+ * Copyable snapshot of camera stats for passing values between threads.
+ * All latency values are in microseconds. The pipeline stages correspond
+ * to GStreamer identity probe points inserted along the decoding pipeline.
  */
 struct CameraStatsSnapshot {
     double prevTimestamp{0.0};
     double currTimestamp{0.0};
     double fps{0.0};
 
-    // Pipeline stage latencies (microseconds)
+    /* Pipeline stage latencies (microseconds) */
     uint64_t camera{0};
     uint64_t vidConv{0};
     uint64_t enc{0};
@@ -130,10 +143,13 @@ struct CameraStatsSnapshot {
 };
 
 /**
- * Thread-safe camera statistics with running average support
+ * Thread-safe camera statistics with running average support.
+ * Uses std::atomic for lock-free reads from the render thread while
+ * GStreamer callbacks write from pipeline threads. The running average
+ * is computed over the last HISTORY_SIZE (50) frames.
  */
 struct CameraStats {
-    // Timing
+    /* Timing */
     std::atomic<double> prevTimestamp{0.0};
     std::atomic<double> currTimestamp{0.0};
     std::atomic<double> fps{0.0};
@@ -190,7 +206,9 @@ private:
 // =============================================================================
 
 /**
- * Single camera frame data and metadata
+ * Single camera frame data and metadata.
+ * Depending on the codec, a frame is either a GL texture (hardware-decoded
+ * H264/H265 via Qualcomm AMC) or a CPU buffer (software-decoded JPEG).
  */
 struct CameraFrame {
     CameraStats* stats{nullptr};
@@ -198,14 +216,14 @@ struct CameraFrame {
     int frameWidth{CameraResolution::fromLabel("FHD").getWidth()};
     int frameHeight{CameraResolution::fromLabel("FHD").getHeight()};
 
-    // GL texture info (for hardware-decoded frames)
+    /* GL texture info (for hardware-decoded frames via glsinkbin) */
     bool hasGlTexture{false};
     unsigned int glTexture{0};
-    unsigned int glTarget{0};
+    unsigned int glTarget{0};     /* GL_TEXTURE_2D or GL_TEXTURE_EXTERNAL_OES */
 
-    // CPU buffer info (for software-decoded frames)
+    /* CPU buffer info (for software-decoded frames via appsink) */
     unsigned long memorySize{static_cast<unsigned long>(frameWidth * frameHeight * 3)};
-    void* dataHandle{nullptr};
+    void* dataHandle{nullptr};    /* pointer to raw RGB pixel data */
 };
 
 /**

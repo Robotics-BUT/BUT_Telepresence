@@ -1,3 +1,10 @@
+/**
+ * gstreamer_android.c - Android-specific GStreamer initialization
+ *
+ * Handles JNI_OnLoad, GStreamer init, static plugin registration, GLib/GStreamer
+ * log redirection to Android logcat, and DexClassLoader setup for hardware
+ * codec access (amcviddec). Called once from main.cpp at app startup.
+ */
 #include <jni.h>
 #include <gst/gst.h>
 #include <gio/gio.h>

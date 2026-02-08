@@ -1,3 +1,15 @@
+/**
+ * ros_network_gateway_client.h - ROS message receiver and parser over UDP
+ *
+ * Listens for ROS messages forwarded by a network gateway (typically running
+ * on the robot). Messages arrive as UDP packets with a binary header
+ * (timestamp + null-terminated topic + null-terminated type) followed by
+ * a JSON payload.
+ *
+ * The SchemaRegistry learns message schemas from "proto" messages, then
+ * ParsedMessage provides dot-notation field access (e.g. "clock.sec")
+ * with automatic single-element array unwrapping.
+ */
 #pragma once
 
 #include "pch.h"
@@ -12,11 +24,17 @@
 
 using json = nlohmann::json;
 
+/** Schema definition for a ROS message type (parsed from gateway proto messages). */
 struct MessageSchema {
     std::string type;
     json definition;
 };
 
+/**
+ * A parsed ROS message with typed field access.
+ * Use get<T>("field.path") for dot-notation access into nested JSON data.
+ * Single-element arrays are automatically unwrapped.
+ */
 class ParsedMessage {
 public:
     ParsedMessage(std::string type, std::string topic, json schema, json data)
@@ -80,10 +98,15 @@ private:
     json data_;
 };
 
-// <--------------------------------------------------------------------------------->
-
+/**
+ * Registry of known ROS message schemas.
+ * When a "proto" message arrives (containing "fields", "namespace", "name"),
+ * it is registered here. Subsequent data messages of that type can then
+ * be parsed into ParsedMessage objects.
+ */
 class SchemaRegistry {
 public:
+    /** If payload looks like a schema definition, register it and return true. */
     bool registerIfSchema(const std::string &type, const std::string &payload) {
         bool isSchema = false;
         try {
@@ -147,8 +170,11 @@ private:
     std::unordered_map<std::string, MessageSchema> registry_;
 };
 
-// <--------------------------------------------------------------------------------->
-
+/**
+ * UDP listener for ROS network gateway messages.
+ * Runs a background thread that receives messages, registers schemas,
+ * and parses data payloads.
+ */
 class RosNetworkGatewayClient {
 
 public:

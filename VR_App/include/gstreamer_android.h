@@ -1,3 +1,10 @@
+/**
+ * gstreamer_android.h - Android JNI bridge for GStreamer initialization
+ *
+ * Provides functions to initialize GStreamer on Android, cache the Java VM
+ * and application context, and set up a DexClassLoader so GStreamer's
+ * androidmedia plugin can access hardware codecs via JNI reflection.
+ */
 #ifndef GSTREAMER_ANDROID_H
 #define GSTREAMER_ANDROID_H
 

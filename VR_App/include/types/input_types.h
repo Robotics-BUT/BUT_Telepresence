@@ -1,3 +1,10 @@
+/**
+ * input_types.h - VR input state types
+ *
+ * Defines the Side namespace for left/right controller indexing and the
+ * UserState struct that holds the current pose and button state of the
+ * HMD and both controllers. Updated every frame in PollActions().
+ */
 #pragma once
 
 #include <openxr/openxr.h>
@@ -6,6 +13,7 @@
 // Controller Side Constants
 // =============================================================================
 
+/** Index constants for left/right controller arrays. */
 namespace Side {
     constexpr int LEFT = 0;
     constexpr int RIGHT = 1;
@@ -17,8 +25,9 @@ namespace Side {
 // =============================================================================
 
 /**
- * Current state of VR headset and controllers
- * Updated each frame from OpenXR input system
+ * Current state of VR headset and controllers.
+ * Populated each frame from the OpenXR input system in PollActions().
+ * All arrays are indexed by Side::LEFT / Side::RIGHT.
  */
 struct UserState {
     // Head-mounted display pose

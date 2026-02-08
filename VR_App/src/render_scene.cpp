@@ -1,3 +1,11 @@
+/**
+ * render_scene.cpp - Scene rendering implementation
+ *
+ * Sets up OpenGL ES shaders (2D texture, OES texture, solid color GUI),
+ * geometry buffers, and the settings GUI render target. The main render
+ * function computes the view-projection matrix and draws the camera image
+ * plane followed by the ImGui overlay.
+ */
 #include "pch.h"
 #include <GLES3/gl3.h>
 #include "util_shader.h"

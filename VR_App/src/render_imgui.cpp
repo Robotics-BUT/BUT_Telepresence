@@ -2,6 +2,14 @@
  * The MIT License (MIT)
  * Copyright (c) 2020 terryky1220@gmail.com
  * ------------------------------------------------ */
+/**
+ * render_imgui.cpp - ImGui VR settings panel rendering
+ *
+ * Renders the in-VR settings GUI using Dear ImGui. The focus-based
+ * navigation system (no mouse) processes queued input events from
+ * HandleControllers() to move focus and highlights the active element.
+ * Also displays connection status indicators and pipeline latency stats.
+ */
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "render_imgui.h"
@@ -56,6 +64,11 @@ imgui_mousemove(int x, int y) {
     s_mouse_pos.y = y;
 }
 
+/**
+ * Render the full settings panel: process focus navigation events,
+ * iterate over all GuiSettings, draw connection status, and show
+ * averaged pipeline latency statistics.
+ */
 static void render_settings_gui(const std::shared_ptr<AppState> &appState,
                                 const std::vector<GuiSetting> &settings) {
     int win_w = 300;

@@ -1,7 +1,10 @@
-
-//
-// RobotControlSender - Sends robot control commands over UDP
-//
+/**
+ * robot_control_sender.cpp - UDP packet construction and sending
+ *
+ * Implements the binary protocol described in robot_control_sender.h.
+ * All send methods serialize data in little-endian format and dispatch
+ * the actual sendto() call to a thread pool.
+ */
 #include "robot_control_sender.h"
 #include <unistd.h>
 
@@ -202,12 +205,16 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, u
     }
 }
 
+/**
+ * Convert an OpenXR quaternion to azimuth/elevation angles.
+ *
+ * OpenXR coordinate system: right-handed, +X right, +Y up, +Z backward.
+ * Azimuth = yaw (rotation around Y axis), range [-pi, pi].
+ * Elevation = pitch (rotation around X axis), range [-pi/2, pi/2].
+ * Handles gimbal lock when pitch is at +/-90 degrees.
+ */
 RobotControlSender::AzimuthElevation
 RobotControlSender::quaternionToAzimuthElevation(XrQuaternionf q) {
-    // Convert quaternion to Euler angles (yaw/pitch) for OpenXR coordinate system
-    // OpenXR uses right-handed: +X right, +Y up, +Z backward (forward is -Z)
-    // Azimuth = yaw (rotation around Y axis)
-    // Elevation = pitch (rotation around X axis)
 
     // Check for gimbal lock
     double sinp = 2.0 * (q.w * q.x - q.z * q.y);

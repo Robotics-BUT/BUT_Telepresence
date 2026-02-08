@@ -1,3 +1,16 @@
+/**
+ * gstreamer_player.h - GStreamer stereo video pipeline management
+ *
+ * Manages two GStreamer pipelines (left and right eye) for receiving and
+ * decoding RTP video streams. Supports three codec paths:
+ *   - JPEG:  software decode via jpegdec -> appsink (CPU buffer)
+ *   - H264:  hardware decode via Qualcomm AMC -> glsinkbin (GL texture)
+ *   - H265:  hardware decode via Qualcomm AMC -> glsinkbin (GL texture)
+ *
+ * Each pipeline inserts GStreamer identity elements at key points to
+ * measure per-stage latency (UDP receive, RTP depay, decode, queue).
+ * Pipeline configuration and the GLib main loop run on a dedicated thread.
+ */
 #pragma once
 
 #include "pch.h"
@@ -19,16 +32,24 @@ public:
 
     ~GstreamerPlayer();
 
+    /**
+     * (Re)configure and start the stereo pipelines for the given streaming config.
+     * Stops any existing pipelines first. Runs the GLib main loop on the thread pool.
+     */
     void configurePipelines(BS::thread_pool<BS::tp::none> &threadPool, const StreamingConfig &config);
 
 private:
 
+    /** Callback context: camera pair for frame output + NTP timer for timestamps. */
     using GStreamerCallbackObj = std::pair<CamPair*, NtpTimer*>;
 
+    /** Called when appsink has a new decoded frame (GL texture or CPU buffer). */
     static GstFlowReturn newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackObj);
 
+    /** Extract per-frame latency data from RTP header extensions (identity at UDP source). */
     static void onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffer, gpointer data);
 
+    /** Record timestamps at pipeline probe points (rtpdepay, decoder, queue). */
     static void onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpointer data);
 
     static void stateChangedCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline);
@@ -43,12 +64,12 @@ private:
 
     static GstCaps* buildDecoderSrcCaps(Codec codec, int width, int height, int fps);
 
-    // Helper functions for cleaner GStreamer element management
+    /** Helper functions for cleaner GStreamer element management. */
     static GstElement* getElementRequired(GstElement* pipeline, const char* name, const char* context);
     static GstElement* getElementOptional(GstElement* pipeline, const char* name);
     static void connectAndUnref(GstElement* element, const char* signal, GCallback callback, gpointer data);
 
-    // Configure a single stereo pipeline (left or right)
+    /** Configure a single stereo pipeline (left or right eye). */
     void configureSinglePipeline(GstElement* pipeline, const char* pipelineName, int port,
                                  const StreamingConfig& config, const std::string& xDimString, int payload);
 
@@ -63,9 +84,12 @@ private:
 
     NtpTimer *ntpTimer_;
 
-    // GStreamer pipeline definitions
-    // Each pipeline: UDP source -> RTP decapsulation -> decode -> output to appsink/glsinkbin
-    // Named elements (name=...) are configured at runtime in configureSinglePipeline()
+    /*
+     * GStreamer pipeline definition strings.
+     * Each pipeline: UDP source -> RTP jitter buffer -> depay -> decode -> output.
+     * Named elements (name=...) are configured at runtime in configureSinglePipeline().
+     * Identity elements (name=*_ident) are latency measurement probe points.
+     */
 
     const std::string jpegPipeline_ =
         "udpsrc name=udpsrc"

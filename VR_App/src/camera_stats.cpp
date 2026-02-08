@@ -1,3 +1,12 @@
+/**
+ * camera_stats.cpp - Camera statistics snapshot and averaging
+ *
+ * Implements thread-safe snapshot capture from atomic CameraStats fields,
+ * history ring buffer management (HISTORY_SIZE entries), and running
+ * average computation across the history for smooth latency display.
+ * Timing fields (camera, enc, dec, etc.) are averaged; metadata fields
+ * (frameId, timestamps) use the most recent value.
+ */
 #include "types/camera_types.h"
 
 CameraStatsSnapshot CameraStats::snapshot() const {

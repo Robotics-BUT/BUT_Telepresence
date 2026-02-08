@@ -1,3 +1,11 @@
+/**
+ * pch.h - Precompiled header for the BUT Telepresence VR App
+ *
+ * Aggregates stable, frequently-used system and library headers so the
+ * compiler can pre-process them once. Includes C++ standard library,
+ * Android platform APIs (under XR_USE_PLATFORM_ANDROID), EGL graphics
+ * binding (under XR_USE_GRAPHICS_API_OPENGL_ES), and OpenXR core headers.
+ */
 #pragma once
 
 // =============================================================================

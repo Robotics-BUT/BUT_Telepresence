@@ -1,3 +1,10 @@
+/**
+ * util_shader.cpp - OpenGL ES shader compilation and linking
+ *
+ * Compiles vertex and fragment shader source strings, links them into
+ * a program, and queries standard attribute/uniform locations (position,
+ * texCoord, MVP matrix, texture sampler) into a shader_obj_t struct.
+ */
 #include <string>
 #include <GLES3/gl3.h>
 #include "pch.h"

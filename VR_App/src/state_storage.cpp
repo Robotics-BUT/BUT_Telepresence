@@ -1,3 +1,12 @@
+/**
+ * state_storage.cpp - Persistent application state via Android SharedPreferences
+ *
+ * Serializes AppState fields as string key-value pairs into Android
+ * SharedPreferences ("AppStatePrefs"). All values are stored as strings
+ * (integers converted via std::to_string). The headMovementSpeedMultiplier
+ * is scaled by 10 before saving to work around integer-only formatting.
+ * On load failure (missing keys or parse errors), returns a default AppState.
+ */
 #include "state_storage.h"
 
 StateStorage::StateStorage(android_app *app) {

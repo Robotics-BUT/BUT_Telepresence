@@ -1,3 +1,11 @@
+/**
+ * ntp_timer.cpp - NTP synchronization implementation
+ *
+ * Each sync cycle takes 3 NTP samples, selects the one with the lowest RTT,
+ * and applies exponential moving average smoothing (alpha=0.1) to the offset.
+ * Samples with RTT > 20ms are rejected. Falls back to pool.ntp.org after
+ * FALLBACK_THRESHOLD consecutive failures on the primary server.
+ */
 #include <boost/asio.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <array>
@@ -40,6 +48,10 @@ void NtpTimer::StartAutoSync() {
     });
 }
 
+/**
+ * Take 3 NTP samples, pick the best (lowest RTT), and update the smoothed offset.
+ * Switches to the fallback server after FALLBACK_THRESHOLD consecutive failures.
+ */
 void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
     std::vector<Sample> goodSamples;
 
@@ -92,6 +104,11 @@ void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
     LOG_DEBUG("NtpTimer: Current smoothed offset=%ld ms", smoothedOffsetUs_ / 1000);
 }
 
+/**
+ * Perform a single NTP request/response exchange.
+ * Returns a Sample with offset and RTT, or nullopt on failure.
+ * Rejects samples with RTT > 20ms as unreliable.
+ */
 std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
     try {
         udp::resolver resolver(io);

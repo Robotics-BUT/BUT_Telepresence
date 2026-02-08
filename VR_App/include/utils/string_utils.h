@@ -1,3 +1,9 @@
+/**
+ * string_utils.h - String formatting and manipulation utilities
+ *
+ * Inline utility functions: printf-style formatting, case-insensitive
+ * comparison, bool-to-string conversion, and compile-time array sizing.
+ */
 #pragma once
 
 #include <string>
@@ -11,12 +17,7 @@
 // String Formatting Utilities
 // =============================================================================
 
-/**
- * Printf-style string formatting
- * @param fmt Format string
- * @param ... Format arguments
- * @return Formatted string
- */
+/** Printf-style string formatting using vsnprintf. */
 inline std::string Fmt(const char* fmt, ...) {
     va_list vl;
     va_start(vl, fmt);
@@ -38,9 +39,7 @@ inline std::string Fmt(const char* fmt, ...) {
     throw std::runtime_error("Unexpected vsnprintf failure");
 }
 
-/**
- * Case-insensitive string comparison
- */
+/** Case-insensitive string comparison using the given locale. */
 inline bool EqualsIgnoreCase(const std::string& s1, const std::string& s2,
                              const std::locale& loc = std::locale()) {
     const std::ctype<char>& ctype = std::use_facet<std::ctype<char>>(loc);
@@ -51,9 +50,7 @@ inline bool EqualsIgnoreCase(const std::string& s1, const std::string& s2,
            std::equal(s1.begin(), s1.end(), s2.begin(), compareCharLower);
 }
 
-/**
- * Convert boolean to string
- */
+/** Convert boolean to "true" or "false" string. */
 inline const char* BoolToString(bool b) {
     return b ? "true" : "false";
 }
@@ -62,9 +59,7 @@ inline const char* BoolToString(bool b) {
 // Template Utilities
 // =============================================================================
 
-/**
- * Get size of C-style array at compile time
- */
+/** Get size of a C-style array at compile time. */
 template<typename T, size_t Size>
 constexpr size_t ArraySize(const T (&)[Size]) noexcept {
     return Size;

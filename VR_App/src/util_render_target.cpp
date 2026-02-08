@@ -2,6 +2,13 @@
  * The MIT License (MIT)
  * Copyright (c) 2019 terryky1220@gmail.com
  * ------------------------------------------------ */
+/**
+ * util_render_target.cpp - Framebuffer and render target management
+ *
+ * Creates, destroys, binds, and queries OpenGL ES framebuffer objects
+ * (FBOs) with color (RGBA) and depth texture attachments. Used for
+ * off-screen rendering and OpenXR swapchain image management.
+ */
 #include "pch.h"
 #include "util_egl.h"
 

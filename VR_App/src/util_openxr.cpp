@@ -1,3 +1,12 @@
+/**
+ * util_openxr.cpp - OpenXR initialization, session management, and frame lifecycle
+ *
+ * Implements the full OpenXR setup sequence: loader initialization, instance
+ * creation (with Android and OpenGL ES extensions), system discovery, session
+ * creation, swapchain allocation, action/input binding, and the per-frame
+ * begin/end/locate cycle. Also handles session state transitions (ready,
+ * stopping, exiting, loss pending) and user presence detection.
+ */
 #include <GLES3/gl32.h>
 #include "pch.h"
 #include "util_egl.h"

@@ -1,3 +1,10 @@
+/**
+ * program.cpp - TelepresenceProgram implementation
+ *
+ * Contains the full VR application lifecycle: initialization, per-frame
+ * update/render loop, controller input handling, and the data-driven
+ * settings table. See program.h for the class overview.
+ */
 
 #include "pch.h"
 #include "log.h"
@@ -15,9 +22,22 @@
 #define HANDL_IN "/user/hand/left/input"
 #define HANDR_IN "/user/hand/right/input"
 
+/**
+ * Initialize the VR application.
+ *
+ * Startup sequence:
+ *   1. OpenXR loader + instance + system
+ *   2. EGL context + graphics requirements confirmation
+ *   3. Load persisted app state from SharedPreferences
+ *   4. Scene (shaders, geometry, textures)
+ *   5. OpenXR session + reference spaces + swapchains
+ *   6. NTP time sync, GStreamer player, ROS gateway client
+ *   7. Collect system info (runtime, GPU)
+ *   8. Input actions, streaming, GUI settings table
+ */
 TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
-    // Initialize the OpenXR loader which detects, picks and interfaces with an OpenXR runtime running on the target device
+    /* Initialize the OpenXR loader which detects and interfaces with the XR runtime */
     openxr_init_loader(app);
 
     openxr_create_instance(app, &openxr_instance_);
@@ -64,6 +84,10 @@ TelepresenceProgram::~TelepresenceProgram() {
     }
 }
 
+/**
+ * Per-frame update: poll OpenXR events, update connection status,
+ * read controller input, send control datagrams, and render.
+ */
 void TelepresenceProgram::UpdateFrame() {
     bool exit, request_restart;
     openxr_poll_events(&openxr_instance_, &openxr_session_, &exit, &request_restart, &appState_->headsetMounted);
@@ -72,7 +96,7 @@ void TelepresenceProgram::UpdateFrame() {
         return;
     }
 
-    // Update NTP sync status for HUD display
+    /* Update NTP sync status for HUD display */
     if (ntpTimer_) {
         if (ntpTimer_->IsSyncHealthy()) {
             appState_->connectionState.ntpSync = ConnectionStatus::Connected;
@@ -89,6 +113,9 @@ void TelepresenceProgram::UpdateFrame() {
     RenderFrame();
 }
 
+/**
+ * Begin an OpenXR frame, render stereo layers, end the frame, and measure timing.
+ */
 void TelepresenceProgram::RenderFrame() {
     prevFrameStart_ = frameStart_;
     frameStart_ = std::chrono::high_resolution_clock::now();
@@ -114,6 +141,13 @@ void TelepresenceProgram::RenderFrame() {
     appState_->appFrameRate = (frameDuration > 0) ? (1e6f / frameDuration) : 0.0f;
 }
 
+/**
+ * Render both eye views into their swapchain images.
+ *
+ * For each eye: acquires a swapchain image, renders the camera image plane
+ * and ImGui overlay, then releases the image. Head movement prediction is
+ * applied by offsetting displayTime by headMovementPredictionMs.
+ */
 bool TelepresenceProgram::RenderLayer(XrTime displayTime,
                                       std::vector<XrCompositionLayerProjectionView> &layerViews,
                                       XrCompositionLayerProjection &layer) {
@@ -189,6 +223,11 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
     return true;
 }
 
+/**
+ * Set up OpenXR input actions for all controller buttons, thumbsticks,
+ * triggers, and grips. Binds to both the simple_controller and
+ * oculus/touch_controller interaction profiles.
+ */
 void TelepresenceProgram::InitializeActions() {
     input_.actionSet = openxr_create_actionset(&openxr_instance_, "gameplay", "Gameplay", 0);
 
@@ -351,6 +390,7 @@ void TelepresenceProgram::InitializeActions() {
                                                                      input_.handSubactionPath[Side::RIGHT]);
 }
 
+/** Retrieve current controller poses from OpenXR for the predicted display time. */
 void TelepresenceProgram::PollPoses(XrTime predictedDisplayTime) {
     const XrActiveActionSet activeActionSet{input_.actionSet, XR_NULL_PATH};
     XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
@@ -371,6 +411,10 @@ void TelepresenceProgram::PollPoses(XrTime predictedDisplayTime) {
     }
 }
 
+/**
+ * Sync OpenXR actions and read the current state of all buttons,
+ * thumbsticks, triggers, and grips for both controllers.
+ */
 void TelepresenceProgram::PollActions() {
     const XrActiveActionSet activeActionSet{input_.actionSet, XR_NULL_PATH};
     XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
@@ -521,6 +565,13 @@ void TelepresenceProgram::PollActions() {
     userState_.triggerTouched[Side::LEFT] = triggerTouched.currentState;
 }
 
+/**
+ * Send head pose, robot control, and debug telemetry over UDP.
+ *
+ * Lazily initializes the RobotControlSender on first call. Tracks
+ * connection health via consecutive send failures and updates the
+ * AppState connection status accordingly.
+ */
 void TelepresenceProgram::SendControllerDatagram() {
     if (!appState_->headsetMounted) {
         return;
@@ -572,6 +623,11 @@ void TelepresenceProgram::SendControllerDatagram() {
     }
 }
 
+/**
+ * Start the camera stream via REST API, then configure GStreamer pipelines.
+ * If the REST call fails, the pipelines are still configured (they will
+ * wait for data) so the app can recover if the server comes online later.
+ */
 void TelepresenceProgram::InitializeStreaming() {
     restClient_ = std::make_unique<RestClient>(appState_->streamingConfig);
     appState_->connectionState.cameraServer = ConnectionStatus::Connecting;
@@ -601,6 +657,15 @@ void TelepresenceProgram::InitializeStreaming() {
     gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
 }
 
+/**
+ * Build the data-driven GUI settings table.
+ *
+ * Each GuiSetting defines a row in the in-VR settings panel with lambdas
+ * for display text, increment/decrement, and activation. The lambdas capture
+ * `this` to access appState_ and other members at render time.
+ *
+ * Sections: Network, Streaming & Rendering, Status Information.
+ */
 void TelepresenceProgram::BuildSettings() {
     auto noop = []() {};
 
@@ -744,6 +809,17 @@ void TelepresenceProgram::BuildSettings() {
     };
 }
 
+/**
+ * Process VR controller input for GUI navigation and robot control.
+ *
+ * Controls:
+ *   Right thumbstick press: toggle robot movement control on/off
+ *   Left thumbstick press:  toggle settings GUI visibility
+ *   Left thumbstick axis:   navigate settings (up/down/left/right)
+ *   Y button:               increment focused setting value
+ *   X button:               decrement focused setting value
+ *   Left trigger:           activate focused button setting
+ */
 void TelepresenceProgram::HandleControllers() {
     if (userState_.thumbstickPressed[Side::RIGHT] && !controlLockMovement_) {
         appState_->robotControlEnabled = !appState_->robotControlEnabled;

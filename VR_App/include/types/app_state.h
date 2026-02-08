@@ -1,3 +1,10 @@
+/**
+ * app_state.h - Central application state container
+ *
+ * Defines the shared AppState struct that is passed (via shared_ptr) across all
+ * modules in the application. Contains streaming configuration, system info,
+ * GUI navigation state, connection monitoring, and runtime flags.
+ */
 #pragma once
 
 #include <string>
@@ -13,7 +20,9 @@
 // =============================================================================
 
 /**
- * Video streaming configuration for camera pipeline
+ * Video streaming configuration for the camera pipeline.
+ * Controls codec, quality, resolution, and network settings for the
+ * GStreamer-based video stream between the Jetson server and the VR headset.
  */
 struct StreamingConfig {
     std::vector<uint8_t> headset_ip;
@@ -43,7 +52,8 @@ struct StreamingConfig {
 // =============================================================================
 
 /**
- * Runtime system information
+ * Runtime system information collected at startup.
+ * Reports the OpenXR runtime, GPU, and OpenGL version running on the headset.
  */
 struct SystemInfo {
     std::string openXrRuntime;
@@ -58,7 +68,9 @@ struct SystemInfo {
 // =============================================================================
 
 /**
- * VR GUI navigation state
+ * VR GUI navigation state.
+ * Since VR has no mouse cursor, the GUI uses a focus-based navigation model.
+ * The left thumbstick moves focus between settings, and face buttons change values.
  */
 struct GUIControl {
     bool focusMoveUp{false};
@@ -66,11 +78,11 @@ struct GUIControl {
     bool focusMoveLeft{false};
     bool focusMoveRight{false};
 
-    int focusedElement{0};
-    int focusedSegment{0};
+    int focusedElement{0};   /* index into the settings vector */
+    int focusedSegment{0};   /* sub-segment index (e.g. IP address octets) */
 
-    bool changesEnqueued{false};
-    int cooldown{0};
+    bool changesEnqueued{false};  /* true when a GUI input event needs processing */
+    int cooldown{0};              /* frames to wait before accepting the next input */
 };
 
 // =============================================================================
@@ -78,7 +90,8 @@ struct GUIControl {
 // =============================================================================
 
 /**
- * Connection status for all system components
+ * Connection status for all external system components.
+ * Tracked per-component so the GUI can display individual health indicators.
  */
 struct ConnectionState {
     ConnectionStatus cameraServer{ConnectionStatus::Unknown};
@@ -92,39 +105,41 @@ struct ConnectionState {
 // =============================================================================
 
 /**
- * Main application state container
- * Shared across the application for configuration and runtime state
+ * Main application state container.
+ * Shared across the application via std::shared_ptr for configuration and
+ * runtime state. All modules (rendering, networking, GUI) read from and
+ * write to this struct.
  */
 struct AppState {
-    // Camera streaming
+    /* Camera streaming */
     CamPair cameraStreamingStates{};
     StreamingConfig streamingConfig{};
 
-    // Display settings
+    /* Display settings */
     AspectRatioMode aspectRatioMode{AspectRatioMode::FullFOV};
 
-    // Performance metrics
-    float appFrameRate{0.0f};
-    long long appFrameTime{0};
+    /* Performance metrics */
+    float appFrameRate{0.0f};       /* measured render FPS */
+    long long appFrameTime{0};      /* last frame duration in microseconds */
 
-    // System info
+    /* System info */
     SystemInfo systemInfo{};
 
-    // GUI state
+    /* GUI state */
     GUIControl guiControl{};
 
-    // Head tracking settings
-    uint32_t headMovementMaxSpeed{990000};
-    uint32_t headMovementPredictionMs{50};
-    float headMovementSpeedMultiplier{1.5f};
+    /* Head tracking settings - sent to the robot servo controller */
+    uint32_t headMovementMaxSpeed{990000};        /* servo speed limit (device units) */
+    uint32_t headMovementPredictionMs{50};         /* prediction horizon in milliseconds */
+    float headMovementSpeedMultiplier{1.5f};       /* angular velocity scaling factor */
 
-    // Connection monitoring
+    /* Connection monitoring */
     ConnectionState connectionState{};
     std::string cameraServerStatus{"Unknown"};
     std::string robotControlStatus{"Unknown"};
     std::string ntpSyncStatus{"Unknown"};
 
-    // Runtime state
+    /* Runtime state */
     bool robotControlEnabled{true};
     bool headsetMounted{false};
 };

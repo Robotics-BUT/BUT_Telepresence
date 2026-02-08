@@ -1,3 +1,14 @@
+/**
+ * robot_control_sender.h - UDP client for robot head pose and movement control
+ *
+ * Sends three message types over UDP to the robot control server:
+ *   0x01 Head Pose   - azimuth/elevation derived from HMD quaternion
+ *   0x02 Robot Control - mobile base linear/angular velocity
+ *   0x03 Debug Info   - pipeline latency telemetry for analysis
+ *
+ * All sends are dispatched to a thread pool to avoid blocking the render loop.
+ * Connection health is tracked via consecutive failure counts.
+ */
 #pragma once
 
 #include "pch.h"
@@ -13,7 +24,7 @@
 #include <cstring>
 
 /**
- * RobotControlSender - Sends head pose and robot control data over UDP
+ * Sends head pose and robot control data over UDP.
  *
  * Protocol formats (little-endian):
  *
@@ -42,13 +53,13 @@ public:
     [[nodiscard]] int getConsecutiveFailures() const { return consecutiveFailures_; }
     [[nodiscard]] bool hasEverSucceeded() const { return successfulSends_ > 0; }
 
-    // Send head pose (quaternion is converted to azimuth/elevation internally)
+    /** Send head pose (quaternion is converted to azimuth/elevation internally). */
     void sendHeadPose(XrQuaternionf quatPose, float speed, BS::thread_pool<BS::tp::none> &threadPool);
 
-    // Send robot control commands (for mobile base control)
+    /** Send robot mobile base velocity commands. */
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);
 
-    // Send debug/validation information
+    /** Send pipeline latency telemetry for debugging and validation. */
     void sendDebugInfo(const CameraStatsSnapshot &stats, BS::thread_pool<BS::tp::none> &threadPool);
 
 private:

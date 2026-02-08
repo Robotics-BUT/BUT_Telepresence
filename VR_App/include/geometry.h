@@ -1,3 +1,10 @@
+/**
+ * geometry.h - Geometry constants for rendering
+ *
+ * Defines vertex data and indices for the camera image quad.
+ * The quad is a 1x1 unit square centered at the origin, used as the
+ * base geometry for both the camera image plane and the GUI panel.
+ */
 #pragma once
 
 #include <openxr/openxr.h>
@@ -30,6 +37,7 @@ namespace Geometry {
     constexpr XrVector2f T_RT{1.0f, 1.0f};
 
 
+    /** Macro to assemble 4 vertices with texture coordinates into a quad. */
 #define QUAD(V1, V2, V3, V4, T1, T2, T3, T4) {V1, T1}, {V2, T2}, {V3, T3}, {V4, T4},
 
     constexpr Vertex c_quadVertices[] = {

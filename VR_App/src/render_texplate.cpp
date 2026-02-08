@@ -1,3 +1,9 @@
+/**
+ * render_texplate.cpp - Textured quad rendering for UI panels
+ *
+ * Draws a texture onto a triangle-strip quad with alpha blending.
+ * Used to render the ImGui settings panel as a floating 2D surface in VR.
+ */
 #include <GLES3/gl31.h>
 #include "util_shader.h"
 #include "render_texplate.h"

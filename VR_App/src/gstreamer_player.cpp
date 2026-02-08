@@ -1,3 +1,12 @@
+/**
+ * gstreamer_player.cpp - GStreamer pipeline setup, configuration, and callbacks
+ *
+ * Implements stereo video pipeline management:
+ * - Constructor wraps the EGL context for GStreamer GL interop
+ * - configurePipelines() tears down existing pipelines and builds new ones
+ * - configureSinglePipeline() wires up a single eye's pipeline elements
+ * - Callbacks extract frame data and measure per-stage latency
+ */
 #include "gstreamer_player.h"
 #include "util_egl.h"
 #include <ctime>
@@ -8,6 +17,7 @@
 #include <gst/gl/gstglmemory.h>
 #include <GLES2/gl2ext.h>
 
+/** GL sink capabilities for hardware-decoded frames (RGBA, 2D or external-oes). */
 #define SINK_CAPS                                     \
     "video/x-raw(memory:GLMemory), "                  \
     "format = (string) RGBA, "                        \
@@ -98,7 +108,7 @@ GstreamerPlayer::~GstreamerPlayer() {
     }
 }
 
-// Helper function: Get required element (throws if not found)
+/** Get a named pipeline element; throws if not found. */
 GstElement *
 GstreamerPlayer::getElementRequired(GstElement *pipeline, const char *name, const char *context) {
     GstElement *element = gst_bin_get_by_name(GST_BIN(pipeline), name);
@@ -110,12 +120,12 @@ GstreamerPlayer::getElementRequired(GstElement *pipeline, const char *name, cons
     return element;
 }
 
-// Helper function: Get optional element (returns nullptr if not found)
+/** Get a named pipeline element; returns nullptr if not found. */
 GstElement *GstreamerPlayer::getElementOptional(GstElement *pipeline, const char *name) {
     return gst_bin_get_by_name(GST_BIN(pipeline), name);
 }
 
-// Helper function: Connect signal and unref if element exists
+/** Connect a signal callback to an element, then unref it (if non-null). */
 void GstreamerPlayer::connectAndUnref(GstElement *element, const char *signal, GCallback callback,
                                       gpointer data) {
     if (element) {
@@ -124,7 +134,10 @@ void GstreamerPlayer::connectAndUnref(GstElement *element, const char *signal, G
     }
 }
 
-// Configure a single stereo pipeline (left or right)
+/**
+ * Configure a single eye's pipeline: set UDP port, RTP caps, decoder caps,
+ * GL context, bus callbacks, and latency measurement probes.
+ */
 void
 GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineName, int port,
                                          const StreamingConfig &config,
@@ -219,6 +232,11 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
     gst_element_set_state(pipeline, GST_STATE_READY);
 }
 
+/**
+ * (Re)configure both stereo pipelines. Stops existing pipelines, reinitializes
+ * CameraFrame buffers and stats, parses new pipeline strings, configures
+ * elements, and starts playback. The GLib main loop runs on the thread pool.
+ */
 void
 GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
                                     const StreamingConfig &config) {
@@ -365,6 +383,12 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     });
 }
 
+/**
+ * Appsink "new-sample" callback. Retrieves the decoded frame and stores it
+ * in the appropriate CameraFrame (left or right, determined by pipeline name).
+ * Two paths: GLMemory (hardware decode) extracts the GL texture ID;
+ * non-GLMemory (JPEG) copies raw RGB data to the CPU buffer.
+ */
 GstFlowReturn
 GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackObj) {
     GstSample *sample = nullptr;
@@ -479,6 +503,11 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
     }
 }
 
+/**
+ * Identity handoff at the UDP source. Extracts server-side latency data
+ * from RTP header extensions (frame ID, camera/vidconv/enc/rtpPay timestamps)
+ * and records the UDP arrival timestamp for network latency calculation.
+ */
 void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffer, gpointer data) {
     auto *obj = reinterpret_cast<GStreamerCallbackObj *>(data);
     auto *pair = obj->first;
@@ -524,6 +553,12 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
     stats->packetsPerFrame += 1;
 }
 
+/**
+ * Identity handoff at downstream probe points (rtpdepay, decoder, queue).
+ * Records timestamps and computes per-stage latency deltas. At the final
+ * probe (queue_ident), sums up total pipeline latency and updates the
+ * running average history.
+ */
 void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpointer data) {
     auto *obj = reinterpret_cast<GStreamerCallbackObj *>(data);
     auto *pair = obj->first;
@@ -598,7 +633,7 @@ void GstreamerPlayer::errorCallback(GstBus *bus, GstMessage *msg, GstElement *pi
               err->message);
 }
 
-// Callback function to log packet arrivals
+/** Pad probe on UDP source to log packet arrival intervals (debug only). */
 GstPadProbeReturn
 GstreamerPlayer::udpPacketProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
     static auto last_time = std::chrono::steady_clock::now();
@@ -612,6 +647,7 @@ GstreamerPlayer::udpPacketProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpoi
     return GST_PAD_PROBE_OK;
 }
 
+/** Build GstCaps for the hardware decoder input (H264 or H265 byte-stream). */
 GstCaps *GstreamerPlayer::buildDecoderSrcCaps(Codec codec, int width, int height, int fps) {
     const char *media_type = codec == Codec::H265 ? "video/x-h265" : "video/x-h264";
 

@@ -1,3 +1,11 @@
+/**
+ * linear.h - 4x4 matrix math for OpenXR transformation pipeline
+ *
+ * All functions operate on XrMatrix4x4f (column-major, OpenGL convention).
+ * Provides translation, rotation (from quaternion), scale, multiply,
+ * rigid-body inversion, and perspective projection (FOV-based).
+ * All functions are inline for performance.
+ */
 #pragma once
 
 typedef struct XrMatrix4x4f {

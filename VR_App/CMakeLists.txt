@@ -1,11 +1,23 @@
+# =============================================================================
+# BUT Telepresence VR App - CMake Build Configuration
+#
+# Android NDK shared library (.so) for a VR telepresence application.
+# Requires: Android NDK, OpenXR Mobile SDK (Meta), GStreamer Android SDK,
+#           Boost (system + thread).
+#
+# External dependencies (in external/): ImGui, cpp-httplib, nlohmann/json, fmt
+# =============================================================================
+
 cmake_minimum_required(VERSION 3.10)
 project(but_telepresence)
 set(CMAKE_CXX_STANDARD 17)
 
+# Platform and graphics API selection for OpenXR and conditional compilation
 add_definitions(-DXR_USE_PLATFORM_ANDROID)
 add_definitions(-DXR_USE_GRAPHICS_API_OPENGL_ES)
 add_definitions(-Werror)
 
+# SDK paths — set GSTREAMER_SDK_DIR and BOOST_DIR in your build environment
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 set(GSTREAMER_ROOT ${GSTREAMER_SDK_DIR}/${ANDROID_ABI})
 set(ENV{GST_PLUGIN_PATH} "${GSTREAMER_ROOT}/lib/gstreamer-1.0")
@@ -13,6 +25,7 @@ set(ENV{GST_REGISTRY} "${GSTREAMER_ROOT}/registry.bin")
 set(BOOST_ROOT ${BOOST_DIR}/libs/${ANDROID_ABI})
 set(BOOST_INCLUDE ${BOOST_DIR}/include)
 
+# --- System libraries ---
 find_library(ANDROID_LIBRARY NAMES android)
 find_library(ANDROID_LOG_LIBRARY NAMES log)
 find_library(EGL_LIBRARY NAMES EGL)
@@ -24,6 +37,7 @@ find_path(OpenGLES_V32_INCLUDE_DIR NAMES GLES3/gl32.h)
 
 add_library(android_native_app_glue OBJECT "${ANDROID_NATIVE_APP_GLUE}/android_native_app_glue.c")
 
+# --- OpenXR loader (pre-built shared library from Meta OpenXR Mobile SDK) ---
 add_library(openxr_loader SHARED IMPORTED)
 set_property(
         TARGET
@@ -33,6 +47,7 @@ set_property(
         ${OVR_OPENXR_MOBILE_SDK_DIR}/OpenXR/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
 )
 
+# --- Include paths ---
 include_directories(
         ${ANDROID_NATIVE_APP_GLUE}
         ${OpenGLES_V3_INCLUDE_DIR}
@@ -59,6 +74,7 @@ link_directories(
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0
 )
 
+# --- Main shared library: application sources + ImGui ---
 add_library(
         ${PROJECT_NAME} SHARED
 
@@ -90,6 +106,9 @@ add_library(
         $<TARGET_OBJECTS:android_native_app_glue>
 )
 
+# --- Link dependencies ---
+# Order matters: GStreamer plugin .a files first, then their supporting libs,
+# then GStreamer core, GLib, and finally system libs.
 target_link_libraries(
         ${PROJECT_NAME}
         openxr_loader

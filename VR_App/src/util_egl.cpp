@@ -1,3 +1,13 @@
+/**
+ * util_egl.cpp - EGL context initialization for OpenXR rendering
+ *
+ * Creates an EGL display, context, and PBuffer surface suitable for
+ * offscreen OpenGL ES 3.x rendering. The PBuffer surface (16x16 pixels)
+ * serves as a dummy surface required by EGL — actual rendering targets
+ * are OpenXR swapchain images. Provides accessors for the current EGL
+ * display, context, surface, and config needed by OpenXR session creation
+ * and GStreamer GL context sharing.
+ */
 #include "pch.h"
 #include "log.h"
 #include "check.h"
