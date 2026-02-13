@@ -3,8 +3,8 @@
  *
  * Listens for ROS messages forwarded by a network gateway (typically running
  * on the robot). Messages arrive as UDP packets with a binary header
- * (timestamp + null-terminated topic + null-terminated type) followed by
- * a JSON payload.
+ * (timestamp + compressed flag + null-terminated topic + null-terminated type)
+ * followed by a JSON payload (optionally Zstd-compressed).
  *
  * The SchemaRegistry learns message schemas from "proto" messages, then
  * ParsedMessage provides dot-notation field access (e.g. "clock.sec")
@@ -192,6 +192,7 @@ private:
 
     static bool parseMessage(const std::vector<uint8_t> &buffer,
                              double &timestamp,
+                             bool &compressed,
                              std::string &topic,
                              std::string &type,
                              std::string &payload);

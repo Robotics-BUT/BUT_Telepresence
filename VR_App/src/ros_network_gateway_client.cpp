@@ -2,7 +2,8 @@
  * ros_network_gateway_client.cpp - ROS UDP listener implementation
  *
  * Runs a background thread listening for ROS messages on Config::ROS_GATEWAY_PORT.
- * Each UDP packet contains: [timestamp (double)] [topic\0] [type\0] [JSON payload].
+ * Each UDP packet contains:
+ *   [timestamp (double)][compressed (uint8)][topic\0][type\0][payload]
  * Proto messages (schema definitions) are registered automatically; data messages
  * are parsed against their registered schema.
  */
@@ -81,10 +82,17 @@ void RosNetworkGatewayClient::listenForMessages() {
         buffer.resize(received);
 
         double timestamp = 0.0;
+        bool compressed = false;
         std::string topic, type, payload;
 
-        if (!parseMessage(buffer, timestamp, topic, type, payload)) {
+        if (!parseMessage(buffer, timestamp, compressed, topic, type, payload)) {
             LOG_ERROR("ROS Topic: Failed to parse ROS message header");
+            continue;
+        }
+
+        if (compressed) {
+            LOG_ERROR("ROS Topic: Received compressed message but Zstd decompression "
+                      "is not supported in this client. Set compression_level:=0 on the gateway.");
             continue;
         }
 
@@ -95,6 +103,7 @@ void RosNetworkGatewayClient::listenForMessages() {
             if (schemaRegistry_.registerIfSchema(type, payload)) { continue; };
             if (!schemaRegistry_.hasSchema(type)) { continue; }
             auto parsed = schemaRegistry_.buildParsedMessage(type, topic, payload);
+            LOG_INFO("ROS Topic: %s, json: %s", topic.c_str(), parsed.data().dump().c_str());
             if (parsed.topic() == "/loki_1/chassis/battery_voltage") {
                 LOG_INFO("ROS Topic: %s, data: %f", topic.c_str(), parsed.get<float>("data"));
             } else if (parsed.topic() == "/loki_1/chassis/clock") {
@@ -110,19 +119,26 @@ void RosNetworkGatewayClient::listenForMessages() {
 };
 
 /**
- * Parse the binary message header: [timestamp(double)][topic\0][type\0][JSON payload].
+ * Parse the binary message header:
+ *   [timestamp(double)][compressed(uint8)][topic\0][type\0][payload]
  * Returns false if the buffer is too small or missing null terminators.
  */
 bool RosNetworkGatewayClient::parseMessage(const std::vector<uint8_t> &buffer,
                                            double &timestamp,
+                                           bool &compressed,
                                            std::string &topic,
                                            std::string &type,
                                            std::string &payload) {
-    if (buffer.size() < sizeof(double) + 3)
+    // Minimum: 8 (timestamp) + 1 (compressed) + 1 (topic) + 1 (\0) + 1 (type) + 1 (\0)
+    if (buffer.size() < sizeof(double) + 1 + 4)
         return false;
 
     std::memcpy(&timestamp, buffer.data(), sizeof(double));
     size_t pos = sizeof(double);
+
+    // Compression flag byte
+    compressed = buffer[pos] != 0;
+    pos += 1;
 
     // Find first null (topic)
     auto topic_end = std::find(buffer.begin() + pos, buffer.end(), '\0');
@@ -136,7 +152,7 @@ bool RosNetworkGatewayClient::parseMessage(const std::vector<uint8_t> &buffer,
     type.assign(reinterpret_cast<const char *>(&buffer[pos]), type_end - (buffer.begin() + pos));
     pos = (type_end - buffer.begin()) + 1;
 
-    // Rest is payload (JSON string)
+    // Rest is payload (JSON string or compressed bytes)
     payload.assign(reinterpret_cast<const char *>(&buffer[pos]), buffer.size() - pos);
     return true;
 }

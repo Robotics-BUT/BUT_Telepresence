@@ -40,7 +40,10 @@ void NtpTimer::StartAutoSync() {
         };
         timer_->async_wait(handler);
     };
-    (*syncLoop)();
+    // Post the first sync to io_context so StartAutoSync() returns immediately.
+    // Running it synchronously would block the caller for seconds/minutes
+    // when the primary NTP server is unreachable (DNS resolve has no timeout).
+    boost::asio::post(io_, [syncLoop]() { (*syncLoop)(); });
 
     // Start io_context in background
     ioThread_ = std::thread([this]() {

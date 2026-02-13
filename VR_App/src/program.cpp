@@ -61,7 +61,7 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
     viewsurfaces_ = openxr_create_swapchains(&openxr_instance_, &openxr_system_id_, &openxr_session_);
 
-    ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip));
+    ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
     gstreamerPlayer_ = std::make_unique<GstreamerPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();
