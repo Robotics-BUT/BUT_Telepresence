@@ -2,7 +2,7 @@
 
 A low-latency standalone VR telepresence system for remote robot control. This system enables researchers to control a mobile robot through a Meta Quest VR headset with live stereo camera streaming and head tracking.
 
-**Paper:** [TODO: Add IEEE Access link]
+**Paper:** [[Preprint]](https://www.researchsquare.com/article/rs-8855703/v1)
 
 ## Architecture Overview
 
