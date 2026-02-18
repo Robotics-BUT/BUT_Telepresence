@@ -48,11 +48,12 @@ BUT_Telepresence/
 
 To setup your environment to build & side-load the VR app you'll need the following:
 
-- Android Studio with NDK 21.4.7075529
-- [GStreamer Android SDK](https://gstreamer.freedesktop.org/download/#android) (arm64 1.18.x - 1.22.x)
-- [Oculus OpenXR Mobile SDK](https://developer.oculus.com/downloads/package/oculus-openxr-mobile-sdk/) (tested with version 49.0)
-- Boost 1.72.0 built for Android NDK 21 (available in this repository)
+- Android Studio with NDK r25c (25.2.9519653)
+- [GStreamer Android SDK](https://gstreamer.freedesktop.org/download/#android) (arm64, tested with 1.28.x built against NDK r25c)
+- [Boost for Android](https://github.com/moritz-wundke/Boost-for-Android) — Boost 1.85.0 built for Android NDK r25c (see build instructions below)
 - Meta Quest 2/Pro/3 or different compatible headset with a developer mode enabled and connected via USB
+
+The OpenXR loader is fetched automatically from Maven Central as a Gradle dependency ([Khronos OpenXR Android Loader](https://central.sonatype.com/artifact/org.khronos.openxr/openxr_loader_for_android) 1.1.53). No manual SDK download needed.
 
 ## Setup
 
@@ -63,15 +64,22 @@ To setup your environment to build & side-load the VR app you'll need the follow
    git clone --recursive https://github.com/Robotics-BUT/BUT_Telepresence
    ```
 
-2. Create `VR_App/local.properties`:
+2. Build Boost for Android (if you don't have it already):
+   ```bash
+   git clone https://github.com/moritz-wundke/Boost-for-Android
+   cd Boost-for-Android
+   ./build-android.sh /path/to/Android/Sdk/ndk/25.2.9519653 --boost=1.85.0
+   ```
+   The build output will be in `build/out/`.
+
+3. Create `VR_App/local.properties`:
    ```properties
    sdk.dir=/path/to/Android/Sdk
    gstreamer_sdk.dir=/path/to/gstreamer-1.0-android-universal
-   ovr_openxr_mobile_sdk.dir=/path/to/ovr_openxr_mobile_sdk
-   boost.dir=/path/to/ndk_21_boost_1.72.0
+   boost_build.dir=/path/to/Boost-for-Android/build/out
    ```
 
-3. Build and deploy using Android Studio GUI
+4. Build and deploy using Android Studio GUI
 
 ## Configuration
 

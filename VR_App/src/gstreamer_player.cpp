@@ -284,7 +284,7 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     // Init the CameraFrame data structure
     // Clean up old allocations if they exist (in case of reconfiguration)
     if (callbackObj_) {
-        delete callbackObj_;
+        //delete callbackObj_;
         callbackObj_ = nullptr;
     }
     if (camPair_->first.stats) {

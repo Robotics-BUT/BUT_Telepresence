@@ -17,15 +17,18 @@ apply plugin: 'com.android.application'
 
 def properties = new Properties();
 properties.load(project.rootProject.file('local.properties').newDataInputStream())
-def ovr_openxr_mobile_sdk_dir = properties.getProperty('ovr_openxr_mobile_sdk.dir')
 def gstreamer_sdk_dir = properties.getProperty('gstreamer_sdk.dir')
-def boost_dir = properties.getProperty('boost.dir')
+def boost_build_dir = properties.getProperty('boost_build.dir')
 
 android {
     compileSdkVersion 34
     buildToolsVersion "35.0.0"
-    ndkVersion "21.4.7075529"
+    ndkVersion "25.2.9519653"
     namespace "cz.but.telepresence"
+
+    buildFeatures {
+        prefab true
+    }
 
     defaultConfig {
         applicationId "cz.but.telepresence"
@@ -42,9 +45,8 @@ android {
                 abiFilters 'arm64-v8a'
             }
             cmake {
-                arguments "-DOVR_OPENXR_MOBILE_SDK_DIR:STRING=${ovr_openxr_mobile_sdk_dir}"
                 arguments "-DGSTREAMER_SDK_DIR:STRING=${gstreamer_sdk_dir}"
-                arguments "-DBOOST_DIR:STRING=${boost_dir}"
+                arguments "-DBOOST_BUILD_DIR:STRING=${boost_build_dir}"
                 arguments "-DANDROID_STL=c++_shared"
                 cppFlags ''
             }
@@ -84,5 +86,9 @@ android {
             resValue "string", "app_name", "BUT Telepresence (Opengl ES)"
         }
     }
+}
+
+dependencies {
+    implementation 'org.khronos.openxr:openxr_loader_for_android:1.1.53'
 }
 

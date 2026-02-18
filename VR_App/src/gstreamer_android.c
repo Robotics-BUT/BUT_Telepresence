@@ -180,7 +180,6 @@ gst_android_register_static_plugins(void) {
     GST_PLUGIN_STATIC_REGISTER(app);
     GST_PLUGIN_STATIC_REGISTER(jpeg);
     GST_PLUGIN_STATIC_REGISTER(jpegformat);
-    GST_PLUGIN_STATIC_REGISTER(libav);
     GST_PLUGIN_STATIC_REGISTER(opengl);
 }
 

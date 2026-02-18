@@ -2,8 +2,8 @@
 # BUT Telepresence VR App - CMake Build Configuration
 #
 # Android NDK shared library (.so) for a VR telepresence application.
-# Requires: Android NDK, OpenXR Mobile SDK (Meta), GStreamer Android SDK,
-#           Boost (system + thread).
+# Requires: Android NDK, Khronos OpenXR loader (via Gradle AAR prefab),
+#           GStreamer Android SDK, Boost (system + thread).
 #
 # External dependencies (in external/): ImGui, cpp-httplib, nlohmann/json, fmt
 # =============================================================================
@@ -17,13 +17,11 @@ add_definitions(-DXR_USE_PLATFORM_ANDROID)
 add_definitions(-DXR_USE_GRAPHICS_API_OPENGL_ES)
 add_definitions(-Werror)
 
-# SDK paths — set GSTREAMER_SDK_DIR and BOOST_DIR in your build environment
+# SDK paths — set GSTREAMER_SDK_DIR and BOOST_BUILD_DIR in your build environment
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 set(GSTREAMER_ROOT ${GSTREAMER_SDK_DIR}/${ANDROID_ABI})
 set(ENV{GST_PLUGIN_PATH} "${GSTREAMER_ROOT}/lib/gstreamer-1.0")
 set(ENV{GST_REGISTRY} "${GSTREAMER_ROOT}/registry.bin")
-set(BOOST_ROOT ${BOOST_DIR}/libs/${ANDROID_ABI})
-set(BOOST_INCLUDE ${BOOST_DIR}/include)
 
 # --- System libraries ---
 find_library(ANDROID_LIBRARY NAMES android)
@@ -37,29 +35,26 @@ find_path(OpenGLES_V32_INCLUDE_DIR NAMES GLES3/gl32.h)
 
 add_library(android_native_app_glue OBJECT "${ANDROID_NATIVE_APP_GLUE}/android_native_app_glue.c")
 
-# --- OpenXR loader (pre-built shared library from Meta OpenXR Mobile SDK) ---
-add_library(openxr_loader SHARED IMPORTED)
-set_property(
-        TARGET
-        openxr_loader
-        PROPERTY
-        IMPORTED_LOCATION
-        ${OVR_OPENXR_MOBILE_SDK_DIR}/OpenXR/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
-)
+# --- OpenXR loader (Khronos official loader via Gradle AAR prefab) ---
+if(NOT TARGET OpenXR::openxr_loader)
+    find_package(OpenXR REQUIRED)
+endif()
+
+# --- Boost (pre-built via Boost-for-Android, found via CMake config) ---
+list(APPEND CMAKE_FIND_ROOT_PATH ${BOOST_BUILD_DIR}/${ANDROID_ABI})
+set(Boost_COMPILER "-clang")
+find_package(Boost 1.85.0 REQUIRED CONFIG COMPONENTS system thread)
 
 # --- Include paths ---
 include_directories(
         ${ANDROID_NATIVE_APP_GLUE}
         ${OpenGLES_V3_INCLUDE_DIR}
         ${OpenGLES_V32_INCLUDE_DIR}
-        ${PROJECT_SOURCE_DIR}/external/OpenXR-SDK/include
         ${GSTREAMER_ROOT}/include
         ${GSTREAMER_ROOT}/include/gstreamer-1.0
         ${GSTREAMER_ROOT}/include/glib-2.0
         ${GSTREAMER_ROOT}/lib/glib-2.0/include
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/include
-        ${BOOST_INCLUDE}
-        ${OVR_OPENXR_MOBILE_SDK_DIR}/SampleCommon/Src
         external
         external/imgui
         external/imgui/backends
@@ -111,7 +106,7 @@ add_library(
 # then GStreamer core, GLib, and finally system libs.
 target_link_libraries(
         ${PROJECT_NAME}
-        openxr_loader
+        OpenXR::openxr_loader
         ${ANDROID_LIBRARY}
         ${ANDROID_LOG_LIBRARY}
         ${EGL_LIBRARY}
@@ -129,7 +124,6 @@ target_link_libraries(
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstrtp.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstrtpmanager.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstrtpmanagerbad.a
-        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstlibav.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstopengl.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstsrtp.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstcompositor.a
@@ -143,7 +137,6 @@ target_link_libraries(
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstapp.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstjpeg.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstjpegformat.a
-        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstlibav.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstandroidmedia.a
 
         #plugin libs
@@ -156,20 +149,14 @@ target_link_libraries(
         ${GSTREAMER_ROOT}/lib/libgstvideo-1.0.a
         ${GSTREAMER_ROOT}/lib/libgstrtp-1.0.a
         ${GSTREAMER_ROOT}/lib/libgstsdp-1.0.a
-        ${GSTREAMER_ROOT}/lib/libwebrtc_audio_processing.a
+        ${GSTREAMER_ROOT}/lib/libwebrtc-audio-processing-2.a
         ${GSTREAMER_ROOT}/lib/libopencore-amrnb.a
         ${GSTREAMER_ROOT}/lib/libgstriff-1.0.a
         ${GSTREAMER_ROOT}/lib/libFLAC.a
         ${GSTREAMER_ROOT}/lib/libogg.a
-        ${GSTREAMER_ROOT}/lib/libavformat.a
         ${GSTREAMER_ROOT}/lib/libbz2.a
         ${GSTREAMER_ROOT}/lib/libfreetype.a
         ${GSTREAMER_ROOT}/lib/libgstrtsp-1.0.a
-        ${GSTREAMER_ROOT}/lib/liba52.a
-        ${GSTREAMER_ROOT}/lib/libavcodec.a
-        ${GSTREAMER_ROOT}/lib/libavutil.a
-        ${GSTREAMER_ROOT}/lib/libavfilter.a
-        ${GSTREAMER_ROOT}/lib/libswresample.a
         ${GSTREAMER_ROOT}/lib/libopus.a
         ${GSTREAMER_ROOT}/lib/libvpx.a
         ${GSTREAMER_ROOT}/lib/libgstrtspserver-1.0.a
@@ -202,8 +189,8 @@ target_link_libraries(
         ${GSTREAMER_ROOT}/lib/libintl.a
         ${GSTREAMER_ROOT}/lib/libz.a
 
-        ${BOOST_ROOT}/libboost_system.a
-        ${BOOST_ROOT}/libboost_thread.a
+        Boost::system
+        Boost::thread
 
         -pthread
 )
