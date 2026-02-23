@@ -43,7 +43,7 @@ class RelayConfig:
     # Network settings - Robot
     robot_ip: str = "10.0.31.11"
     robot_port: int = 5555
-    robot_translator: str = "spot"
+    robot_translator: str = "asgard"
 
     # Timeouts (seconds)
     servo_response_timeout: float = 1.0
@@ -99,7 +99,7 @@ class RelayConfig:
             )
 
         # Validate robot translator
-        valid_robot_translators = ['spot']
+        valid_robot_translators = ['asgard']
         if self.robot_translator not in valid_robot_translators:
             raise ConfigurationError(
                 f"Invalid robot_translator: {self.robot_translator}. Must be one of {valid_robot_translators}"

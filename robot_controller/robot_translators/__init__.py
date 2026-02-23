@@ -5,6 +5,6 @@ Translators convert VR client robot control messages into robot-specific protoco
 """
 
 from .base import RobotTranslator
-from .spot import SpotTranslator
+from .asgard import AsgardTranslator
 
-__all__ = ['RobotTranslator', 'SpotTranslator']
+__all__ = ['RobotTranslator', 'AsgardTranslator']

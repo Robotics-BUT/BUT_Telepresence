@@ -18,7 +18,7 @@ from .config import load_configuration, RelayConfig
 from .exceptions import RelayServiceError
 from .protocol import MessageDetector, MessageType
 from .servo_translators import ServoTranslator, TGDrivesTranslator
-from .robot_translators import RobotTranslator, SpotTranslator
+from .robot_translators import RobotTranslator, AsgardTranslator
 
 try:
     from influxdb_client_3 import InfluxDBClient3, Point
@@ -178,8 +178,8 @@ class UDPRelayService:
         """
         translator_type = self.config.robot_translator.lower()
 
-        if translator_type == 'spot':
-            return SpotTranslator()
+        if translator_type == 'asgard':
+            return AsgardTranslator()
         else:
             raise RelayServiceError(f"Unknown robot translator type: {translator_type}")
 

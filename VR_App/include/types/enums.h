@@ -74,23 +74,20 @@ inline std::string AspectRatioModeToString(AspectRatioMode mode) {
 
 /** Supported robot platforms. Determines control protocol details. */
 enum class RobotType {
-    Odin,
-    Spot,
+    Asgard,
     Count
 };
 
 inline std::string RobotTypeToString(RobotType type) {
     switch (type) {
-        case RobotType::Odin: return "ODIN";
-        case RobotType::Spot: return "SPOT";
+        case RobotType::Asgard: return "ASGARD";
         default:
             throw std::invalid_argument("Invalid robot type");
     }
 }
 
 inline RobotType StringToRobotType(const std::string& type) {
-    if (type == "ODIN") return RobotType::Odin;
-    if (type == "SPOT") return RobotType::Spot;
+    if (type == "ASGARD") return RobotType::Asgard;
     throw std::invalid_argument("Invalid robot type: " + type);
 }
 
