@@ -6,6 +6,7 @@ destination (servo driver or robot), and returns responses.
 """
 
 import logging
+import math
 import signal
 import socket
 import struct
@@ -62,6 +63,12 @@ class UDPRelayService:
         # State
         self.running = False
         self.consecutive_errors = 0
+
+        # Panoramic camera switching
+        self._camera_select_socket: Optional[socket.socket] = None
+        self._current_camera_index: int = 0
+        self._num_cameras: int = 6
+        self._hysteresis_margin: float = 0.6  # fraction of sector width
 
         # Telemetry - InfluxDB with batch buffering
         self.influx_client: Optional[InfluxDBClient3] = None
@@ -214,6 +221,10 @@ class UDPRelayService:
             self.robot_translator = self._create_robot_translator()
             self.logger.info(f"Robot translator initialized: {self.robot_translator.get_name()}")
 
+            # Initialize camera select socket for panoramic mode
+            self._camera_select_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.logger.info(f"Camera select socket initialized (target: 127.0.0.1:{self.config.camera_control_port})")
+
             self.logger.info("All sockets initialized successfully")
             return True
 
@@ -248,6 +259,13 @@ class UDPRelayService:
         if self.robot_translator:
             self.logger.info("Robot translator closed")
             self.robot_translator = None
+
+        if self._camera_select_socket:
+            try:
+                self._camera_select_socket.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing camera select socket: {e}")
+            self._camera_select_socket = None
 
         if self.influx_client:
             try:
@@ -285,6 +303,61 @@ class UDPRelayService:
         else:
             self.logger.warning(f"Unknown message type from {client_addr[0]}:{client_addr[1]}, dropping")
 
+    def _compute_camera_index(self, azimuth: float) -> int:
+        """
+        Compute camera index from head azimuth with hysteresis.
+
+        Args:
+            azimuth: Head yaw angle in radians (-pi to pi)
+
+        Returns:
+            Camera index (0 to num_cameras-1)
+        """
+        # Normalize azimuth to [0, 2*pi)
+        yaw = azimuth % (2 * math.pi)
+        if yaw < 0:
+            yaw += 2 * math.pi
+
+        sector_size = 2 * math.pi / self._num_cameras
+        raw_index = int(yaw / sector_size) % self._num_cameras
+
+        # Hysteresis: only switch if we've moved past the margin into the new sector
+        if raw_index != self._current_camera_index:
+            sector_center = (raw_index + 0.5) * sector_size
+            dist_from_center = abs(yaw - sector_center)
+            # Wrap-around distance
+            if dist_from_center > math.pi:
+                dist_from_center = 2 * math.pi - dist_from_center
+            threshold = sector_size * self._hysteresis_margin / 2
+            if dist_from_center > threshold:
+                return self._current_camera_index  # Not far enough into new sector
+
+        return raw_index
+
+    def _update_camera_selection(self, data: bytes):
+        """
+        Extract azimuth from head pose packet and send camera select if changed.
+
+        Head pose packet: [0x01] [azimuth (float)] [elevation (float)] [speed (float)] [timestamp (uint64)]
+        """
+        if len(data) < 5 or not self._camera_select_socket:
+            return
+
+        try:
+            azimuth = struct.unpack('<f', data[1:5])[0]
+            new_index = self._compute_camera_index(azimuth)
+
+            if new_index != self._current_camera_index:
+                self._current_camera_index = new_index
+                self._camera_select_socket.sendto(
+                    bytes([new_index]),
+                    ("127.0.0.1", self.config.camera_control_port)
+                )
+                self.logger.debug(f"Camera switched to {new_index} (azimuth={math.degrees(azimuth):.1f}°)")
+
+        except (struct.error, Exception) as e:
+            self.logger.warning(f"Failed to update camera selection: {e}")
+
     def _forward_to_servo(self, data: bytes, client_addr: Tuple[str, int]):
         """
         Forward message to servo driver via translator.
@@ -296,6 +369,9 @@ class UDPRelayService:
         if not self.servo_translator:
             self.logger.error("Servo translator not initialized")
             return
+
+        # Update panoramic camera selection based on head azimuth
+        self._update_camera_selection(data)
 
         try:
             # Translator handles protocol conversion, sending, and receiving

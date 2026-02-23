@@ -3,13 +3,19 @@
 #include <csignal>
 #include <chrono>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 #include <thread>
 #include <mutex>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 #include "json.hpp"
 #include "logging.h"
 #include "pipelines.h"
 
 using json = nlohmann::json;
+
+constexpr int CAMERA_SELECT_PORT = 9100;
 
 StreamingConfig DEFAULT_STREAMING_CONFIG = {
     "192.168.1.100", 8554, 8556, Codec::JPEG, 85, 400000, 1920, 1080, VideoMode::STEREO, 60
@@ -24,6 +30,11 @@ std::atomic<bool> stop_requested{false};
 
 // Track current config for each sensor to detect what changed
 std::vector<StreamingConfig> current_configs = {DEFAULT_STREAMING_CONFIG, DEFAULT_STREAMING_CONFIG};
+
+// Panoramic mode: input-selector element and its sink pads
+GstElement *panoramic_selector = nullptr;
+std::mutex selector_mutex;
+std::vector<GstPad *> selector_pads;
 
 void StopPipeline(GstElement *pipeline) {
     if (pipeline == nullptr) { return; };
@@ -331,13 +342,258 @@ void RunCameraStreamingPipelineDynamic(int sensorId) {
     }
 }
 
+void ForceKeyFrame(GstElement *pipeline) {
+    GstElement *encoder = gst_bin_get_by_name(GST_BIN(pipeline), "encoder");
+    if (!encoder) return;
+
+    GstEvent *event = gst_video_event_new_upstream_force_key_unit(
+        GST_CLOCK_TIME_NONE, TRUE, 0);
+    gst_element_send_event(encoder, event);
+    gst_object_unref(encoder);
+}
+
+void CameraSelectListener() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        std::cerr << "Failed to create camera select socket\n";
+        return;
+    }
+
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(CAMERA_SELECT_PORT);
+
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        std::cerr << "Failed to bind camera select socket on port " << CAMERA_SELECT_PORT << "\n";
+        close(sock);
+        return;
+    }
+
+    std::cout << "Camera select listener started on port " << CAMERA_SELECT_PORT << "\n";
+
+    // Set socket timeout so we can check stop_requested periodically
+    struct timeval tv{};
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    uint8_t buf[16];
+    int current_camera = 0;
+
+    while (!stop_requested.load()) {
+        struct sockaddr_in client{};
+        socklen_t len = sizeof(client);
+        ssize_t n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&client, &len);
+        if (n < 1) continue;
+
+        int new_camera = buf[0];
+        if (new_camera < 0 || new_camera >= PANORAMIC_NUM_CAMERAS) continue;
+        if (new_camera == current_camera) continue;
+
+        std::lock_guard<std::mutex> lk(selector_mutex);
+        if (!panoramic_selector || new_camera >= (int)selector_pads.size()) continue;
+
+        g_object_set(panoramic_selector, "active-pad", selector_pads[new_camera], nullptr);
+        current_camera = new_camera;
+        std::cout << "Switched to camera " << new_camera << "\n";
+
+        // Force I-frame for H.264/H.265 to avoid decode artifacts
+        std::lock_guard<std::mutex> plk(pipelines_mutex);
+        if (pipelines.size() > 0 && pipelines[0] != nullptr) {
+            StreamingConfig cfg;
+            {
+                std::lock_guard<std::mutex> ck(cfg_mutex);
+                cfg = desired_cfg;
+            }
+            if (cfg.codec == Codec::H264 || cfg.codec == Codec::H265) {
+                ForceKeyFrame(pipelines[0]);
+            }
+        }
+    }
+
+    close(sock);
+    std::cout << "Camera select listener stopped\n";
+}
+
+void RunPanoramicPipeline() {
+    uint64_t seen_version = 0;
+
+    while (!stop_requested.load()) {
+        StreamingConfig cfg;
+        {
+            std::lock_guard<std::mutex> lk(cfg_mutex);
+            cfg = desired_cfg;
+            seen_version = cfg_version.load(std::memory_order_relaxed);
+            if (seen_version == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+        }
+
+        if (cfg.videoMode != VideoMode::PANORAMIC) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        // Build panoramic pipeline
+        std::ostringstream oss = GetPanoramicStreamingPipeline(cfg);
+        const std::string pipelineStr = oss.str();
+
+        std::cout << "=== Building Panoramic Pipeline ===\n" << pipelineStr << "\n=== End Pipeline ===\n";
+
+        GstElement *pipeline = gst_parse_launch(pipelineStr.c_str(), nullptr);
+        if (!pipeline) {
+            std::cerr << "Failed to build panoramic pipeline\n";
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+
+        gst_element_set_name(pipeline, "pipeline_panoramic");
+
+        // Get the input-selector and cache its sink pads
+        GstElement *sel = gst_bin_get_by_name(GST_BIN(pipeline), "sel");
+        if (!sel) {
+            std::cerr << "Failed to find input-selector element\n";
+            StopPipeline(pipeline);
+            continue;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(selector_mutex);
+            panoramic_selector = sel;
+            selector_pads.clear();
+            for (int i = 0; i < PANORAMIC_NUM_CAMERAS; i++) {
+                std::string padName = "sink_" + std::to_string(i);
+                GstPad *pad = gst_element_get_static_pad(sel, padName.c_str());
+                if (pad) {
+                    selector_pads.push_back(pad);
+                } else {
+                    std::cerr << "Warning: could not get pad " << padName << "\n";
+                }
+            }
+        }
+
+        // Connect latency instrumentation identities
+        GstElement *camsrc_ident = gst_bin_get_by_name(GST_BIN(pipeline), "camsrc_ident");
+        GstElement *vidconv_ident = gst_bin_get_by_name(GST_BIN(pipeline), "vidconv_ident");
+        GstElement *enc_ident = gst_bin_get_by_name(GST_BIN(pipeline), "enc_ident");
+        GstElement *rtppay_ident = gst_bin_get_by_name(GST_BIN(pipeline), "rtppay_ident");
+
+        if (camsrc_ident) g_signal_connect(camsrc_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+        if (vidconv_ident) g_signal_connect(vidconv_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+        if (enc_ident) g_signal_connect(enc_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+        if (rtppay_ident) g_signal_connect(rtppay_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex);
+            if (pipelines.empty()) pipelines.push_back(nullptr);
+            pipelines[0] = pipeline;
+        }
+
+        if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+            std::cerr << "Unable to set panoramic pipeline to PLAYING\n";
+            {
+                std::lock_guard<std::mutex> lk(selector_mutex);
+                for (auto *pad : selector_pads) gst_object_unref(pad);
+                selector_pads.clear();
+                panoramic_selector = nullptr;
+            }
+            gst_object_unref(sel);
+            StopPipeline(pipeline);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+
+        std::cout << "Panoramic pipeline playing with " << selector_pads.size() << " cameras\n";
+
+        // Monitor for errors/EOS and config changes
+        GstBus *bus = gst_element_get_bus(pipeline);
+        bool rebuild = false;
+
+        while (!stop_requested.load() && !rebuild) {
+            GstMessage *msg = gst_bus_timed_pop_filtered(bus, 100 * GST_MSECOND,
+                (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+
+            if (msg) {
+                std::cerr << "Panoramic pipeline received error/EOS\n";
+                gst_message_unref(msg);
+                rebuild = true;
+            }
+
+            uint64_t current_version = cfg_version.load(std::memory_order_relaxed);
+            if (current_version != seen_version) {
+                StreamingConfig new_cfg;
+                {
+                    std::lock_guard<std::mutex> lk(cfg_mutex);
+                    new_cfg = desired_cfg;
+                    seen_version = current_version;
+                }
+
+                if (new_cfg.videoMode != VideoMode::PANORAMIC) {
+                    std::cout << "Video mode changed from PANORAMIC, rebuilding\n";
+                    rebuild = true;
+                } else if (CanUpdateDynamically(cfg, new_cfg)) {
+                    UpdatePipelineProperties(pipeline, new_cfg, 0);
+                    cfg = new_cfg;
+                } else {
+                    std::cout << "Panoramic config change requires rebuild\n";
+                    rebuild = true;
+                }
+            }
+        }
+
+        gst_object_unref(bus);
+
+        // Cleanup selector pads and element
+        {
+            std::lock_guard<std::mutex> lk(selector_mutex);
+            for (auto *pad : selector_pads) gst_object_unref(pad);
+            selector_pads.clear();
+            panoramic_selector = nullptr;
+        }
+        gst_object_unref(sel);
+
+        StopPipeline(pipeline);
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex);
+            pipelines[0] = nullptr;
+        }
+
+        if (rebuild && !stop_requested.load()) {
+            std::cout << "Waiting for cameras to fully release...\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }
+}
+
 int RunCameraStreaming() {
     std::cout << "Streaming driver running; waiting for updates on stdin\n";
-    std::thread t0(RunCameraStreamingPipelineDynamic, 0);
-    std::thread t1(RunCameraStreamingPipelineDynamic, 1);
 
-    t0.join();
-    t1.join();
+    // Wait for initial config to determine mode
+    while (!stop_requested.load() && cfg_version.load(std::memory_order_relaxed) == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    if (stop_requested.load()) return 0;
+
+    StreamingConfig initial_cfg;
+    {
+        std::lock_guard<std::mutex> lk(cfg_mutex);
+        initial_cfg = desired_cfg;
+    }
+
+    if (initial_cfg.videoMode == VideoMode::PANORAMIC) {
+        std::thread camSelectThread(CameraSelectListener);
+        RunPanoramicPipeline();
+        camSelectThread.join();
+    } else {
+        std::thread t0(RunCameraStreamingPipelineDynamic, 0);
+        std::thread t1(RunCameraStreamingPipelineDynamic, 1);
+        t0.join();
+        t1.join();
+    }
+
     return 0;
 }
 
@@ -353,6 +609,7 @@ Codec GetCodecFromString(const std::string &codecString) {
 VideoMode GetVideoModeFromString(const std::string &videoModeString) {
     if (videoModeString == "stereo") return VideoMode::STEREO;
     if (videoModeString == "mono") return VideoMode::MONO;
+    if (videoModeString == "panoramic") return VideoMode::PANORAMIC;
     throw std::invalid_argument("Invalid video mode passed!");
 }
 
@@ -386,6 +643,7 @@ std::string VideoModeToString(VideoMode mode) {
     switch (mode) {
         case STEREO: return "STEREO";
         case MONO: return "MONO";
+        case PANORAMIC: return "PANORAMIC";
         default: return "UNKNOWN";
     }
 }
@@ -457,6 +715,7 @@ int main(int argc, char *argv[]) {
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);
 
     signal(SIGTERM, SignalHandler);
+    signal(SIGINT, SignalHandler);
 
     std::thread ctrl(ControlLoop);
     int rc = RunCameraStreaming();

@@ -38,18 +38,34 @@ inline std::string CodecToString(Codec codec) {
     }
 }
 
-/** Stereo (two independent eye streams) or mono (single stream for both eyes). */
+/**
+ * Video streaming mode.
+ * - Stereo: two independent eye streams (stereoscopic)
+ * - Mono: single stream for both eyes
+ * - Panoramic: 6 cameras at 60° intervals, head-yaw switching, mono rendering
+ */
 enum class VideoMode {
     Stereo,
     Mono,
+    Panoramic,
     Count
 };
 
 inline std::string VideoModeToString(VideoMode mode) {
     switch (mode) {
-        case VideoMode::Stereo: return "STEREO";
-        case VideoMode::Mono:   return "MONO";
-        default:                return "Unknown";
+        case VideoMode::Stereo:    return "STEREO";
+        case VideoMode::Mono:      return "MONO";
+        case VideoMode::Panoramic: return "PANORAMIC";
+        default:                   return "Unknown";
+    }
+}
+
+inline std::string VideoModeToApiString(VideoMode mode) {
+    switch (mode) {
+        case VideoMode::Stereo:    return "stereo";
+        case VideoMode::Mono:      return "mono";
+        case VideoMode::Panoramic: return "panoramic";
+        default:                   return "stereo";
     }
 }
 

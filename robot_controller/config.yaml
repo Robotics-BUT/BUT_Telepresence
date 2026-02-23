@@ -22,6 +22,10 @@ network:
     response_timeout: 0.5  # Timeout for robot responses (seconds)
     translator: "asgard"   # Robot translator type (asgard)
 
+  # Panoramic camera switching (streaming driver on localhost)
+  camera:
+    control_port: 9100     # UDP port for camera select commands
+
 # TG Drives Servo Configuration
 tg_drives:
   elevation_min: -2000000000 # Minimum elevation in motor units

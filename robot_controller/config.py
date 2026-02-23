@@ -45,6 +45,9 @@ class RelayConfig:
     robot_port: int = 5555
     robot_translator: str = "asgard"
 
+    # Panoramic camera switching
+    camera_control_port: int = 9100
+
     # Timeouts (seconds)
     servo_response_timeout: float = 1.0
     robot_response_timeout: float = 0.5
@@ -152,6 +155,11 @@ class RelayConfig:
                     )
                     config_dict['robot_translator'] = data['network']['robot'].get(
                         'translator', cls.robot_translator
+                    )
+
+                if 'camera' in data['network']:
+                    config_dict['camera_control_port'] = data['network']['camera'].get(
+                        'control_port', cls.camera_control_port
                     )
 
             if 'logging' in data:

@@ -200,7 +200,9 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
 
         HandleControllers();
 
-        if (mono_) imageHandle = &appState_->cameraStreamingStates.first;
+        if (mono_ || appState_->streamingConfig.videoMode == VideoMode::Panoramic) {
+            imageHandle = &appState_->cameraStreamingStates.first;
+        }
 
         // Calculate presentation latency (frame ready → about to render)
         uint64_t frameReadyTime = imageHandle->stats->frameReadyTimestamp.load();
@@ -720,13 +722,13 @@ void TelepresenceProgram::BuildSettings() {
                 auto& vm = appState_->streamingConfig.videoMode;
                 vm = static_cast<VideoMode>(
                     (static_cast<int>(vm) + 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
-                mono_ = (vm == VideoMode::Mono);
+                mono_ = (vm == VideoMode::Mono || vm == VideoMode::Panoramic);
             },
             [this]() {
                 auto& vm = appState_->streamingConfig.videoMode;
                 vm = static_cast<VideoMode>(
                     (static_cast<int>(vm) - 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
-                mono_ = (vm == VideoMode::Mono);
+                mono_ = (vm == VideoMode::Mono || vm == VideoMode::Panoramic);
             }
         },
         {
