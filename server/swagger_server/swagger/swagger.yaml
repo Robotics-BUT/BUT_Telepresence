@@ -127,6 +127,7 @@ components:
           enum:
           - stereo
           - mono
+          - panoramic
         fps:
           type: integer
           example: 60
@@ -230,6 +231,7 @@ components:
           enum:
           - stereo
           - mono
+          - panoramic
         fps:
           type: integer
           example: 60

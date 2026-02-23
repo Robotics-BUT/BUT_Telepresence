@@ -20,15 +20,16 @@ RestClient::RestClient(StreamingConfig &config) : config_(config) {
 }
 
 int RestClient::StartStream() {
-    std::string req = json{{"bitrate",          config_.bitrate},
-                           {"codec",            CodecToString(config_.codec)},
-                           {"encoding_quality", config_.encodingQuality},
-                           {"fps",              config_.fps},
-                           {"ip_address",       IpToString(config_.headset_ip)},
-                           {"port_left",        config_.portLeft},
-                           {"port_right",       config_.portRight},
-                           {"resolution",       {{"height", config_.resolution.getHeight()}, {"width", config_.resolution.getWidth()}}},
-                           {"video_mode",       config_.videoMode == VideoMode::Stereo ? "stereo": "mono"}}.dump();
+    json j = {{"bitrate",          config_.bitrate},
+               {"codec",            CodecToString(config_.codec)},
+               {"encoding_quality", config_.encodingQuality},
+               {"fps",              config_.fps},
+               {"ip_address",       IpToString(config_.headset_ip)},
+               {"port_left",        config_.portLeft},
+               {"port_right",       config_.portRight},
+               {"resolution",       {{"height", config_.resolution.getHeight()}, {"width", config_.resolution.getWidth()}}},
+               {"video_mode",       VideoModeToApiString(config_.videoMode)}};
+    std::string req = j.dump();
 
     auto res = httpClient_->Post("/api/v1/stream/start", req, "application/json");
     if (!res) {
@@ -70,8 +71,7 @@ int RestClient::UpdateStreamingConfig(const StreamingConfig &config) {
                            {"port_left",        config.portLeft},
                            {"port_right",       config.portRight},
                            {"resolution",       {{"height", config.resolution.getHeight()}, {"width", config.resolution.getWidth()}}},
-                           {"video_mode",       config.videoMode == VideoMode::Stereo ? "stereo"
-                                                                                      : "mono"}}.dump();
+                           {"video_mode",       VideoModeToApiString(config.videoMode)}}.dump();
     auto res = httpClient_->Put("/api/v1/stream/update", req, "application/json");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send update config request - connection error");

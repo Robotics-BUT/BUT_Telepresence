@@ -324,11 +324,14 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     camPair_->first.memorySize = camPair_->first.frameWidth * camPair_->first.frameHeight * 3;
     camPair_->second.memorySize = camPair_->second.frameWidth * camPair_->second.frameHeight * 3;
 
+    // Determine if we need one or two decode pipelines
+    bool singlePipeline = (config.videoMode == VideoMode::Mono || config.videoMode == VideoMode::Panoramic);
+
     // Create new pipelines based on the provided configuration
     switch (config.codec) {
         case Codec::JPEG:
             pipelineLeft_ = gst_parse_launch(jpegPipeline_.c_str(), &error);
-            pipelineRight_ = gst_parse_launch(jpegPipeline_.c_str(), &error);
+            if (!singlePipeline) pipelineRight_ = gst_parse_launch(jpegPipeline_.c_str(), &error);
             break;
         case Codec::VP8:
             //TODO:
@@ -338,11 +341,11 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
             break;
         case Codec::H264:
             pipelineLeft_ = gst_parse_launch(h264Pipeline_.c_str(), &error);
-            pipelineRight_ = gst_parse_launch(h264Pipeline_.c_str(), &error);
+            if (!singlePipeline) pipelineRight_ = gst_parse_launch(h264Pipeline_.c_str(), &error);
             break;
         case Codec::H265:
             pipelineLeft_ = gst_parse_launch(h265Pipeline_.c_str(), &error);
-            pipelineRight_ = gst_parse_launch(h265Pipeline_.c_str(), &error);
+            if (!singlePipeline) pipelineRight_ = gst_parse_launch(h265Pipeline_.c_str(), &error);
             break;
         default:
             break;
@@ -354,22 +357,24 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     }
 
     // Check if pipelines were created successfully
-    if (!pipelineLeft_ || !pipelineRight_) {
-        LOG_ERROR("Failed to create stereo pipelines");
-        throw std::runtime_error("Failed to create stereo pipelines");
+    if (!pipelineLeft_ || (!singlePipeline && !pipelineRight_)) {
+        LOG_ERROR("Failed to create pipelines");
+        throw std::runtime_error("Failed to create pipelines");
     }
 
-    // Stereo pipeline configuration
+    // Pipeline configuration
     std::string xDimString = fmt::format("{},{}", config.resolution.getWidth(), config.resolution.getHeight());
     int payload = (config.codec == Codec::JPEG) ? 26 : 96;
 
-    // Configure left and right pipelines
+    // Configure left pipeline (always present)
     configureSinglePipeline(pipelineLeft_, "left", Config::LEFT_CAMERA_PORT, config, xDimString, payload);
-    configureSinglePipeline(pipelineRight_, "right", Config::RIGHT_CAMERA_PORT, config, xDimString, payload);
-
-    // Start both pipelines
     gst_element_set_state(pipelineLeft_, GST_STATE_PLAYING);
-    gst_element_set_state(pipelineRight_, GST_STATE_PLAYING);
+
+    // Configure right pipeline (stereo only)
+    if (!singlePipeline) {
+        configureSinglePipeline(pipelineRight_, "right", Config::RIGHT_CAMERA_PORT, config, xDimString, payload);
+        gst_element_set_state(pipelineRight_, GST_STATE_PLAYING);
+    }
 
     threadPool.detach_task([&]() {
         /* Create a GLib Main Loop and set it to run */

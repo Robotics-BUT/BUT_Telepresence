@@ -1,6 +1,6 @@
 # BUT Telepresence
 
-A low-latency standalone VR telepresence system for remote robot control. This system enables researchers to control a mobile robot through a Meta Quest VR headset with live stereo camera streaming and head tracking.
+A low-latency standalone VR telepresence system for remote robot control. This system enables researchers to control a mobile robot through a Meta Quest VR headset with live camera streaming and head tracking. Supports stereo, mono, and panoramic (multi-camera) video modes.
 
 **Paper:** [[Preprint]](https://www.researchsquare.com/article/rs-8855703/v1)
 
@@ -23,7 +23,8 @@ A low-latency standalone VR telepresence system for remote robot control. This s
                                          │                                     │
                                          │  ┌─────────────────────────────┐    │
                                          │  │ Streaming Driver (GStreamer)│    │
-                                         │  │ Stereo camera → RTP stream  │    │
+                                         │  │ Camera(s) → RTP stream      │    │
+                                         │  │ Stereo / Mono / Panoramic   │    │
                                          │  └─────────────────────────────┘    │
                                          └─────────────────────────────────────┘
 ```
@@ -145,7 +146,7 @@ network:
   robot:
     ip: "10.0.31.11"       # Your robot IP
     port: 5555
-    translator: spot       # Spot has been used for the reference measurements, you will have to provide your own translator
+    translator: asgard     # Asgard ecosystem (Spot, Husky, etc.), you will have to provide your own translator for other platforms
 
 # Configuration specific to the reference servo translator
 tg_drives:
@@ -180,7 +181,15 @@ Or set up permanently through the provided service in *services/*
 
 ## Streaming Driver
 
-GStreamer-based stereo camera streaming pipeline. Make sure you have GStreamer installed with the HW accelerated codecs included.
+GStreamer-based camera streaming pipeline supporting three video modes:
+
+| Mode | Cameras | Description |
+|------|---------|-------------|
+| **Stereo** | 2 (left/right) | Stereoscopic pair, one RTP stream per eye |
+| **Mono** | 1 | Single camera, same frame to both eyes |
+| **Panoramic** | 6 at 60° intervals | Single active camera selected by head yaw (see below) |
+
+Make sure you have GStreamer installed with the HW accelerated codecs included.
 
 Once you're certain you have all necessary elements (or you've made the needed changes in `pipelines.h`), build the project:
 
@@ -225,6 +234,50 @@ Check status:
 ```bash
 systemctl status robot-controller
 journalctl -u robot-controller -f
+```
+
+---
+
+# Panoramic Mode (Experimental)
+
+> **Warning:** Panoramic mode is experimental and has not been validated on hardware yet. Expect rough edges.
+
+Panoramic mode enables 360° coverage using 6 mono cameras mounted in a ring at 60° intervals. Only one camera streams at a time — the robot controller computes which camera faces the operator's gaze direction and switches the active source in real-time.
+
+## How It Works
+
+```
+VR Headset                          Jetson
+  head pose ──UDP──► robot_controller
+                       │ azimuth → camera_index (with hysteresis)
+                       │ 1-byte UDP to localhost:9100
+                       ▼
+                     streaming_driver
+                       │ GStreamer input-selector switches active pad
+                       ▼
+                     cam0 ─┐
+                     cam1 ─┤
+                     cam2 ─┤ input-selector ─► encoder ─► RTP ─► VR headset
+                     cam3 ─┤
+                     cam4 ─┘
+                     cam5 ─┘
+```
+
+- The streaming driver launches all 6 `nvarguscamerasrc` sources in a single GStreamer pipeline connected through an `input-selector` element.
+- The robot controller extracts head yaw (azimuth) from each VR pose packet, maps it to a camera index (0–5), and sends a 1-byte UDP message to the streaming driver on port 9100.
+- For H.264/H.265 codecs, an I-frame is forced on each camera switch to avoid decode artifacts.
+- The VR app renders the single stream to both eyes (mono rendering).
+
+## Configuration
+
+Select `Panoramic` as the video mode in the VR app settings GUI or via the REST API (`"video_mode": "panoramic"`).
+
+The camera selection port (9100) is a static constant shared between the streaming driver and the robot controller — it is not exposed through the REST API. The robot controller side is configured in `robot_controller/config.yaml`:
+
+```yaml
+network:
+  camera:
+    control_port: 9100
 ```
 
 ---

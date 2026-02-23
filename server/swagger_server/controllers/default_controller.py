@@ -41,7 +41,7 @@ def cfg_dict_from_state(s: dict) -> dict:
         "bitrate": int(s["bitrate"]),
         "horizontalResolution": int(s["resolution"]["width"]),
         "verticalResolution": int(s["resolution"]["height"]),
-        "videoMode": s["video_mode"],  # "mono"/"stereo"
+        "videoMode": s["video_mode"],  # "mono"/"stereo"/"panoramic"
         "fps": int(s["fps"]),
     }
 
