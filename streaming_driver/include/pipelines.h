@@ -81,12 +81,17 @@ inline std::ostringstream GetH265StreamingPipeline(const StreamingConfig &stream
 
 constexpr int PANORAMIC_NUM_CAMERAS = 6;
 
+// Sensor IDs to actually open (Argus ISP limit: 3 concurrent sessions)
+constexpr int PANORAMIC_ACTIVE_SENSORS[] = {0, 1, 5};
+constexpr int PANORAMIC_ACTIVE_COUNT = 3;
+
 inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &streamingConfig) {
     std::ostringstream oss;
 
     // Camera source branches feeding into input-selector
-    for (int i = 0; i < PANORAMIC_NUM_CAMERAS; i++) {
-        oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << i
+    for (int i = 0; i < PANORAMIC_ACTIVE_COUNT; i++) {
+        int sensorId = PANORAMIC_ACTIVE_SENSORS[i];
+        oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
             << " ! video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
             << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
             << " ! nvvidconv flip-method=vertical-flip"

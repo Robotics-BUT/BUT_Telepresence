@@ -391,12 +391,25 @@ void CameraSelectListener() {
         if (new_camera < 0 || new_camera >= PANORAMIC_NUM_CAMERAS) continue;
         if (new_camera == current_camera) continue;
 
-        std::lock_guard<std::mutex> lk(selector_mutex);
-        if (!panoramic_selector || new_camera >= (int)selector_pads.size()) continue;
+        // Map camera index to pad index (only sensors 0,1,5 are open)
+        int pad_index = -1;
+        for (int i = 0; i < PANORAMIC_ACTIVE_COUNT; i++) {
+            if (PANORAMIC_ACTIVE_SENSORS[i] == new_camera) {
+                pad_index = i;
+                break;
+            }
+        }
+        if (pad_index < 0) {
+            std::cout << "Camera " << new_camera << " not available, ignoring\n";
+            continue;
+        }
 
-        g_object_set(panoramic_selector, "active-pad", selector_pads[new_camera], nullptr);
+        std::lock_guard<std::mutex> lk(selector_mutex);
+        if (!panoramic_selector || pad_index >= (int)selector_pads.size()) continue;
+
+        g_object_set(panoramic_selector, "active-pad", selector_pads[pad_index], nullptr);
         current_camera = new_camera;
-        std::cout << "Switched to camera " << new_camera << "\n";
+        std::cout << "Switched to camera " << new_camera << " (pad " << pad_index << ")\n";
 
         // Force I-frame for H.264/H.265 to avoid decode artifacts
         std::lock_guard<std::mutex> plk(pipelines_mutex);
@@ -463,7 +476,7 @@ void RunPanoramicPipeline() {
             std::lock_guard<std::mutex> lk(selector_mutex);
             panoramic_selector = sel;
             selector_pads.clear();
-            for (int i = 0; i < PANORAMIC_NUM_CAMERAS; i++) {
+            for (int i = 0; i < PANORAMIC_ACTIVE_COUNT; i++) {
                 std::string padName = "sink_" + std::to_string(i);
                 GstPad *pad = gst_element_get_static_pad(sel, padName.c_str());
                 if (pad) {
