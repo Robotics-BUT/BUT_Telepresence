@@ -259,7 +259,18 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         return;
     }
 
-    // Stop and clean up existing pipelines if they exist
+    // Stop the main loop FIRST — it dispatches bus callbacks that reference
+    // the pipelines, so it must exit before we tear down any pipeline.
+    if (mainLoop_) {
+        LOG_INFO("Stopping GStreamer main loop before reconfiguration");
+        g_main_loop_quit(mainLoop_);
+    }
+    if (mainLoopFuture_.valid()) {
+        LOG_INFO("Waiting for GStreamer main loop thread to finish");
+        mainLoopFuture_.wait();
+    }
+
+    // Now safe to tear down pipelines — no callbacks in flight
     if (pipelineLeft_) {
         LOG_INFO("Stopping the left pipeline before reconfiguration");
         gst_element_send_event(pipelineLeft_, gst_event_new_eos());
@@ -273,12 +284,6 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         gst_element_set_state(pipelineRight_, GST_STATE_NULL);
         gst_object_unref(pipelineRight_);
         pipelineRight_ = nullptr;
-    }
-
-    // Stop the main loop if running
-    if (mainLoop_) {
-        LOG_INFO("Stopping GStreamer main loop before reconfiguration");
-        g_main_loop_quit(mainLoop_);  // Signal the loop to stop
     }
 
     // Init the CameraFrame data structure
@@ -376,7 +381,10 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         gst_element_set_state(pipelineRight_, GST_STATE_PLAYING);
     }
 
-    threadPool.detach_task([&]() {
+    auto loopPromise = std::make_shared<std::promise<void>>();
+    mainLoopFuture_ = loopPromise->get_future();
+
+    threadPool.detach_task([this, loopPromise]() {
         /* Create a GLib Main Loop and set it to run */
         LOG_INFO("GSTREAMER entering the main loop");
         mainLoop_ = g_main_loop_new(gMainContext_, FALSE);
@@ -385,6 +393,8 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         LOG_INFO("GSTREAMER exited the main loop");
         g_main_loop_unref(mainLoop_);
         mainLoop_ = nullptr;
+
+        loopPromise->set_value();
     });
 }
 
