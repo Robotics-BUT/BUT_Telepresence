@@ -1,9 +1,6 @@
 [submodule "VR_App/external/imgui"]
 	path = VR_App/external/imgui
 	url = https://github.com/ocornut/imgui
-[submodule "VR_App/external/OpenXR-SDK"]
-	path = VR_App/external/OpenXR-SDK
-	url = https://github.com/KhronosGroup/OpenXR-SDK
 [submodule "VR_App/external/cpp-httplib"]
 	path = VR_App/external/cpp-httplib
 	url = https://github.com/yhirose/cpp-httplib
