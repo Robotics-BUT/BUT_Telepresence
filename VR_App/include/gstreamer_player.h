@@ -78,6 +78,7 @@ private:
     GMainContext *gMainContext_{};
     GstGLContext *glContext_{};
     GMainLoop *mainLoop_{};
+    std::future<void> mainLoopFuture_;
 
     CamPair *camPair_;
     GStreamerCallbackObj *callbackObj_;
