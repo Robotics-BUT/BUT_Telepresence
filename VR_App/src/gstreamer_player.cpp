@@ -175,12 +175,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
     GstElement *appsink = nullptr;
 
     if (config.codec != Codec::JPEG) {
-        if (config.codec == Codec::H264) {
-            dec = getElementRequired(pipeline, "dec", pipelineName);
-            g_autoptr(GstCaps) caps_dec = buildDecoderSrcCaps(config.codec, config.resolution.width,
-                                                              config.resolution.height, config.fps);
-            g_object_set(dec, "caps", caps_dec, NULL);
-        }
+        dec = getElementRequired(pipeline, "dec", pipelineName);
 
         glsink = getElementRequired(pipeline, "glsink", pipelineName);
         gst_element_set_context(glsink, gContext_);
@@ -218,12 +213,16 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
     connectAndUnref(dec_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(queue_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
 
-    // Clean up
+    // Clean up refs obtained via gst_bin_get_by_name / gst_element_get_bus
     if (config.codec != Codec::JPEG) {
         gst_object_unref(dec);
         gst_object_unref(glsink);
+        // Do NOT unref appsink here — glsinkbin took ownership via the "sink" property.
+        // It will be freed when glsinkbin is finalized during pipeline disposal.
+    } else {
+        // JPEG path: appsink came from gst_bin_get_by_name (extra ref), so unref it.
+        gst_object_unref(appsink);
     }
-    gst_object_unref(appsink);
     gst_object_unref(bus);
 
     // Set pipeline name and state
@@ -259,29 +258,42 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         return;
     }
 
-    // Stop the main loop FIRST — it dispatches bus callbacks that reference
-    // the pipelines, so it must exit before we tear down any pipeline.
+    // 1. Stop data flow by setting pipelines to NULL (synchronous).
+    //    This stops streaming threads and flushes MediaCodec, preventing
+    //    new-sample / identity handoff callbacks from firing during teardown.
+    //    Do NOT send EOS — it triggers an async MediaCodec flush that races
+    //    with the NULL transition on live pipelines.
+    if (pipelineLeft_) {
+        LOG_INFO("Setting left pipeline to NULL");
+        gst_element_set_state(pipelineLeft_, GST_STATE_NULL);
+    }
+    if (pipelineRight_) {
+        LOG_INFO("Setting right pipeline to NULL");
+        gst_element_set_state(pipelineRight_, GST_STATE_NULL);
+    }
+
+    // 2. Stop the GLib main loop — no more bus callbacks can be generated
+    //    by NULL pipelines, but drain any already-queued dispatches.
     if (mainLoop_) {
-        LOG_INFO("Stopping GStreamer main loop before reconfiguration");
+        LOG_INFO("Stopping GStreamer main loop");
         g_main_loop_quit(mainLoop_);
     }
     if (mainLoopFuture_.valid()) {
-        LOG_INFO("Waiting for GStreamer main loop thread to finish");
         mainLoopFuture_.wait();
     }
 
-    // Now safe to tear down pipelines — no callbacks in flight
+    // 3. Drain any remaining pending callbacks on the main context
+    while (g_main_context_pending(gMainContext_))
+        g_main_context_iteration(gMainContext_, FALSE);
+
+    // 4. Now safe to unref — no threads reference these objects
     if (pipelineLeft_) {
-        LOG_INFO("Stopping the left pipeline before reconfiguration");
-        gst_element_send_event(pipelineLeft_, gst_event_new_eos());
-        gst_element_set_state(pipelineLeft_, GST_STATE_NULL);
+        LOG_INFO("Releasing left pipeline");
         gst_object_unref(pipelineLeft_);
         pipelineLeft_ = nullptr;
     }
     if (pipelineRight_) {
-        LOG_INFO("Stopping the right pipeline before reconfiguration");
-        gst_element_send_event(pipelineRight_, gst_event_new_eos());
-        gst_element_set_state(pipelineRight_, GST_STATE_NULL);
+        LOG_INFO("Releasing right pipeline");
         gst_object_unref(pipelineRight_);
         pipelineRight_ = nullptr;
     }
