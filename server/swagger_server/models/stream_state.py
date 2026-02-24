@@ -279,7 +279,7 @@ class StreamState(Model):
         :param video_mode: The video_mode of this StreamState.
         :type video_mode: str
         """
-        allowed_values = ["stereo", "mono"]  # noqa: E501
+        allowed_values = ["stereo", "mono", "panoramic"]  # noqa: E501
         if video_mode not in allowed_values:
             raise ValueError(
                 "Invalid value for `video_mode` ({0}), must be one of {1}"
