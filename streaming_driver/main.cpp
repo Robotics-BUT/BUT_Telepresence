@@ -31,10 +31,14 @@ std::atomic<bool> stop_requested{false};
 // Track current config for each sensor to detect what changed
 std::vector<StreamingConfig> current_configs = {DEFAULT_STREAMING_CONFIG, DEFAULT_STREAMING_CONFIG};
 
-// Panoramic mode: input-selector element and its sink pads
+// Panoramic mode: input-selector, sink pads, and sliding window state
 GstElement *panoramic_selector = nullptr;
+GstElement *panoramic_pipeline_ptr = nullptr;  // raw pointer for swap operations
 std::mutex selector_mutex;
 std::vector<GstPad *> selector_pads;
+int window_sensors[PANORAMIC_WINDOW_SIZE] = {5, 0, 1};  // sensor-id per slot
+int active_slot = 1;  // slot index currently selected (initially sensor 0 = forward)
+std::atomic<bool> swap_in_progress{false};
 
 void StopPipeline(GstElement *pipeline) {
     if (pipeline == nullptr) { return; };
@@ -352,6 +356,77 @@ void ForceKeyFrame(GstElement *pipeline) {
     gst_object_unref(encoder);
 }
 
+int CircularDistance(int a, int b) {
+    int diff = std::abs(a - b);
+    return std::min(diff, PANORAMIC_NUM_CAMERAS - diff);
+}
+
+struct SwapContext {
+    GstElement *pipeline;
+    int slot;
+    int newSensorId;
+};
+
+GstPadProbeReturn SwapCameraProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
+    auto *ctx = static_cast<SwapContext *>(user_data);
+    int slot = ctx->slot;
+
+    std::string srcName = "cam_src_" + std::to_string(slot);
+    std::string capsName = "cam_capsfilter_" + std::to_string(slot);
+
+    GstElement *old_src = gst_bin_get_by_name(GST_BIN(ctx->pipeline), srcName.c_str());
+    GstElement *capsfilter = gst_bin_get_by_name(GST_BIN(ctx->pipeline), capsName.c_str());
+
+    if (old_src && capsfilter) {
+        // Stop and remove old camera source
+        gst_element_set_state(old_src, GST_STATE_NULL);
+        gst_element_unlink(old_src, capsfilter);
+        gst_bin_remove(GST_BIN(ctx->pipeline), old_src);
+
+        // Create replacement source with new sensor-id
+        GstElement *new_src = gst_element_factory_make("nvarguscamerasrc", srcName.c_str());
+        g_object_set(new_src,
+            "sensor-id", ctx->newSensorId,
+            "saturation", (gfloat)1.2,
+            nullptr);
+        gst_util_set_object_arg(G_OBJECT(new_src), "aeantibanding", "AeAntibandingMode_Off");
+        gst_util_set_object_arg(G_OBJECT(new_src), "ee-mode", "EdgeEnhancement_Off");
+        gst_util_set_object_arg(G_OBJECT(new_src), "tnr-mode", "NoiseReduction_Off");
+
+        gst_bin_add(GST_BIN(ctx->pipeline), new_src);
+        if (!gst_element_link(new_src, capsfilter)) {
+            std::cerr << "Failed to link new cam_src_" << slot << " to capsfilter\n";
+        }
+        gst_element_sync_state_with_parent(new_src);
+
+        std::cout << "Swapped slot " << slot << " to sensor " << ctx->newSensorId << "\n";
+    }
+
+    if (old_src) gst_object_unref(old_src);
+    if (capsfilter) gst_object_unref(capsfilter);
+
+    // Switch input-selector to the swapped slot and update window state
+    {
+        std::lock_guard<std::mutex> lk(selector_mutex);
+        if (panoramic_selector && slot < (int)selector_pads.size()) {
+            g_object_set(panoramic_selector, "active-pad", selector_pads[slot], nullptr);
+        }
+        window_sensors[slot] = ctx->newSensorId;
+        active_slot = slot;
+    }
+
+    // Force I-frame for H.264/H.265
+    StreamingConfig cfg;
+    { std::lock_guard<std::mutex> ck(cfg_mutex); cfg = desired_cfg; }
+    if (cfg.codec == Codec::H264 || cfg.codec == Codec::H265) {
+        ForceKeyFrame(ctx->pipeline);
+    }
+
+    swap_in_progress.store(false);
+    delete ctx;
+    return GST_PAD_PROBE_REMOVE;
+}
+
 void CameraSelectListener() {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -372,14 +447,12 @@ void CameraSelectListener() {
 
     std::cout << "Camera select listener started on port " << CAMERA_SELECT_PORT << "\n";
 
-    // Set socket timeout so we can check stop_requested periodically
     struct timeval tv{};
     tv.tv_sec = 1;
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     uint8_t buf[16];
-    int current_camera = 0;
 
     while (!stop_requested.load()) {
         struct sockaddr_in client{};
@@ -388,39 +461,73 @@ void CameraSelectListener() {
         if (n < 1) continue;
 
         int new_camera = buf[0];
-        if (new_camera < 0 || new_camera >= PANORAMIC_NUM_CAMERAS) continue;
-        if (new_camera == current_camera) continue;
+        if (new_camera >= PANORAMIC_NUM_CAMERAS) continue;
 
-        // Map camera index to pad index (only sensors 0,1,5 are open)
-        int pad_index = -1;
-        for (int i = 0; i < PANORAMIC_ACTIVE_COUNT; i++) {
-            if (PANORAMIC_ACTIVE_SENSORS[i] == new_camera) {
-                pad_index = i;
-                break;
+        bool need_keyframe = false;
+
+        {
+            std::lock_guard<std::mutex> lk(selector_mutex);
+            if (!panoramic_selector || !panoramic_pipeline_ptr) continue;
+            if (new_camera == window_sensors[active_slot]) continue;
+
+            // Check if camera is already in the sliding window
+            int target_slot = -1;
+            for (int i = 0; i < PANORAMIC_WINDOW_SIZE; i++) {
+                if (window_sensors[i] == new_camera) {
+                    target_slot = i;
+                    break;
+                }
+            }
+
+            if (target_slot >= 0) {
+                // Camera is in window — just switch the input-selector pad
+                g_object_set(panoramic_selector, "active-pad", selector_pads[target_slot], nullptr);
+                active_slot = target_slot;
+                need_keyframe = true;
+                std::cout << "Switched to camera " << new_camera << " (slot " << target_slot << ")\n";
+            } else if (!swap_in_progress.load()) {
+                // Camera not in window — swap the non-active slot furthest from target
+                int swap_slot = -1;
+                int max_dist = -1;
+                for (int i = 0; i < PANORAMIC_WINDOW_SIZE; i++) {
+                    if (i == active_slot) continue;
+                    int dist = CircularDistance(window_sensors[i], new_camera);
+                    if (dist > max_dist) {
+                        max_dist = dist;
+                        swap_slot = i;
+                    }
+                }
+
+                if (swap_slot >= 0) {
+                    std::string queueName = "cam_queue_" + std::to_string(swap_slot);
+                    GstElement *queue = gst_bin_get_by_name(GST_BIN(panoramic_pipeline_ptr), queueName.c_str());
+                    if (queue) {
+                        GstPad *src_pad = gst_element_get_static_pad(queue, "src");
+                        if (src_pad) {
+                            auto *ctx = new SwapContext{panoramic_pipeline_ptr, swap_slot, new_camera};
+                            swap_in_progress.store(true);
+                            gst_pad_add_probe(src_pad,
+                                GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM,
+                                SwapCameraProbe, ctx, nullptr);
+                            std::cout << "Swap initiated: slot " << swap_slot
+                                      << " (sensor " << window_sensors[swap_slot]
+                                      << ") -> sensor " << new_camera << "\n";
+                            gst_object_unref(src_pad);
+                        }
+                        gst_object_unref(queue);
+                    }
+                }
             }
         }
-        if (pad_index < 0) {
-            std::cout << "Camera " << new_camera << " not available, ignoring\n";
-            continue;
-        }
 
-        std::lock_guard<std::mutex> lk(selector_mutex);
-        if (!panoramic_selector || pad_index >= (int)selector_pads.size()) continue;
-
-        g_object_set(panoramic_selector, "active-pad", selector_pads[pad_index], nullptr);
-        current_camera = new_camera;
-        std::cout << "Switched to camera " << new_camera << " (pad " << pad_index << ")\n";
-
-        // Force I-frame for H.264/H.265 to avoid decode artifacts
-        std::lock_guard<std::mutex> plk(pipelines_mutex);
-        if (pipelines.size() > 0 && pipelines[0] != nullptr) {
+        if (need_keyframe) {
             StreamingConfig cfg;
-            {
-                std::lock_guard<std::mutex> ck(cfg_mutex);
-                cfg = desired_cfg;
-            }
+            { std::lock_guard<std::mutex> ck(cfg_mutex); cfg = desired_cfg; }
             if (cfg.codec == Codec::H264 || cfg.codec == Codec::H265) {
-                ForceKeyFrame(pipelines[0]);
+                std::lock_guard<std::mutex> plk(pipelines_mutex);
+                if (!pipelines.empty() && pipelines[0]) {
+                    ForceKeyFrame(pipelines[0]);
+                }
             }
         }
     }
@@ -449,8 +556,18 @@ void RunPanoramicPipeline() {
             continue;
         }
 
-        // Build panoramic pipeline
-        std::ostringstream oss = GetPanoramicStreamingPipeline(cfg);
+        // Reset sliding window state for fresh pipeline
+        {
+            std::lock_guard<std::mutex> lk(selector_mutex);
+            window_sensors[0] = 5;
+            window_sensors[1] = 0;
+            window_sensors[2] = 1;
+            active_slot = 1;
+            swap_in_progress.store(false);
+        }
+
+        // Build panoramic pipeline with initial window sensors
+        std::ostringstream oss = GetPanoramicStreamingPipeline(cfg, window_sensors);
         const std::string pipelineStr = oss.str();
 
         std::cout << "=== Building Panoramic Pipeline ===\n" << pipelineStr << "\n=== End Pipeline ===\n";
@@ -475,8 +592,9 @@ void RunPanoramicPipeline() {
         {
             std::lock_guard<std::mutex> lk(selector_mutex);
             panoramic_selector = sel;
+            panoramic_pipeline_ptr = pipeline;
             selector_pads.clear();
-            for (int i = 0; i < PANORAMIC_ACTIVE_COUNT; i++) {
+            for (int i = 0; i < PANORAMIC_WINDOW_SIZE; i++) {
                 std::string padName = "sink_" + std::to_string(i);
                 GstPad *pad = gst_element_get_static_pad(sel, padName.c_str());
                 if (pad) {
@@ -484,6 +602,10 @@ void RunPanoramicPipeline() {
                 } else {
                     std::cerr << "Warning: could not get pad " << padName << "\n";
                 }
+            }
+            // Set initial active pad (slot 1 = sensor 0 = forward-facing)
+            if (active_slot < (int)selector_pads.size()) {
+                g_object_set(sel, "active-pad", selector_pads[active_slot], nullptr);
             }
         }
 
@@ -511,6 +633,7 @@ void RunPanoramicPipeline() {
                 for (auto *pad : selector_pads) gst_object_unref(pad);
                 selector_pads.clear();
                 panoramic_selector = nullptr;
+                panoramic_pipeline_ptr = nullptr;
             }
             gst_object_unref(sel);
             StopPipeline(pipeline);
@@ -518,7 +641,9 @@ void RunPanoramicPipeline() {
             continue;
         }
 
-        std::cout << "Panoramic pipeline playing with " << selector_pads.size() << " cameras\n";
+        std::cout << "Panoramic pipeline playing (window: ["
+                  << window_sensors[0] << "," << window_sensors[1] << "," << window_sensors[2]
+                  << "] active slot " << active_slot << ")\n";
 
         // Monitor for errors/EOS and config changes
         GstBus *bus = gst_element_get_bus(pipeline);
@@ -564,6 +689,7 @@ void RunPanoramicPipeline() {
             for (auto *pad : selector_pads) gst_object_unref(pad);
             selector_pads.clear();
             panoramic_selector = nullptr;
+            panoramic_pipeline_ptr = nullptr;
         }
         gst_object_unref(sel);
 

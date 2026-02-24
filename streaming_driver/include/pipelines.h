@@ -80,22 +80,27 @@ inline std::ostringstream GetH265StreamingPipeline(const StreamingConfig &stream
 }
 
 constexpr int PANORAMIC_NUM_CAMERAS = 6;
+constexpr int PANORAMIC_WINDOW_SIZE = 3;  // Max concurrent Argus sessions
 
-// Sensor IDs to actually open (Argus ISP limit: 3 concurrent sessions)
-constexpr int PANORAMIC_ACTIVE_SENSORS[] = {0, 1, 5};
-constexpr int PANORAMIC_ACTIVE_COUNT = 3;
-
-inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &streamingConfig) {
+/**
+ * Build a panoramic pipeline with named elements per slot for dynamic swapping.
+ * Each slot has: cam_src_N -> cam_capsfilter_N -> cam_conv_N -> cam_queue_N -> sel.sink_N
+ * @param initialSensors Array of PANORAMIC_WINDOW_SIZE sensor IDs to open initially
+ */
+inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &streamingConfig,
+                                                         const int *initialSensors) {
     std::ostringstream oss;
 
     // Camera source branches feeding into input-selector
-    for (int i = 0; i < PANORAMIC_ACTIVE_COUNT; i++) {
-        int sensorId = PANORAMIC_ACTIVE_SENSORS[i];
-        oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
-            << " ! video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
+    for (int i = 0; i < PANORAMIC_WINDOW_SIZE; i++) {
+        int sensorId = initialSensors[i];
+        oss << "nvarguscamerasrc name=cam_src_" << i
+            << " aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
+            << " ! capsfilter name=cam_capsfilter_" << i
+            << " caps=video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
             << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
-            << " ! nvvidconv flip-method=vertical-flip"
-            << " ! queue max-size-buffers=1 leaky=downstream"
+            << " ! nvvidconv name=cam_conv_" << i << " flip-method=vertical-flip"
+            << " ! queue name=cam_queue_" << i << " max-size-buffers=1 leaky=downstream"
             << " ! sel.sink_" << i << " ";
     }
 

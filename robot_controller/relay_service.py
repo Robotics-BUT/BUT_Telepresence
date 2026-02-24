@@ -345,7 +345,7 @@ class UDPRelayService:
 
         try:
             azimuth = struct.unpack('<f', data[1:5])[0]
-            new_index = self._compute_camera_index(-azimuth)
+            new_index = self._compute_camera_index(-azimuth * 2.0)
 
             if new_index != self._current_camera_index:
                 self._current_camera_index = new_index
