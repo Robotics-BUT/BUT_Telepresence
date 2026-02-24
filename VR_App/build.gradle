@@ -4,7 +4,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.2'
+        classpath 'com.android.tools.build:gradle:9.0.1'
     }
 }
 
@@ -21,7 +21,7 @@ def gstreamer_sdk_dir = properties.getProperty('gstreamer_sdk.dir')
 def boost_build_dir = properties.getProperty('boost_build.dir')
 
 android {
-    compileSdkVersion 34
+    compileSdkVersion 36
     buildToolsVersion "35.0.0"
     ndkVersion "25.2.9519653"
     namespace "cz.but.telepresence"
@@ -34,7 +34,7 @@ android {
         applicationId "cz.but.telepresence"
         // for Vulkan, need at least 24
         minSdkVersion 24
-        compileSdkVersion 26
+        compileSdkVersion 30
 
         versionName = "1.0"
         versionCode = 1
