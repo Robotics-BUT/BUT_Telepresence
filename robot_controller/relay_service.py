@@ -345,7 +345,7 @@ class UDPRelayService:
 
         try:
             azimuth = struct.unpack('<f', data[1:5])[0]
-            new_index = self._compute_camera_index(-azimuth * 2.0)
+            new_index = self._compute_camera_index(-azimuth)
 
             if new_index != self._current_camera_index:
                 self._current_camera_index = new_index
@@ -373,6 +373,7 @@ class UDPRelayService:
         # Update panoramic camera selection based on head azimuth
         self._update_camera_selection(data)
 
+        return
         try:
             # Translator handles protocol conversion, sending, and receiving
             response = self.servo_translator.translate_and_forward(data, client_addr)
