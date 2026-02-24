@@ -68,7 +68,7 @@ class UDPRelayService:
         self._camera_select_socket: Optional[socket.socket] = None
         self._current_camera_index: int = 0
         self._num_cameras: int = 6
-        self._hysteresis_margin: float = 0.6  # fraction of sector width
+        self._hysteresis_margin: float = 0.1  # fraction of sector width
 
         # Telemetry - InfluxDB with batch buffering
         self.influx_client: Optional[InfluxDBClient3] = None
@@ -345,7 +345,7 @@ class UDPRelayService:
 
         try:
             azimuth = struct.unpack('<f', data[1:5])[0]
-            new_index = self._compute_camera_index(azimuth)
+            new_index = self._compute_camera_index(-azimuth)
 
             if new_index != self._current_camera_index:
                 self._current_camera_index = new_index
