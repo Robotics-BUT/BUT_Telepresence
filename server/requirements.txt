@@ -1,4 +1,4 @@
-connexion < 3.0.0
+connexion == 2.14.2
 connexion[swagger-ui] >= 2.6.0
 python_dateutil == 2.6.0
 setuptools >= 21.0.0
