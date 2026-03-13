@@ -12,11 +12,15 @@
 
 using json = nlohmann::json;
 
-RestClient::RestClient(StreamingConfig &config) : config_(config) {
+RestClient::RestClient(StreamingConfig &config) : config_(config) {}
 
-    httpClient_ = std::make_unique<httplib::Client>(IpToString(config.jetson_ip).c_str(),
-                                                    Config::REST_API_PORT);
-    httpClient_->set_connection_timeout(2, 0);
+std::unique_ptr<httplib::Client> RestClient::makeClient() {
+    auto client = std::make_unique<httplib::Client>(
+            IpToString(config_.jetson_ip).c_str(), Config::REST_API_PORT);
+    client->set_connection_timeout(2, 0);
+    client->set_read_timeout(5, 0);
+    client->set_write_timeout(2, 0);
+    return client;
 }
 
 int RestClient::StartStream() {
@@ -31,7 +35,8 @@ int RestClient::StartStream() {
                {"video_mode",       VideoModeToApiString(config_.videoMode)}};
     std::string req = j.dump();
 
-    auto res = httpClient_->Post("/api/v1/stream/start", req, "application/json");
+    auto client = makeClient();
+    auto res = client->Post("/api/v1/stream/start", req, "application/json");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send start stream request - connection error");
         return -1;
@@ -45,7 +50,8 @@ int RestClient::StartStream() {
 }
 
 int RestClient::StopStream() {
-    auto res = httpClient_->Post("/api/v1/stream/stop");
+    auto client = makeClient();
+    auto res = client->Post("/api/v1/stream/stop");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send stop stream request - connection error");
         return -1;
@@ -72,7 +78,8 @@ int RestClient::UpdateStreamingConfig(const StreamingConfig &config) {
                            {"port_right",       config.portRight},
                            {"resolution",       {{"height", config.resolution.getHeight()}, {"width", config.resolution.getWidth()}}},
                            {"video_mode",       VideoModeToApiString(config.videoMode)}}.dump();
-    auto res = httpClient_->Put("/api/v1/stream/update", req, "application/json");
+    auto client = makeClient();
+    auto res = client->Put("/api/v1/stream/update", req, "application/json");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send update config request - connection error");
         return -1;

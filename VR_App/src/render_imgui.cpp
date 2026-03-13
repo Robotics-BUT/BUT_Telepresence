@@ -190,6 +190,8 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState,
                     displayMs);
             ImGui::Text("In Total: %u: \n", cameraMs + vidConvMs + encMs + rtpPayMs + udpStreamMs +
                                              rtpDepayMs + decMs + queueMs + displayMs);
+            ImGui::Text("Camera FPS: %.1f | App: %.1f Hz",
+                        snapshot.fps, appState->appFrameRate);
         }
 
         s_win_pos[s_win_num] = ImGui::GetWindowPos();

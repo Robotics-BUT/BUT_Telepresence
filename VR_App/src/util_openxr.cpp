@@ -56,6 +56,8 @@ int openxr_init_loader(android_app *app) {
     return 0;
 }
 
+static XrInstance s_instance = XR_NULL_HANDLE;
+
 void openxr_create_instance(android_app *app, XrInstance *instance) {
     openxr_log_layers_and_extensions();
 
@@ -64,7 +66,8 @@ void openxr_create_instance(android_app *app, XrInstance *instance) {
     // Transform platform and graphics extension std::strings to C strings.
     const std::vector<const char *> extensions = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
                                                   XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
-                                                  XR_EXT_USER_PRESENCE_EXTENSION_NAME};
+                                                  XR_EXT_USER_PRESENCE_EXTENSION_NAME,
+                                                  XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME};
 
     XrInstanceCreateInfoAndroidKHR instance_create_info = {
             XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
@@ -83,6 +86,7 @@ void openxr_create_instance(android_app *app, XrInstance *instance) {
     CHECK_XRCMD(xrCreateInstance(&createInfo, instance))
 
     CHECK(*instance != XR_NULL_HANDLE)
+    s_instance = *instance;
 
     XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES};
     CHECK_XRCMD(xrGetInstanceProperties(*instance, &instanceProperties))
@@ -642,6 +646,51 @@ int openxr_begin_session(XrSession *session) {
     return 0;
 }
 
+void openxr_request_highest_refresh_rate(XrInstance *instance, XrSession *session) {
+    PFN_xrEnumerateDisplayRefreshRatesFB xrEnumerateDisplayRefreshRatesFB = nullptr;
+    PFN_xrRequestDisplayRefreshRateFB xrRequestDisplayRefreshRateFB = nullptr;
+    PFN_xrGetDisplayRefreshRateFB xrGetDisplayRefreshRateFB = nullptr;
+
+    xrGetInstanceProcAddr(*instance, "xrEnumerateDisplayRefreshRatesFB",
+                          (PFN_xrVoidFunction *)&xrEnumerateDisplayRefreshRatesFB);
+    xrGetInstanceProcAddr(*instance, "xrRequestDisplayRefreshRateFB",
+                          (PFN_xrVoidFunction *)&xrRequestDisplayRefreshRateFB);
+    xrGetInstanceProcAddr(*instance, "xrGetDisplayRefreshRateFB",
+                          (PFN_xrVoidFunction *)&xrGetDisplayRefreshRateFB);
+
+    if (!xrEnumerateDisplayRefreshRatesFB || !xrRequestDisplayRefreshRateFB || !xrGetDisplayRefreshRateFB) {
+        LOG_ERROR("FB_display_refresh_rate function pointers not available");
+        return;
+    }
+
+    // Log available refresh rates
+    uint32_t rateCount = 0;
+    xrEnumerateDisplayRefreshRatesFB(*session, 0, &rateCount, nullptr);
+    std::vector<float> rates(rateCount);
+    xrEnumerateDisplayRefreshRatesFB(*session, rateCount, &rateCount, rates.data());
+
+    float maxRate = 0.0f;
+    for (float rate : rates) {
+        LOG_INFO("Available refresh rate: %.0f Hz", rate);
+        if (rate > maxRate) maxRate = rate;
+    }
+
+    // Request highest available rate
+    if (maxRate > 0.0f) {
+        XrResult result = xrRequestDisplayRefreshRateFB(*session, maxRate);
+        if (XR_SUCCEEDED(result)) {
+            LOG_INFO("Requested refresh rate: %.0f Hz", maxRate);
+        } else {
+            LOG_ERROR("Failed to request refresh rate %.0f Hz", maxRate);
+        }
+    }
+
+    // Confirm current rate
+    float currentRate = 0.0f;
+    xrGetDisplayRefreshRateFB(*session, &currentRate);
+    LOG_INFO("Current display refresh rate: %.0f Hz", currentRate);
+}
+
 int openxr_handle_session_state_changed(XrSession *session, XrEventDataSessionStateChanged &ev, bool *exitLoop, bool *reqRestart) {
     XrSessionState old_state = s_session_state;
     XrSessionState new_state = ev.state;
@@ -659,6 +708,7 @@ int openxr_handle_session_state_changed(XrSession *session, XrEventDataSessionSt
     switch (new_state) {
         case XR_SESSION_STATE_READY:
             openxr_begin_session(session);
+            openxr_request_highest_refresh_rate(&s_instance, session);
             s_session_running = true;
             break;
 

@@ -35,6 +35,8 @@ public:
 
 private:
 
+    /** Create a fresh httplib::Client using the current config IP, with timeouts. */
+    std::unique_ptr<httplib::Client> makeClient();
+
     StreamingConfig& config_;
-    std::unique_ptr<httplib::Client> httpClient_;
 };

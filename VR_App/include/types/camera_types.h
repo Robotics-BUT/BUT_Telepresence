@@ -178,6 +178,9 @@ struct CameraStats {
     std::atomic<uint64_t> frameId{0};
     std::atomic<uint16_t> packetsPerFrame{0};
 
+    // Only measure presentation on the first render after a new frame arrives
+    std::atomic<uint64_t> lastMeasuredFrameReady{0};
+
     // Running average configuration
     static constexpr size_t HISTORY_SIZE = 50;
 

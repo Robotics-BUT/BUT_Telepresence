@@ -204,11 +204,17 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
             imageHandle = &appState_->cameraStreamingStates.first;
         }
 
-        // Calculate presentation latency (frame ready → about to render)
-        uint64_t frameReadyTime = imageHandle->stats->frameReadyTimestamp.load();
-        if (frameReadyTime > 0) {
-            uint64_t renderTime = ntpTimer_->GetCurrentTimeUs();
-            imageHandle->stats->presentation.store(renderTime - frameReadyTime);
+        // Measure presentation latency only on the first render after a NEW camera frame.
+        // Without this guard, repeated renders of the same frame produce increasing
+        // values (the frame ages), and updateHistory() always captures the worst case.
+        {
+            uint64_t frameReadyTime = imageHandle->stats->frameReadyTimestamp.load();
+            uint64_t lastMeasured = imageHandle->stats->lastMeasuredFrameReady.load();
+            if (frameReadyTime > 0 && frameReadyTime != lastMeasured) {
+                uint64_t renderTime = ntpTimer_->GetCurrentTimeUs();
+                imageHandle->stats->presentation.store(renderTime - frameReadyTime);
+                imageHandle->stats->lastMeasuredFrameReady.store(frameReadyTime);
+            }
         }
 
         render_scene(layerViews[i], rtarget, quad, appState_, imageHandle, renderGui_, settings_);
@@ -594,7 +600,7 @@ void TelepresenceProgram::SendControllerDatagram() {
 
     if (robotControlSender_->isInitialized()) {
         // Always send head pose
-        robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, appState_->headMovementMaxSpeed, threadPool_);
+        //robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, appState_->headMovementMaxSpeed, threadPool_);
 
         // Send robot control when enabled
         if (appState_->robotControlEnabled && !renderGui_) {

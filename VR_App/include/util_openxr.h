@@ -136,6 +136,9 @@ XrSpace openxr_create_action_space(XrSession *session, XrAction action, XrPath p
 
 int openxr_begin_session(XrSession *session);
 
+/** Request the highest available display refresh rate (e.g. 120Hz on Quest Pro). */
+void openxr_request_highest_refresh_rate(XrInstance *instance, XrSession *session);
+
 int openxr_handle_session_state_changed(XrSession *session, XrEventDataSessionStateChanged &ev, bool *exitLoop, bool *reqRestart);
 
 bool openxr_is_session_running();

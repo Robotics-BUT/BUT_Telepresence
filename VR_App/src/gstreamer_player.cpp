@@ -184,7 +184,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
         appsink = gst_element_factory_make("appsink", nullptr);
         gst_element_set_context(appsink, gContext_);
         g_object_set(appsink, "caps", caps_sink, "max-buffers", 1, "drop", true, "emit-signals",
-                     true, "sync", true, NULL);
+                     true, "sync", false, NULL);
 
         g_autoptr(GstElement) glsinkbin = getElementRequired(pipeline, "glsink", pipelineName);
         g_object_set(glsinkbin, "sink", appsink, NULL);
