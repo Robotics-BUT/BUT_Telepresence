@@ -54,9 +54,9 @@
     <application
         android:allowBackup="true"
         android:hasCode="false"
-        android:icon="@mipmap/ic_helloxr_launcher"
+        android:icon="@mipmap/ic_telepresence_launcher"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_helloxr_launcher">
+        android:roundIcon="@mipmap/ic_telepresence_launcher">
 
         <!-- The activity is the built-in NativeActivity framework class. -->
         <!-- launchMode is set to singleTask because there should never be multiple copies of the app running. -->
@@ -66,8 +66,6 @@
             android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density"
             android:excludeFromRecents="false"
             android:launchMode="singleTask"
-            android:resizeableActivity="false"
-            android:screenOrientation="landscape"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             tools:ignore="NonResizeableActivity">
             <!-- Tell NativeActivity the name of the .so -->

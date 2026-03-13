@@ -118,9 +118,9 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState,
     }
 
     win_y += win_h;
-    win_h = 560;
+    win_h = 700;
     ImGui::SetNextWindowPos(ImVec2(_X(win_x), _Y(win_y)), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_Always);
     ImGui::Begin("Settings");
     {
         for (int i = 0; i < numberOfElements; i++) {

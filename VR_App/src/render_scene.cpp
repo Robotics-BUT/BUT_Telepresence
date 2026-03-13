@@ -23,7 +23,7 @@
 static const std::array<float, 4> CLEAR_COLOR{0.02f, 0.02f, 0.02f, 1.0f};
 
 static int SETTINGS_GUI_WIDTH = 300;
-static int SETTINGS_GUI_HEIGHT = 480;
+static int SETTINGS_GUI_HEIGHT = 540;
 
 
 static GLuint cubeVertexBuffer{0}, cubeIndexBuffer{0}, vertexArrayObject{0},
