@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstdint>
 
+#include <openxr/openxr.h>
 #include "config.h"
 #include "types/enums.h"
 #include "types/camera_types.h"
@@ -64,13 +65,50 @@ struct SystemInfo {
 };
 
 // =============================================================================
+// GUI Panel State (3D positioning + controller ray interaction)
+// =============================================================================
+
+/**
+ * State of the floating GUI panel in VR space.
+ * Stores the panel's world-space transform, controller ray hit-test results,
+ * and grab-to-move state. Written by HandleControllers(), read by render.
+ */
+struct GuiPanelState {
+    static constexpr int PIXEL_WIDTH = 300;
+    static constexpr int PIXEL_HEIGHT = 540;
+
+    XrVector3f position{1.0f, -0.5f, 0.2f};
+    float height{1.0f};
+
+    float getWorldWidth() const { return height * (float)PIXEL_WIDTH / (float)PIXEL_HEIGHT; }
+
+    // Controller ray (written by HandleControllers, read by render)
+    bool rayActive{false};
+    bool rayHitting{false};
+    XrVector3f rayOrigin{};
+    XrVector3f rayEnd{};
+    float imguiMouseX{-1.0f};
+    float imguiMouseY{-1.0f};
+    bool triggerDown{false};
+    float scrollDelta{0.0f};
+
+    // Grab-to-move / resize (right grip while pointing at panel)
+    bool grabbing{false};
+    float grabPlaneZ{0.0f};
+    float grabHitX{0.0f};
+    float grabHitY{0.0f};
+    XrVector3f grabPanelPos{};
+    float grabInitialHeight{1.0f};
+};
+
+// =============================================================================
 // GUI Control State
 // =============================================================================
 
 /**
  * VR GUI navigation state.
- * Since VR has no mouse cursor, the GUI uses a focus-based navigation model.
  * The left thumbstick moves focus between settings, and face buttons change values.
+ * Controller ray pointing provides an alternative mouse-like interaction.
  */
 struct GUIControl {
     bool focusMoveUp{false};
@@ -83,6 +121,8 @@ struct GUIControl {
 
     bool changesEnqueued{false};  /* true when a GUI input event needs processing */
     int cooldown{0};              /* frames to wait before accepting the next input */
+
+    int pendingActivation{-1};   /* button index clicked via controller ray, deferred to HandleControllers */
 };
 
 // =============================================================================
@@ -127,6 +167,7 @@ struct AppState {
 
     /* GUI state */
     GUIControl guiControl{};
+    GuiPanelState guiPanel{};
 
     /* Head tracking settings - sent to the robot servo controller */
     uint32_t headMovementMaxSpeed{990000};        /* servo speed limit (device units) */

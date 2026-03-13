@@ -10,6 +10,7 @@
  * HandleControllers() to move focus and highlights the active element.
  * Also displays connection status indicators and pipeline latency stats.
  */
+#include <cfloat>
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "render_imgui.h"
@@ -118,10 +119,11 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState,
     }
 
     win_y += win_h;
-    win_h = 700;
-    ImGui::SetNextWindowPos(ImVec2(_X(win_x), _Y(win_y)), ImGuiCond_FirstUseEver);
+    win_h = (int) ImGui::GetIO().DisplaySize.y;
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_Always);
-    ImGui::Begin("Settings");
+    ImGui::Begin("Settings", nullptr,
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
     {
         for (int i = 0; i < numberOfElements; i++) {
             auto& s = settings[i];
@@ -136,7 +138,9 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState,
                     focusable_text_ip(s.getDisplayText(), focused, appState->guiControl.focusedSegment);
                     break;
                 case GuiSettingType::Button:
-                    focusable_button(s.label, focused);
+                    if (focusable_button(s.label, focused)) {
+                        appState->guiControl.pendingActivation = i;
+                    }
                     break;
                 case GuiSettingType::Text:
                     focusable_text(s.getDisplayText(), focused);
@@ -245,7 +249,7 @@ void focusable_text_ip(const std::string &text, bool isFocused, int segment) {
     ImGui::Text("%s", text.c_str());
 }
 
-void focusable_button(const std::string &label, bool isFocused) {
+bool focusable_button(const std::string &label, bool isFocused) {
     if (isFocused) {
         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(100, 100, 255, 100));  // Light blue
     } else {
@@ -253,9 +257,10 @@ void focusable_button(const std::string &label, bool isFocused) {
                               IM_COL32(100, 100, 255, 20));  // Transparent light blue
     }
 
-    ImGui::Button(label.c_str());
+    bool clicked = ImGui::Button(label.c_str());
 
     ImGui::PopStyleColor(1);
+    return clicked;
 }
 
 int
@@ -264,6 +269,18 @@ invoke_imgui_settings(int win_w, int win_h, const std::shared_ptr<AppState> &app
     ImGuiIO &io = ImGui::GetIO();
     io.DisplaySize = ImVec2(_X(win_w), _Y(win_h));
     io.DisplayFramebufferScale = {DISPLAY_SCALE_X, DISPLAY_SCALE_Y};
+
+    // Inject controller ray as mouse input
+    if (appState->guiPanel.rayHitting && !appState->guiPanel.grabbing) {
+        io.MousePos = ImVec2(appState->guiPanel.imguiMouseX, appState->guiPanel.imguiMouseY);
+        io.MouseDown[0] = appState->guiPanel.triggerDown;
+        io.MouseWheel = appState->guiPanel.scrollDelta;
+    } else {
+        io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+        io.MouseDown[0] = false;
+        io.MouseWheel = 0.0f;
+    }
+    io.MouseDrawCursor = false;
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
