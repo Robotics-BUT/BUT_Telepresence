@@ -22,8 +22,8 @@
 
 static const std::array<float, 4> CLEAR_COLOR{0.02f, 0.02f, 0.02f, 1.0f};
 
-static int SETTINGS_GUI_WIDTH = 300;
-static int SETTINGS_GUI_HEIGHT = 540;
+static const int SETTINGS_GUI_WIDTH = GuiPanelState::PIXEL_WIDTH;
+static const int SETTINGS_GUI_HEIGHT = GuiPanelState::PIXEL_HEIGHT;
 
 
 static GLuint cubeVertexBuffer{0}, cubeIndexBuffer{0}, vertexArrayObject{0},
@@ -158,6 +158,8 @@ void init_image_plane(const int textureWidth, const int textureHeight) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+static void draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState);
+
 void render_scene(const XrCompositionLayerProjectionView &layerView,
                   render_target_t &rtarget, const Quad &quad,
                   const std::shared_ptr<AppState> &appState,
@@ -197,6 +199,7 @@ void render_scene(const XrCompositionLayerProjectionView &layerView,
 
     draw_image_plane(vp, quad, cameraFrame);
     draw_imgui(vp, appState, drawSettingsGui, settings);
+    draw_controller_ray(vp, appState);
 
     glUseProgram(0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -256,6 +259,48 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
     return 0;
 }
 
+static void
+draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState) {
+    const auto &panel = appState->guiPanel;
+    if (!panel.rayActive) return;
+
+    static GLint colorLoc = -2;
+    if (colorLoc == -2) {
+        colorLoc = glGetAttribLocation(gui_shader_object.program, "color");
+    }
+    if (colorLoc < 0) return;
+
+    glUseProgram(gui_shader_object.program);
+    glUniformMatrix4fv(gui_shader_object.loc_mvp, 1, GL_FALSE, (const GLfloat *) &vp);
+
+    float vertices[] = {
+            panel.rayOrigin.x, panel.rayOrigin.y, panel.rayOrigin.z,
+            panel.rayEnd.x, panel.rayEnd.y, panel.rayEnd.z
+    };
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    glEnableVertexAttribArray(gui_shader_object.loc_position);
+    glVertexAttribPointer(gui_shader_object.loc_position, 3, GL_FLOAT, GL_FALSE, 0, vertices);
+
+    // Constant color: green when hitting panel, dim white otherwise
+    glDisableVertexAttribArray(colorLoc);
+    if (panel.rayHitting || panel.grabbing) {
+        glVertexAttrib4f(colorLoc, 0.0f, 1.0f, 0.0f, 0.8f);
+    } else {
+        glVertexAttrib4f(colorLoc, 1.0f, 1.0f, 1.0f, 0.3f);
+    }
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(2.0f);
+    glDrawArrays(GL_LINES, 0, 2);
+    glDisable(GL_BLEND);
+
+    glDisableVertexAttribArray(gui_shader_object.loc_position);
+}
+
 int
 draw_imgui(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState,
            bool drawSettingsGui, const std::vector<GuiSetting> &settings) {
@@ -281,9 +326,9 @@ draw_imgui(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState,
 
         {
             XrMatrix4x4f matT;
-            float win_h = 1.0f;
-            float win_w = win_h * ((float) SETTINGS_GUI_WIDTH / (float) SETTINGS_GUI_HEIGHT);
-            XrVector3f translation{1.0f, -0.5f, 0.2f};
+            float win_h = appState->guiPanel.height;
+            float win_w = appState->guiPanel.getWorldWidth();
+            XrVector3f translation = appState->guiPanel.position;
             XrQuaternionf rotation{0.0f, 0.0f, 0.0f, 1.0f};
             XrVector3f scale{win_w, win_h, 1.0f};
             XrMatrix4x4f_CreateTranslationRotationScale(&matT, &translation, &rotation, &scale);

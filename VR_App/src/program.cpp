@@ -821,6 +821,9 @@ void TelepresenceProgram::BuildSettings() {
  * Process VR controller input for GUI navigation and robot control.
  *
  * Controls:
+ *   Right controller ray:   point at settings panel (mouse cursor)
+ *   Right trigger:          click GUI elements under cursor
+ *   Right grip:             grab and move the settings panel
  *   Right thumbstick press: toggle robot movement control on/off
  *   Left thumbstick press:  toggle settings GUI visibility
  *   Left thumbstick axis:   navigate settings (up/down/left/right)
@@ -829,6 +832,14 @@ void TelepresenceProgram::BuildSettings() {
  *   Left trigger:           activate focused button setting
  */
 void TelepresenceProgram::HandleControllers() {
+    // Process deferred button activation from controller ray click
+    int pending = appState_->guiControl.pendingActivation;
+    if (pending >= 0 && pending < (int) settings_.size()) {
+        appState_->guiControl.pendingActivation = -1;
+        auto &setting = settings_[pending];
+        if (setting.onActivate) setting.onActivate();
+    }
+
     if (userState_.thumbstickPressed[Side::RIGHT] && !controlLockMovement_) {
         appState_->robotControlEnabled = !appState_->robotControlEnabled;
         if (!appState_->robotControlEnabled) {
@@ -908,5 +919,109 @@ void TelepresenceProgram::HandleControllers() {
                 appState_->guiControl.changesEnqueued = true;
             }
         }
+    }
+
+    // --- Right controller ray interaction with GUI panel ---
+    if (renderGui_) {
+        const XrPosef &aim = userState_.controllerPose[Side::RIGHT];
+        const auto &q = aim.orientation;
+
+        // Forward direction from aim quaternion (OpenXR: forward is -Z)
+        XrVector3f fwd{
+                -2.0f * (q.x * q.z + q.w * q.y),
+                -2.0f * (q.y * q.z - q.w * q.x),
+                -(1.0f - 2.0f * (q.x * q.x + q.y * q.y))
+        };
+
+        auto &panel = appState_->guiPanel;
+        panel.rayOrigin = aim.position;
+        panel.rayActive = true;
+        panel.rayHitting = false;
+
+        float panelZ = panel.position.z;
+
+        // Ray-plane intersection: panel lies in the plane Z = panelZ
+        if (std::abs(fwd.z) > 1e-6f) {
+            float t = (panelZ - aim.position.z) / fwd.z;
+            if (t > 0.0f) {
+                float hitX = aim.position.x + t * fwd.x;
+                float hitY = aim.position.y + t * fwd.y;
+
+                float halfW = panel.getWorldWidth() * 0.5f;
+                float halfH = panel.height * 0.5f;
+
+                // Check if hit is within panel bounds
+                if (hitX >= panel.position.x - halfW && hitX <= panel.position.x + halfW &&
+                    hitY >= panel.position.y - halfH && hitY <= panel.position.y + halfH) {
+
+                    panel.rayHitting = true;
+                    panel.rayEnd = {hitX, hitY, panelZ};
+
+                    // Convert to ImGui pixel coordinates
+                    float u = (hitX - (panel.position.x - halfW)) / (2.0f * halfW);
+                    float v = ((panel.position.y + halfH) - hitY) / (2.0f * halfH);
+                    panel.imguiMouseX = u * (float) GuiPanelState::PIXEL_WIDTH;
+                    panel.imguiMouseY = v * (float) GuiPanelState::PIXEL_HEIGHT;
+                    panel.triggerDown = userState_.triggerValue[Side::RIGHT] > 0.5f;
+                }
+            }
+        }
+
+        if (!panel.rayHitting) {
+            // Extend ray to a fixed length for visualization
+            constexpr float RAY_LENGTH = 3.0f;
+            panel.rayEnd = {
+                    aim.position.x + fwd.x * RAY_LENGTH,
+                    aim.position.y + fwd.y * RAY_LENGTH,
+                    aim.position.z + fwd.z * RAY_LENGTH
+            };
+            panel.triggerDown = false;
+            panel.scrollDelta = 0.0f;
+        }
+
+        // Grab-to-move/resize with right grip
+        float gripValue = userState_.squeezeValue[Side::RIGHT];
+        if (gripValue > 0.5f && panel.rayHitting && !panel.grabbing) {
+            panel.grabbing = true;
+            panel.grabPlaneZ = panel.position.z;
+            panel.grabHitX = panel.rayEnd.x;
+            panel.grabHitY = panel.rayEnd.y;
+            panel.grabPanelPos = panel.position;
+            panel.grabInitialHeight = panel.height;
+        }
+        if (panel.grabbing) {
+            if (gripValue < 0.3f) {
+                panel.grabbing = false;
+            } else {
+                // Track panel to controller movement on the grab plane
+                if (std::abs(fwd.z) > 1e-6f) {
+                    float t = (panel.grabPlaneZ - aim.position.z) / fwd.z;
+                    if (t > 0.0f) {
+                        float hitX = aim.position.x + t * fwd.x;
+                        float hitY = aim.position.y + t * fwd.y;
+                        panel.position.x = panel.grabPanelPos.x + (hitX - panel.grabHitX);
+                        panel.position.y = panel.grabPanelPos.y + (hitY - panel.grabHitY);
+                    }
+                }
+
+                // Resize with right thumbstick Y while gripping
+                float thumbY = userState_.thumbstickPose[Side::RIGHT].y;
+                if (std::abs(thumbY) > 0.1f) {
+                    panel.height += thumbY * 0.01f;
+                    panel.height = std::max(0.3f, std::min(3.0f, panel.height));
+                }
+            }
+        }
+
+        // Scroll with right thumbstick Y when pointing (not gripping)
+        if (panel.rayHitting && !panel.grabbing) {
+            float thumbY = userState_.thumbstickPose[Side::RIGHT].y;
+            panel.scrollDelta = (std::abs(thumbY) > 0.1f) ? thumbY * 0.3f : 0.0f;
+        } else if (!panel.grabbing) {
+            panel.scrollDelta = 0.0f;
+        }
+    } else {
+        appState_->guiPanel.rayActive = false;
+        appState_->guiPanel.grabbing = false;
     }
 }

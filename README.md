@@ -97,6 +97,37 @@ Network addresses are configured in `VR_App/src/common.h`:
 
 Rebuild after modifying.
 
+## VR Controls
+
+The in-VR settings panel is a floating GUI that can be interacted with using both controllers.
+
+### Right Controller (Pointer Interaction)
+
+| Input | Action |
+|-------|--------|
+| **Point** | Aim at the settings panel — ray turns green when hitting it |
+| **Trigger** | Click GUI buttons and interactive elements |
+| **Thumbstick Y** | Scroll the panel content up/down |
+| **Grip (squeeze)** | Grab and move the panel to a new position |
+| **Grip + Thumbstick Y** | Resize the panel (0.3m – 3.0m height) |
+
+### Left Controller (Focus Navigation)
+
+| Input | Action |
+|-------|--------|
+| **Thumbstick press** | Toggle settings panel visibility |
+| **Thumbstick up/down** | Move focus between settings |
+| **Thumbstick left/right** | Navigate within a setting (e.g. IP octets) |
+| **Y button** | Increment focused setting value |
+| **X button** | Decrement focused setting value |
+| **Trigger** | Activate focused button |
+
+### Other
+
+| Input | Action |
+|-------|--------|
+| **Right thumbstick press** | Toggle robot movement control on/off |
+
 ## Debugging
 
 **ADB logcat filtering:**

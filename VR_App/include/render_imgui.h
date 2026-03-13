@@ -34,8 +34,8 @@ void focusable_text(const std::string& text, bool isFocused = false);
 /** Render an IP address with per-segment focus highlighting. */
 void focusable_text_ip(const std::string& text, bool isFocused = false, int segment = 0);
 
-/** Render a button with focus-dependent background color. */
-void focusable_button(const std::string &label, bool isFocused);
+/** Render a button with focus-dependent background color. Returns true if clicked. */
+bool focusable_button(const std::string &label, bool isFocused);
 
 /** Main GUI entry point: set up ImGui frame, render settings, finalize. */
 int invoke_imgui_settings(int win_w, int win_h, const std::shared_ptr<AppState>& appState,
