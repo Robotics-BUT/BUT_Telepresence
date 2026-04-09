@@ -44,9 +44,6 @@ TELEMETRY_ENABLED=$(python3 -c "import yaml; print(yaml.safe_load(open('config.y
 if [ "$TELEMETRY_ENABLED" = "True" ]; then
     echo "Telemetry enabled — starting InfluxDB3..."
 
-    echo "Cleaning WAL from previous unclean shutdown..."
-    rm -rf ~/.influxdb/but_telepresence_telemetry/wal/*
-
     # Find influxdb3 binary
     INFLUXDB3_BIN="${HOME}/.influxdb/influxdb3"
     if [ ! -x "$INFLUXDB3_BIN" ]; then
@@ -58,7 +55,6 @@ if [ "$TELEMETRY_ENABLED" = "True" ]; then
     echo "Serving the database..."
     "$INFLUXDB3_BIN" serve \
         --object-store file \
-        --data-dir "${HOME}/.influxdb/but_telepresence_telemetry" \
         --without-auth \
         --node-id=but_telepresence_telemetry &
     INFLUX_PID=$!
