@@ -35,12 +35,26 @@ CameraStatsSnapshot CameraStats::snapshot() const {
     };
 }
 
-void CameraStats::updateHistory() {
+void CameraStats::updateHistory(size_t windowFrames) {
+    if (windowFrames < 2) windowFrames = 2;  // need at least 2 samples for fps
     auto snap = snapshot();
     std::lock_guard<std::mutex> lock(historyMutex_);
     history_.push_back(snap);
-    if (history_.size() > HISTORY_SIZE) {
+    while (history_.size() > windowFrames) {
         history_.pop_front();
+    }
+
+    // Recompute fps as the windowed rate over the deque so the value seen via
+    // snapshot() (which goes to InfluxDB) is stable across HW-decoder bursts,
+    // not the per-frame 1e6/Δt that swings into the kHz range on bursts.
+    if (history_.size() >= 2) {
+        double first = history_.front().currTimestamp;
+        double last = history_.back().currTimestamp;
+        double dt_us = last - first;
+        if (dt_us > 0.0) {
+            double windowed_fps = (history_.size() - 1) * 1e6 / dt_us;
+            fps.store(windowed_fps);
+        }
     }
 }
 
@@ -55,7 +69,6 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     for (const auto& snap : history_) {
         avg.prevTimestamp += snap.prevTimestamp;
         avg.currTimestamp += snap.currTimestamp;
-        avg.fps += snap.fps;
         avg.camera += snap.camera;
         avg.vidConv += snap.vidConv;
         avg.enc += snap.enc;
@@ -71,7 +84,6 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     size_t count = history_.size();
     avg.prevTimestamp /= static_cast<double>(count);
     avg.currTimestamp /= static_cast<double>(count);
-    avg.fps /= static_cast<double>(count);
     avg.camera /= count;
     avg.vidConv /= count;
     avg.enc /= count;
@@ -82,6 +94,14 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     avg.queue /= count;
     avg.totalLatency /= count;
     avg.presentation /= count;
+
+    // fps as the true windowed rate, not arithmetic mean of per-frame ratios.
+    if (count >= 2) {
+        double dt_us = history_.back().currTimestamp - history_.front().currTimestamp;
+        avg.fps = (dt_us > 0.0) ? (count - 1) * 1e6 / dt_us : 0.0;
+    } else {
+        avg.fps = 0.0;
+    }
 
     // Use most recent values for non-averaged fields
     const auto& latest = history_.back();

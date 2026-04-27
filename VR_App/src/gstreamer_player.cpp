@@ -243,6 +243,10 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
 
     LOG_INFO("(Re)configuring GStreamer pipelines");
 
+    // Track configured stream rate as the rolling-average window so the GUI
+    // overlay shows ~1 s of history regardless of the chosen FPS.
+    windowFrames_.store(config.fps > 0 ? config.fps : 60);
+
     // Validate prerequisites
     if (!gContext_) {
         LOG_ERROR("GStreamer GL context not initialized - cannot configure pipelines");
@@ -322,7 +326,7 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     }
 
     // Allocate new objects
-    callbackObj_ = new GStreamerCallbackObj(camPair_, ntpTimer_);
+    callbackObj_ = new GStreamerCallbackObj(camPair_, ntpTimer_, &windowFrames_);
     camPair_->first.stats = new CameraStats();
     camPair_->second.stats = new CameraStats();
 
@@ -441,16 +445,12 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
 
     CameraFrame &frame = isLeftCamera ? pair->first : pair->second;
 
-    // Update FPS stats and frame ready timestamp
+    // Update frame timestamps.
     double currentTime = callbackObj->second->GetCurrentTimeUs();
     double prevTime = frame.stats->currTimestamp.load();
     frame.stats->prevTimestamp.store(prevTime);
     frame.stats->currTimestamp.store(currentTime);
     frame.stats->frameReadyTimestamp.store(static_cast<uint64_t>(currentTime));
-    if (prevTime != 0) {
-        double diff = currentTime - prevTime;
-        frame.stats->fps.store(1e6f / diff);
-    }
 
     GstBuffer *buffer = gst_sample_get_buffer(sample);
     GstCaps *caps = gst_sample_get_caps(sample);
@@ -607,8 +607,10 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
                 stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream + stats->rtpDepay +
                 stats->dec + stats->queue;
 
-        // Update running average history after all stats are computed
-        stats->updateHistory();
+        // Update running average history after all stats are computed.
+        // Window size = configured stream FPS, so the rolling average always
+        // covers ~1 s regardless of the chosen rate.
+        stats->updateHistory(static_cast<size_t>(obj->windowFrames->load()));
 
         LOG_DEBUG("GStreamer: %s latencies (us): camera=%lu vidconv=%lu enc=%lu rtpPay=%lu "
                   "udpStream=%lu rtpDepay=%lu dec=%lu queue=%lu total=%lu",

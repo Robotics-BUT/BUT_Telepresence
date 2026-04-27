@@ -40,8 +40,16 @@ public:
 
 private:
 
-    /** Callback context: camera pair for frame output + NTP timer for timestamps. */
-    using GStreamerCallbackObj = std::pair<CamPair*, NtpTimer*>;
+    /** Callback context: camera pair for frame output, NTP timer for timestamps,
+     *  and a pointer to the configured stream FPS used as the rolling-average
+     *  window size by CameraStats::updateHistory(). */
+    struct GStreamerCallbackObj {
+        CamPair *first;                    // kept .first/.second to minimise diff
+        NtpTimer *second;
+        std::atomic<int> *windowFrames;
+        GStreamerCallbackObj(CamPair *cp, NtpTimer *nt, std::atomic<int> *wf)
+            : first(cp), second(nt), windowFrames(wf) {}
+    };
 
     /** Called when appsink has a new decoded frame (GL texture or CPU buffer). */
     static GstFlowReturn newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackObj);
@@ -83,6 +91,9 @@ private:
     CamPair *camPair_;
     GStreamerCallbackObj *callbackObj_;
 
+    /** Rolling-average window size for CameraStats; tracks streamingConfig.fps. */
+    std::atomic<int> windowFrames_{60};
+
     NtpTimer *ntpTimer_;
 
     /*
@@ -97,7 +108,7 @@ private:
         " ! capsfilter name=rtp_capsfilter"
             " caps=\"application/x-rtp, media=video, encoding-name=JPEG, payload=26, clock-rate=90000\""
         " ! identity name=udpsrc_ident"
-        " ! rtpjitterbuffer latency=50 do-lost=true drop-on-latency=true do-retransmission=false"
+        " ! rtpjitterbuffer latency=15 do-lost=true drop-on-latency=false do-retransmission=false"
         " ! rtpjpegdepay ! identity name=rtpdepay_ident"
         " ! jpegparse ! jpegdec ! videoconvert"
         " ! video/x-raw,format=RGB"
@@ -109,12 +120,15 @@ private:
         " ! capsfilter name=rtp_capsfilter"
             " caps=\"application/x-rtp, encoding-name=H264, media=video, clock-rate=90000, payload=96\""
         " ! identity name=udpsrc_ident"
-        " ! rtpjitterbuffer latency=50 do-lost=true drop-on-latency=true do-retransmission=false"
+        " ! rtpjitterbuffer latency=15 do-lost=true drop-on-latency=false do-retransmission=false"
         " ! rtph264depay ! identity name=rtpdepay_ident"
         " ! h264parse config-interval=-1 ! queue"
         " ! video/x-h264, stream-format=byte-stream, alignment=au, parsed=true"
         " ! amcviddec-omxqcomvideodecoderavc name=dec"
-        " ! identity name=dec_ident ! queue ! identity name=queue_ident"
+        // leaky=downstream max-size-buffers=1: drop older decoded frames so the
+        // renderer always sees the freshest frame, never a stale backlog.
+        " ! identity name=dec_ident ! queue max-size-buffers=1 leaky=downstream"
+        " ! identity name=queue_ident"
         " ! glsinkbin name=glsink";
 
     const std::string h265Pipeline_ =
@@ -122,11 +136,14 @@ private:
         " ! capsfilter name=rtp_capsfilter"
             " caps=\"application/x-rtp, encoding-name=H265, media=video, clock-rate=90000, payload=96\""
         " ! identity name=udpsrc_ident"
-        " ! rtpjitterbuffer latency=50 do-lost=true drop-on-latency=true do-retransmission=false"
+        " ! rtpjitterbuffer latency=15 do-lost=true drop-on-latency=false do-retransmission=false"
         " ! rtph265depay ! identity name=rtpdepay_ident"
         " ! h265parse config-interval=-1 ! queue"
         " ! video/x-h265, width=1920, height=1080, framerate=60/1, stream-format=byte-stream, alignment=au, parsed=true"
         " ! amcviddec-omxqcomvideodecoderhevc name=dec"
-        " ! identity name=dec_ident ! queue ! identity name=queue_ident"
+        // leaky=downstream max-size-buffers=1: drop older decoded frames so the
+        // renderer always sees the freshest frame, never a stale backlog.
+        " ! identity name=dec_ident ! queue max-size-buffers=1 leaky=downstream"
+        " ! identity name=queue_ident"
         " ! glsinkbin name=glsink";
 };

@@ -126,6 +126,9 @@ struct CameraStatsSnapshot {
     uint64_t rtpDepay{0};
     uint64_t dec{0};
     uint64_t queue{0};
+    // presentation covers appsink -> predicted photon emission (includes the
+    // time the frame waits for a render cycle AND OpenXR's remaining-to-display
+    // prediction at that render cycle).
     uint64_t presentation{0};
     uint64_t totalLatency{0};
 
@@ -163,7 +166,7 @@ struct CameraStats {
     std::atomic<uint64_t> rtpDepay{0};
     std::atomic<uint64_t> dec{0};
     std::atomic<uint64_t> queue{0};
-    std::atomic<uint64_t> presentation{0};
+    std::atomic<uint64_t> presentation{0};  // appsink -> predicted photon emission
     std::atomic<uint64_t> totalLatency{0};
 
     // Timestamps
@@ -181,21 +184,22 @@ struct CameraStats {
     // Only measure presentation on the first render after a new frame arrives
     std::atomic<uint64_t> lastMeasuredFrameReady{0};
 
-    // Running average configuration
-    static constexpr size_t HISTORY_SIZE = 50;
-
     /**
      * Create a copyable snapshot of current values
      */
     CameraStatsSnapshot snapshot() const;
 
     /**
-     * Update history with current snapshot (call after each frame)
+     * Update history with current snapshot. windowFrames is the configured
+     * stream FPS — caller passes streamingConfig.fps so the rolling window
+     * always covers ≈1 s of data, regardless of the chosen rate.
      */
-    void updateHistory();
+    void updateHistory(size_t windowFrames);
 
     /**
-     * Get averaged snapshot over the last N frames
+     * Get averaged snapshot. Per-stage latencies are arithmetic means over
+     * the deque; fps is the windowed rate (n−1)/(last_ts−first_ts), which
+     * is robust to decoder bursts that inflate per-frame 1/Δt readings.
      */
     CameraStatsSnapshot averagedSnapshot() const;
 

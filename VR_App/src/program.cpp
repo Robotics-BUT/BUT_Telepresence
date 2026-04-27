@@ -600,7 +600,7 @@ void TelepresenceProgram::SendControllerDatagram() {
 
     if (robotControlSender_->isInitialized()) {
         // Always send head pose
-        //robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, appState_->headMovementMaxSpeed, threadPool_);
+        robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, appState_->headMovementMaxSpeed, threadPool_);
 
         // Send robot control when enabled
         if (appState_->robotControlEnabled && !renderGui_) {
