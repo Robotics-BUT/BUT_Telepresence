@@ -126,10 +126,8 @@ struct CameraStatsSnapshot {
     uint64_t rtpDepay{0};
     uint64_t dec{0};
     uint64_t queue{0};
-    // presentation covers appsink -> predicted photon emission (includes the
-    // time the frame waits for a render cycle AND OpenXR's remaining-to-display
-    // prediction at that render cycle).
-    uint64_t presentation{0};
+    uint64_t appsink{0};       // queue_ident -> new-sample callback (glsinkbin GL upload + appsink hand-off; near-zero on JPEG)
+    uint64_t presentation{0};  // new-sample callback -> predicted photon emission
     uint64_t totalLatency{0};
 
     // Timing timestamps
@@ -166,6 +164,7 @@ struct CameraStats {
     std::atomic<uint64_t> rtpDepay{0};
     std::atomic<uint64_t> dec{0};
     std::atomic<uint64_t> queue{0};
+    std::atomic<uint64_t> appsink{0};  // queue_ident -> appsink new-sample callback
     std::atomic<uint64_t> presentation{0};  // appsink -> predicted photon emission
     std::atomic<uint64_t> totalLatency{0};
 

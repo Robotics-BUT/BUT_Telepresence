@@ -188,6 +188,7 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, u
     serializeLittleEndian(packet, stats.udpStream);
     serializeLittleEndian(packet, stats.rtpDepay);
     serializeLittleEndian(packet, stats.dec);
+    serializeLittleEndian(packet, stats.appsink);
     serializeLittleEndian(packet, stats.presentation);
 
     serializeLittleEndian(packet, ntpTimer_->GetSmoothedOffsetUs());

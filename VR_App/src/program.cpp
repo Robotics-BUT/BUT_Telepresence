@@ -14,10 +14,12 @@
 
 #include <utility>
 #include <algorithm>
+#include <ctime>
 #include <GLES3/gl32.h>
 
 #include "program.h"
 #include "utils/network_utils.h"
+#include "xr_timing.h"
 
 #define HANDL_IN "/user/hand/left/input"
 #define HANDR_IN "/user/hand/right/input"
@@ -145,13 +147,15 @@ void TelepresenceProgram::RenderFrame() {
  * Render both eye views into their swapchain images.
  *
  * For each eye: acquires a swapchain image, renders the camera image plane
- * and ImGui overlay, then releases the image. Head movement prediction is
- * applied by offsetting displayTime by headMovementPredictionMs.
+ * and ImGui overlay, then releases the image. View matrices are rendered at
+ * the OpenXR runtime's predicted display time so time warp reprojects cleanly.
+ * A separately over-predicted HMD pose (displayTime + headMovementPredictionMs)
+ * is queried only for the robot pan-tilt command, to compensate for uplink
+ * and servo delay.
  */
 bool TelepresenceProgram::RenderLayer(XrTime displayTime,
                                       std::vector<XrCompositionLayerProjectionView> &layerViews,
                                       XrCompositionLayerProjection &layer) {
-    displayTime += appState_->headMovementPredictionMs * 1e6;
     auto viewCount = viewsurfaces_.size();
     std::vector<XrView> views(viewCount, {XR_TYPE_VIEW});
     openxr_locate_views(&openxr_session_, &displayTime, app_reference_space_, viewCount,
@@ -161,8 +165,12 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
 
     XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
 
-    // Locate "Local" space relative to "ViewFront"
-    auto res = xrLocateSpace(reference_spaces_[1], app_reference_space_, displayTime,
+    // Query the HMD pose at the over-predicted time for the robot-side pan-tilt command.
+    // This is intentionally ahead of the OpenXR predicted display time to compensate for
+    // the uplink and servo delay on the robot. The rendered view matrices above use the
+    // unmodified predictedDisplayTime so OpenXR time warp behaves canonically.
+    XrTime robotTargetTime = displayTime + (XrTime) (appState_->headMovementPredictionMs * 1e6);
+    auto res = xrLocateSpace(reference_spaces_[1], app_reference_space_, robotTargetTime,
                              &spaceLocation);
     CHECK_XRRESULT(res, "xrLocateSpace")
     if (XR_UNQUALIFIED_SUCCESS(res)) {
@@ -207,12 +215,31 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
         // Measure presentation latency only on the first render after a NEW camera frame.
         // Without this guard, repeated renders of the same frame produce increasing
         // values (the frame ages), and updateHistory() always captures the worst case.
+        //
+        // "presentation" is defined as appsink -> predicted photon emission, i.e.
+        // (wait-for-render-cycle)  +  (OpenXR's remaining-to-display prediction).
+        // The first term is NTP-synced wall-clock microseconds; the second is
+        // derived from CLOCK_MONOTONIC because XrTime == CLOCK_MONOTONIC ns on
+        // Android/Quest. Both are durations, so adding them is clock-safe.
         {
             uint64_t frameReadyTime = imageHandle->stats->frameReadyTimestamp.load();
             uint64_t lastMeasured = imageHandle->stats->lastMeasuredFrameReady.load();
             if (frameReadyTime > 0 && frameReadyTime != lastMeasured) {
                 uint64_t renderTime = ntpTimer_->GetCurrentTimeUs();
-                imageHandle->stats->presentation.store(renderTime - frameReadyTime);
+                uint64_t waitForRenderUs = renderTime - frameReadyTime;
+
+                struct timespec tsNow{};
+                clock_gettime(CLOCK_MONOTONIC, &tsNow);
+                int64_t monotonicNowNs =
+                    static_cast<int64_t>(tsNow.tv_sec) * 1'000'000'000LL + tsNow.tv_nsec;
+                int64_t predictedDisplayNs =
+                    XrTiming::predictedDisplayTimeXr.load(std::memory_order_relaxed);
+                int64_t predictedRemainingUs =
+                    (predictedDisplayNs - monotonicNowNs) / 1000;
+                if (predictedRemainingUs < 0) predictedRemainingUs = 0;
+
+                imageHandle->stats->presentation.store(
+                    waitForRenderUs + static_cast<uint64_t>(predictedRemainingUs));
                 imageHandle->stats->lastMeasuredFrameReady.store(frameReadyTime);
             }
         }

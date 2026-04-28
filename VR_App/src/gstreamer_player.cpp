@@ -452,6 +452,15 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
     frame.stats->currTimestamp.store(currentTime);
     frame.stats->frameReadyTimestamp.store(static_cast<uint64_t>(currentTime));
 
+    // appsink stage = time between the last GStreamer probe (queue_ident) and
+    // this new-sample callback firing. Captures the previously-uninstrumented
+    // stretch: for H.264/H.265 it's glsinkbin's GL upload + embedded appsink
+    // hand-off; for JPEG it's near-zero (queue_ident -> appsink direct).
+    uint64_t queueTs = frame.stats->queueTimestamp.load();
+    if (queueTs > 0 && static_cast<uint64_t>(currentTime) >= queueTs) {
+        frame.stats->appsink.store(static_cast<uint64_t>(currentTime) - queueTs);
+    }
+
     GstBuffer *buffer = gst_sample_get_buffer(sample);
     GstCaps *caps = gst_sample_get_caps(sample);
 

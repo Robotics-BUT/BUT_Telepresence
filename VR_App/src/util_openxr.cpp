@@ -8,10 +8,12 @@
  * stopping, exiting, loss pending) and user presence detection.
  */
 #include <GLES3/gl32.h>
+#include <time.h>
 #include "pch.h"
 #include "util_egl.h"
 #include "check.h"
 #include "log.h"
+#include "xr_timing.h"
 
 #include "util_openxr.h"
 
@@ -793,6 +795,13 @@ int openxr_begin_frame(XrSession *session, XrTime *display_time) {
     XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
     XrFrameState frameState{XR_TYPE_FRAME_STATE};
     CHECK_XRCMD(xrWaitFrame(*session, &frameWaitInfo, &frameState))
+
+    // Publish the raw predicted photon time for this frame. Consumers compute
+    // "remaining microseconds" by querying CLOCK_MONOTONIC at the moment they
+    // need it — on Android/Quest, XrTime is CLOCK_MONOTONIC ns.
+    XrTiming::predictedDisplayTimeXr.store(
+        static_cast<int64_t>(frameState.predictedDisplayTime),
+        std::memory_order_relaxed);
 
     XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
     CHECK_XRCMD(xrBeginFrame(*session, &frameBeginInfo))

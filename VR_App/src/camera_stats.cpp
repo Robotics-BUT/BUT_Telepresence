@@ -22,6 +22,7 @@ CameraStatsSnapshot CameraStats::snapshot() const {
         rtpDepay.load(),
         dec.load(),
         queue.load(),
+        appsink.load(),
         presentation.load(),
         totalLatency.load(),
         rtpPayTimestamp.load(),
@@ -77,8 +78,9 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
         avg.rtpDepay += snap.rtpDepay;
         avg.dec += snap.dec;
         avg.queue += snap.queue;
-        avg.totalLatency += snap.totalLatency;
+        avg.appsink += snap.appsink;
         avg.presentation += snap.presentation;
+        avg.totalLatency += snap.totalLatency;
     }
 
     size_t count = history_.size();
@@ -92,8 +94,9 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     avg.rtpDepay /= count;
     avg.dec /= count;
     avg.queue /= count;
-    avg.totalLatency /= count;
+    avg.appsink /= count;
     avg.presentation /= count;
+    avg.totalLatency /= count;
 
     // fps as the true windowed rate, not arithmetic mean of per-frame ratios.
     if (count >= 2) {
