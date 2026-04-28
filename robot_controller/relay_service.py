@@ -436,16 +436,16 @@ class UDPRelayService:
             data: Debug info data
             client_addr: Client address
 
-        Message format (106 bytes):
+        Message format (114 bytes):
             [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (float)]
             [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)] [udpStream_us (uint64)]
-            [rtpDepay_us (uint64)] [dec_us (uint64)] [presentation_us (uint64)]
+            [rtpDepay_us (uint64)] [dec_us (uint64)] [appsink_us (uint64)] [presentation_us (uint64)]
             [ntp_offset_us (int64)] [ntp_synced (uint8)] [time_since_ntp_sync_us (uint64)]
         """
         try:
-            # Validate packet length (currently 106 bytes)
+            # Validate packet length (currently 114 bytes)
             # Note: FPS appears to be serialized as 8 bytes (double) instead of 4 bytes (float)
-            expected_length = 106
+            expected_length = 114
             if len(data) != expected_length:
                 self.logger.warning(f"Invalid debug info packet length: {len(data)} bytes, expected {expected_length}")
                 return
@@ -483,6 +483,9 @@ class UDPRelayService:
             dec_us = struct.unpack('<Q', data[offset:offset+8])[0]
             offset += 8
 
+            appsink_us = struct.unpack('<Q', data[offset:offset+8])[0]
+            offset += 8
+
             presentation_us = struct.unpack('<Q', data[offset:offset+8])[0]
             offset += 8
 
@@ -500,15 +503,16 @@ class UDPRelayService:
                 f"DEBUG INFO from {client_addr[0]}:{client_addr[1]} - "
                 f"frame_id={frame_id}, fps={fps:.1f}, ts={timestamp}, "
                 f"pipeline_us=[camera={camera_us}, vidConv={vidConv_us}, enc={enc_us}, rtpPay={rtpPay_us}, "
-                f"udpStream={udpStream_us}, rtpDepay={rtpDepay_us}, dec={dec_us}, pres={presentation_us}], "
+                f"udpStream={udpStream_us}, rtpDepay={rtpDepay_us}, dec={dec_us}, appsink={appsink_us}, pres={presentation_us}], "
                 f"ntp=[offset_us={ntp_offset_us}, synced={ntp_synced}, time_since_sync_us={time_since_ntp_sync_us}]"
             )
 
             # Write to InfluxDB if enabled
             if self.influx_client:
                 try:
-                    # Calculate total pipeline latency
-                    total_latency_us = camera_us +  vidConv_us + enc_us + rtpPay_us + udpStream_us + rtpDepay_us + dec_us + presentation_us
+                    # Calculate total pipeline latency. appsink_us is now a
+                    # distinct stage between dec and presentation; include it.
+                    total_latency_us = camera_us + vidConv_us + enc_us + rtpPay_us + udpStream_us + rtpDepay_us + dec_us + appsink_us + presentation_us
 
                     # Create Point using influxdb3-python API
                     # Use current time instead of packet timestamp (which is relative, not Unix epoch)
@@ -526,6 +530,7 @@ class UDPRelayService:
                         .field("udpStream_us", int(udpStream_us))
                         .field("rtpDepay_us", int(rtpDepay_us))
                         .field("dec_us", int(dec_us))
+                        .field("appsink_us", int(appsink_us))
                         .field("presentation_us", int(presentation_us))
                         .field("total_latency_us", int(total_latency_us))
                         .field("ntp_offset_us", int(ntp_offset_us))

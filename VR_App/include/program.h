@@ -86,7 +86,6 @@ private:
     UserState userState_;
 
     /* --- Runtime flags --- */
-    bool mono_ = false;                  /* true when VideoMode is Mono */
     bool renderGui_ = true;              /* toggle with left thumbstick press */
     bool controlLockMovement_ = false;   /* debounce lock for right thumbstick press */
     bool controlLockGui_ = false;        /* debounce lock for left thumbstick press */

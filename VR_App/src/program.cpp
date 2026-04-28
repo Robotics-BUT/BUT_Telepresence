@@ -208,7 +208,8 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
 
         HandleControllers();
 
-        if (mono_ || appState_->streamingConfig.videoMode == VideoMode::Panoramic) {
+        const auto vm = appState_->streamingConfig.videoMode;
+        if (vm == VideoMode::Mono || vm == VideoMode::Panoramic) {
             imageHandle = &appState_->cameraStreamingStates.first;
         }
 
@@ -755,13 +756,11 @@ void TelepresenceProgram::BuildSettings() {
                 auto& vm = appState_->streamingConfig.videoMode;
                 vm = static_cast<VideoMode>(
                     (static_cast<int>(vm) + 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
-                mono_ = (vm == VideoMode::Mono || vm == VideoMode::Panoramic);
             },
             [this]() {
                 auto& vm = appState_->streamingConfig.videoMode;
                 vm = static_cast<VideoMode>(
                     (static_cast<int>(vm) - 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
-                mono_ = (vm == VideoMode::Mono || vm == VideoMode::Panoramic);
             }
         },
         {
