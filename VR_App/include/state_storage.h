@@ -21,8 +21,11 @@ public:
     /** Serialize key AppState fields to SharedPreferences. */
     void SaveAppState(const AppState &appState);
 
-    /** Deserialize AppState fields from SharedPreferences (with defaults for missing keys). */
-    AppState LoadAppState();
+    /** Deserialize SharedPreferences into an existing AppState. Takes a reference
+     *  rather than returning by value because AppState contains non-movable
+     *  members (CameraFrame::frameMutex). On parse failure, the AppState is
+     *  left in its passed-in state. */
+    void LoadAppState(AppState& appState);
 
 private:
 

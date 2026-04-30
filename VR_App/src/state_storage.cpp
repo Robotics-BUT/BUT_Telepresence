@@ -90,7 +90,7 @@ bool StateStorage::SaveKeyValuePair(jobject editor, jmethodID putString, const s
 }
 
 
-AppState StateStorage::LoadAppState() {
+void StateStorage::LoadAppState(AppState& appState) {
     jclass contextClass = env_->GetObjectClass(context_);
     jmethodID getSharedPreferences = env_->GetMethodID(contextClass, "getSharedPreferences", "(Ljava/lang/String;I)Landroid/content/SharedPreferences;");
 
@@ -101,7 +101,6 @@ AppState StateStorage::LoadAppState() {
     jclass prefsClass = env_->GetObjectClass(sharedPreferences);
     jmethodID getString = env_->GetMethodID(prefsClass, "getString", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
 
-    AppState appState;
     try {
         appState.streamingConfig.headset_ip = StringToIp(LoadValue(sharedPreferences, getString, "headset_ip"));
         appState.streamingConfig.jetson_ip = StringToIp(LoadValue(sharedPreferences, getString, "jetson_ip"));
@@ -121,19 +120,12 @@ AppState StateStorage::LoadAppState() {
         appState.robotControlEnabled = std::stoi(LoadValue(sharedPreferences, getString, "robot_control_enabled"));
 
     } catch(const std::exception& e) {
-        env_->DeleteLocalRef(sharedPreferences);
-        env_->DeleteLocalRef(prefsClass);
-        env_->DeleteLocalRef(contextClass);
-
-        return AppState();
-        //throw std::runtime_error("Couldn't load from the shared preferences");
+        // Parse failure: leave appState as the caller's default-constructed state.
     }
 
     env_->DeleteLocalRef(sharedPreferences);
     env_->DeleteLocalRef(prefsClass);
     env_->DeleteLocalRef(contextClass);
-
-    return appState;
 }
 
 std::string StateStorage::LoadValue(jobject& sharedPreferences, jmethodID& getString, const std::string& key) {

@@ -15,6 +15,7 @@
 #include <gst/video/video.h>
 #include <GLES3/gl3.h>
 #include <gst/gl/gstglmemory.h>
+#include <gst/gl/gstglcontext.h>
 #include <GLES2/gl2ext.h>
 
 /** GL sink capabilities for hardware-decoded frames (RGBA, 2D or external-oes). */
@@ -505,7 +506,7 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
 
     } else {
         // -----------------------------------------------------------------
-        // HARDWARE PATH (H.264 → GLMemory, possibly external-oes)
+        // HARDWARE PATH (H.264 → GLMemory)
         // NO CPU mapping – grab texture ID via GstVideoFrame + GST_MAP_GL
         // -----------------------------------------------------------------
         GstVideoInfo vinfo;
@@ -518,7 +519,7 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
         GstVideoFrame vframe;
         if (!gst_video_frame_map(&vframe, &vinfo, buffer,
                                  (GstMapFlags) (GST_MAP_READ | GST_MAP_GL))) {
-            LOG_ERROR("GSTREAMER: Failed to map video frame as GL (External OES?)");
+            LOG_ERROR("GSTREAMER: Failed to map video frame as GL");
             gst_sample_unref(sample);
             return GST_FLOW_ERROR;
         }

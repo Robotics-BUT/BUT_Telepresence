@@ -19,4 +19,8 @@ namespace XrTiming {
     // this is CLOCK_MONOTONIC nanoseconds, so CLOCK_MONOTONIC can be queried
     // at any later instant and subtracted to get the remaining time to photons.
     inline std::atomic<int64_t> predictedDisplayTimeXr{0};
+
+    // CLOCK_MONOTONIC ns at openxr_begin_frame() return — used by
+    // openxr_end_frame() to log per-cycle render duration via adb logcat.
+    inline std::atomic<int64_t> renderCycleStartMonotonicNs{0};
 }

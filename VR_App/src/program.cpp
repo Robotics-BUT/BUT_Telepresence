@@ -51,7 +51,8 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
     stateStorage_ = std::make_unique<StateStorage>(app);
 
-    appState_ = std::make_shared<AppState>(stateStorage_->LoadAppState());
+    appState_ = std::make_shared<AppState>();
+    stateStorage_->LoadAppState(*appState_);
     appState_->streamingConfig.headset_ip = GetLocalIPAddr();
 
     init_scene(appState_->streamingConfig.resolution.getWidth(), appState_->streamingConfig.resolution.getHeight());

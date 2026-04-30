@@ -507,6 +507,9 @@ int openxr_release_viewsurface(viewsurface_t &viewSurface) {
 }
 
 int openxr_acquire_swapchain_img(XrSwapchain swapchain) {
+    struct timespec ts0{}, ts1{};
+    clock_gettime(CLOCK_MONOTONIC, &ts0);
+
     uint32_t imgIdx;
     XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     CHECK_XRCMD(xrAcquireSwapchainImage(swapchain, &acquireInfo, &imgIdx))
@@ -514,6 +517,11 @@ int openxr_acquire_swapchain_img(XrSwapchain swapchain) {
     XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
     waitInfo.timeout = XR_INFINITE_DURATION;
     CHECK_XRCMD(xrWaitSwapchainImage(swapchain, &waitInfo))
+
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    int64_t dt_ns = (static_cast<int64_t>(ts1.tv_sec - ts0.tv_sec)) * 1'000'000'000LL
+                  + (ts1.tv_nsec - ts0.tv_nsec);
+    LOG_INFO("RENDER_TIMING acquire_us=%llu", (unsigned long long)(dt_ns / 1000));
 
     return imgIdx;
 }
@@ -803,6 +811,16 @@ int openxr_begin_frame(XrSession *session, XrTime *display_time) {
         static_cast<int64_t>(frameState.predictedDisplayTime),
         std::memory_order_relaxed);
 
+    // Mark start of render cycle (CLOCK_MONOTONIC ns). openxr_end_frame()
+    // diffs this to log the cycle duration via adb logcat.
+    {
+        struct timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        XrTiming::renderCycleStartMonotonicNs.store(
+            static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec,
+            std::memory_order_relaxed);
+    }
+
     XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
     CHECK_XRCMD(xrBeginFrame(*session, &frameBeginInfo))
     *display_time = frameState.predictedDisplayTime;
@@ -812,6 +830,23 @@ int openxr_begin_frame(XrSession *session, XrTime *display_time) {
 
 int openxr_end_frame(XrSession *session, XrTime *displayTime,
                      std::vector<XrCompositionLayerBaseHeader *> &layers) {
+
+    // Render-cycle duration: xrWaitFrame return → here. >11.1 ms = vsync miss.
+    {
+        struct timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        int64_t now_ns = static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec;
+        int64_t start_ns = XrTiming::renderCycleStartMonotonicNs.load(std::memory_order_relaxed);
+        if (start_ns > 0) {
+            uint64_t cycle_us = static_cast<uint64_t>((now_ns - start_ns) / 1000);
+            // Predicted-vs-now: how far ahead the runtime says photons will emit.
+            int64_t predicted_ns = XrTiming::predictedDisplayTimeXr.load(std::memory_order_relaxed);
+            int64_t predicted_remaining_us = (predicted_ns - now_ns) / 1000;
+            LOG_INFO("RENDER_TIMING cycle_us=%llu predicted_remaining_us=%lld",
+                     (unsigned long long) cycle_us,
+                     (long long) predicted_remaining_us);
+        }
+    }
 
     XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
     frameEndInfo.displayTime = *displayTime;
