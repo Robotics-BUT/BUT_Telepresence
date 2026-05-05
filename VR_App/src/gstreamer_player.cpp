@@ -27,6 +27,223 @@
     "framerate = (fraction) [ 0/1, max ], "           \
     "texture-target = (string) { 2D, external-oes } "
 
+// ============================================================================
+// OES -> GL_TEXTURE_2D blitter
+// ----------------------------------------------------------------------------
+// glsinkbin on Adreno emits external-oes textures backed by Android
+// SurfaceTexture. SurfaceTexture has one persistent GLuint whose underlying
+// gralloc buffer is swapped by MediaCodec.updateTexImage() asynchronously,
+// with no app-side fence. The render thread binds the OES texture, GPU
+// processes glDrawElements, and during processing the backing buffer can be
+// swapped/freed → driver SIGSEGV inside libGLESv2_adreno.
+//
+// Fix: copy each new sample into an app-owned GL_TEXTURE_2D before the
+// render thread sees it. The blit runs on the GstGL worker thread (where
+// the GL context is current and the OES handle is fresh) via
+// gst_gl_context_thread_add. Destination texture lifetime is fully ours,
+// so render is decoupled from the SurfaceTexture pool.
+// ============================================================================
+
+struct OesBlitter {
+    GLuint program = 0;
+    GLuint vbo = 0;
+    GLint  loc_pos = -1;
+    GLint  loc_uv  = -1;
+    GLint  loc_tex = -1;
+    bool   initialized = false;
+
+    bool init();              // GL-context-current required
+    void blit(GLuint oesTex); // GL-context-current required; FBO bound by caller
+};
+
+static OesBlitter g_oesBlitter;
+
+static GLuint compileShaderOES(GLenum type, const char *src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, nullptr);
+    glCompileShader(s);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[1024];
+        glGetShaderInfoLog(s, sizeof(log), nullptr, log);
+        LOG_ERROR("OesBlitter: shader compile failed: %s", log);
+        glDeleteShader(s);
+        return 0;
+    }
+    return s;
+}
+
+bool OesBlitter::init() {
+    if (initialized) return true;
+
+    static const char *VS =
+        "#version 300 es\n"
+        "in vec2 a_pos;\n"
+        "in vec2 a_uv;\n"
+        "out vec2 v_uv;\n"
+        "void main(){ v_uv = a_uv; gl_Position = vec4(a_pos, 0.0, 1.0); }\n";
+
+    static const char *FS =
+        "#version 300 es\n"
+        "#extension GL_OES_EGL_image_external_essl3 : require\n"
+        "precision mediump float;\n"
+        "uniform samplerExternalOES u_tex;\n"
+        "in vec2 v_uv;\n"
+        "out vec4 fragColor;\n"
+        "void main(){ fragColor = texture(u_tex, v_uv); }\n";
+
+    GLuint vs = compileShaderOES(GL_VERTEX_SHADER, VS);
+    GLuint fs = compileShaderOES(GL_FRAGMENT_SHADER, FS);
+    if (!vs || !fs) {
+        if (vs) glDeleteShader(vs);
+        if (fs) glDeleteShader(fs);
+        return false;
+    }
+
+    program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        LOG_ERROR("OesBlitter: program link failed: %s", log);
+        glDeleteProgram(program);
+        program = 0;
+        return false;
+    }
+
+    loc_pos = glGetAttribLocation(program, "a_pos");
+    loc_uv  = glGetAttribLocation(program, "a_uv");
+    loc_tex = glGetUniformLocation(program, "u_tex");
+
+    static const GLfloat verts[] = {
+        -1.f, -1.f,  0.f, 0.f,
+         1.f, -1.f,  1.f, 0.f,
+        -1.f,  1.f,  0.f, 1.f,
+         1.f,  1.f,  1.f, 1.f,
+    };
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    initialized = true;
+    return true;
+}
+
+void OesBlitter::blit(GLuint oesTex) {
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    glUseProgram(program);
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glEnableVertexAttribArray(loc_pos);
+    glEnableVertexAttribArray(loc_uv);
+    glVertexAttribPointer(loc_pos, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                          reinterpret_cast<const void *>(0));
+    glVertexAttribPointer(loc_uv, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                          reinterpret_cast<const void *>(2 * sizeof(GLfloat)));
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, oesTex);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glUniform1i(loc_tex, 0);
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glDisableVertexAttribArray(loc_pos);
+    glDisableVertexAttribArray(loc_uv);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glUseProgram(0);
+}
+
+struct OesBlitJob {
+    CameraFrame *frame;
+    GLuint       oesTex;
+    int          width;
+    int          height;
+    bool         success;
+};
+
+static void oesBlitOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
+    auto *job = static_cast<OesBlitJob *>(data);
+    job->success = false;
+
+    if (job->frame->hwBackingTex == 0 ||
+        job->frame->hwBackingWidth  != job->width ||
+        job->frame->hwBackingHeight != job->height) {
+        // Drain GPU before freeing FBO/texture that may still be referenced
+        // by an in-flight render command (Adreno does not honour GL deferred
+        // deletion for FBO-attached textures cleanly).
+        if (job->frame->hwBackingFBO != 0 || job->frame->hwBackingTex != 0) {
+            glFinish();
+        }
+        if (job->frame->hwBackingFBO != 0) {
+            GLuint fbo = job->frame->hwBackingFBO;
+            glDeleteFramebuffers(1, &fbo);
+            job->frame->hwBackingFBO = 0;
+        }
+        if (job->frame->hwBackingTex != 0) {
+            GLuint tex = job->frame->hwBackingTex;
+            glDeleteTextures(1, &tex);
+            job->frame->hwBackingTex = 0;
+        }
+
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, job->width, job->height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        GLuint fbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, tex, 0);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            LOG_ERROR("OesBlit: FBO incomplete (status=0x%x)", status);
+            glDeleteFramebuffers(1, &fbo);
+            glDeleteTextures(1, &tex);
+            return;
+        }
+
+        job->frame->hwBackingTex    = tex;
+        job->frame->hwBackingFBO    = fbo;
+        job->frame->hwBackingWidth  = job->width;
+        job->frame->hwBackingHeight = job->height;
+    }
+
+    if (!g_oesBlitter.init()) return;
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, job->frame->hwBackingFBO);
+    glViewport(0, 0, job->width, job->height);
+    g_oesBlitter.blit(job->oesTex);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glFlush();
+
+    job->success = true;
+}
+
 GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair_(camPair),
                                                                          ntpTimer_(ntpTimer) {
     guint major, minor, micro, nano;
@@ -495,19 +712,28 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
             return GST_FLOW_ERROR;
         }
 
-        // Make sure memorySize is correct (width * height * 3 for RGB, etc.)
-        memcpy(frame.dataHandle, mapInfo.data, frame.memorySize);
+        {
+            std::lock_guard<std::mutex> lk(frame.frameMutex);
+            memcpy(frame.dataHandle, mapInfo.data, frame.memorySize);
+            frame.hasGlTexture = false;
+        }
 
         gst_buffer_unmap(buffer, &mapInfo);
         gst_sample_unref(sample);
 
-        frame.hasGlTexture = false;  // we uploaded into CPU buffer
         return GST_FLOW_OK;
 
     } else {
         // -----------------------------------------------------------------
-        // HARDWARE PATH (H.264 → GLMemory)
-        // NO CPU mapping – grab texture ID via GstVideoFrame + GST_MAP_GL
+        // HARDWARE PATH (H.264 / H.265 → GLMemory, typically external-oes
+        // on Adreno via amcviddec + SurfaceTexture).
+        //
+        // Strategy: copy the OES sample into an app-owned GL_TEXTURE_2D on
+        // GstGL's worker thread (where the OES handle is fresh and the GL
+        // context is current), publish *our* 2D texture to the render
+        // thread, then unref the sample. The render thread never sees an
+        // external-OES handle, so MediaCodec.updateTexImage() can no
+        // longer race with glDrawElements.
         // -----------------------------------------------------------------
         GstVideoInfo vinfo;
         if (!gst_video_info_from_caps(&vinfo, caps)) {
@@ -524,17 +750,41 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
             return GST_FLOW_ERROR;
         }
 
-        // vframe.data[0] contains a GLuint* with the texture ID
-        GLuint tex_id = *(guint *) vframe.data[0];
-        LOG_DEBUG("GStreamer: GL frame texture id=%u", tex_id);
+        const GLuint tex_id = *(guint *) vframe.data[0];
+        const int    newW   = GST_VIDEO_INFO_WIDTH(&vinfo);
+        const int    newH   = GST_VIDEO_INFO_HEIGHT(&vinfo);
 
-        frame.glTexture = tex_id;
-        frame.hasGlTexture = true;
-        frame.frameWidth = GST_VIDEO_INFO_WIDTH(&vinfo);
-        frame.frameHeight = GST_VIDEO_INFO_HEIGHT(&vinfo);
+        GstGLContext *gl_ctx = nullptr;
+        GstMemory *mem = gst_buffer_peek_memory(buffer, 0);
+        if (mem && gst_is_gl_memory(mem)) {
+            gl_ctx = ((GstGLBaseMemory *) mem)->context;
+        }
+        if (!gl_ctx) {
+            LOG_ERROR("GSTREAMER: GL sample has no GstGLContext attached");
+            gst_video_frame_unmap(&vframe);
+            gst_sample_unref(sample);
+            return GST_FLOW_ERROR;
+        }
+
+        OesBlitJob job{&frame, tex_id, newW, newH, false};
+        gst_gl_context_thread_add(gl_ctx, oesBlitOnGstGlThread, &job);
 
         gst_video_frame_unmap(&vframe);
         gst_sample_unref(sample);
+
+        if (!job.success) {
+            LOG_ERROR("GSTREAMER: OES->2D blit failed");
+            return GST_FLOW_ERROR;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(frame.frameMutex);
+            frame.glTexture    = frame.hwBackingTex;
+            frame.glTarget     = GL_TEXTURE_2D;
+            frame.hasGlTexture = true;
+            frame.frameWidth   = newW;
+            frame.frameHeight  = newH;
+        }
 
         return GST_FLOW_OK;
     }
