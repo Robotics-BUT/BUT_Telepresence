@@ -257,8 +257,8 @@ Install services for automatic startup:
 ```bash
 sudo cp services/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable camera-server robot-controller
-sudo systemctl start camera-server robot-controller
+sudo systemctl enable camera-server robot-controller influxdb3
+sudo systemctl start camera-server robot-controller influxdb3
 ```
 
 Check status:

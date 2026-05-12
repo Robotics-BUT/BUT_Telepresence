@@ -1,0 +1,15 @@
+[Unit]
+Description="InfluxDB 3 time-series database for telepresence telemetry"
+After=network.target
+Before=grafana-server.service
+
+[Service]
+User=defuser
+Environment="HOME=/home/defuser"
+WorkingDirectory=/home/defuser/.influxdb
+ExecStart=/home/defuser/.influxdb/influxdb3 serve --node-id but_telepresence_telemetry --object-store file --without-auth
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
