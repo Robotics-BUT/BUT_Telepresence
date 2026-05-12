@@ -362,6 +362,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
                                          const std::string &xDimString, int payload) {
     // Get optional identity elements
     GstElement *udpsrc_ident = getElementOptional(pipeline, "udpsrc_ident");
+    GstElement *postjb_ident = getElementOptional(pipeline, "postjb_ident");
     GstElement *rtpdepay_ident = getElementOptional(pipeline, "rtpdepay_ident");
     GstElement *dec_ident = getElementOptional(pipeline, "dec_ident");
     GstElement *queue_ident = getElementOptional(pipeline, "queue_ident");
@@ -427,6 +428,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
 
     // Connect and unref optional identity elements
     connectAndUnref(udpsrc_ident, "handoff", (GCallback) onRtpHeaderMetadata, callbackObj_);
+    connectAndUnref(postjb_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(rtpdepay_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(dec_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(queue_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
@@ -670,17 +672,20 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
     frame.stats->currTimestamp.store(currentTime);
     frame.stats->frameReadyTimestamp.store(static_cast<uint64_t>(currentTime));
 
-    // appsink stage = time between the last GStreamer probe (queue_ident) and
-    // this new-sample callback firing. Captures the previously-uninstrumented
-    // stretch: for H.264/H.265 it's glsinkbin's GL upload + embedded appsink
-    // hand-off; for JPEG it's near-zero (queue_ident -> appsink direct).
-    uint64_t queueTs = frame.stats->queueTimestamp.load();
-    if (queueTs > 0 && static_cast<uint64_t>(currentTime) >= queueTs) {
-        frame.stats->appsink.store(static_cast<uint64_t>(currentTime) - queueTs);
-    }
-
     GstBuffer *buffer = gst_sample_get_buffer(sample);
     GstCaps *caps = gst_sample_get_caps(sample);
+
+    // appsink stage = time between the last GStreamer probe (queue_ident) and
+    // this new-sample callback firing. Per-frame correct via PTS lookup —
+    // pulls THIS frame's queue emit time rather than the latest global one,
+    // so async stages (glsinkbin GL upload on H.264/H.265 path) are honest.
+    GstClockTime appsinkPts = GST_BUFFER_PTS(buffer);
+    if (appsinkPts != GST_CLOCK_TIME_NONE) {
+        uint64_t queueEnter = frame.stats->queuePtsMap.consume(static_cast<uint64_t>(appsinkPts));
+        if (queueEnter != 0 && static_cast<uint64_t>(currentTime) >= queueEnter) {
+            frame.stats->appsink.store(static_cast<uint64_t>(currentTime) - queueEnter);
+        }
+    }
 
     if (!caps) {
         LOG_ERROR("GSTREAMER: Sample has no caps");
@@ -830,13 +835,24 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 5, &myInfoBuf, &size_64) != 0) {
         stats->rtpPayTimestamp = *(static_cast<uint64_t *>(myInfoBuf));
     }
+    uint32_t rtpTs = gst_rtp_buffer_get_timestamp(&rtp_buf);
     gst_rtp_buffer_unmap(&rtp_buf);
 
     LOG_DEBUG("GStreamer: RTP header from %s, frame %lu",
               identity->object.parent->name, (unsigned long)stats->frameId.load());
-    // This is so the last packet of rtp gets saved
-    stats->udpSrcTimestamp = ntpTimer->GetCurrentTimeUs();
-    stats->udpStream = stats->udpSrcTimestamp - stats->rtpPayTimestamp;
+
+    uint64_t now = ntpTimer->GetCurrentTimeUs();
+    stats->udpStream = now - stats->rtpPayTimestamp;
+
+    // Anchor the jitter-buffer-hold timer at first-packet-of-frame arrival.
+    // Key by the RTP timestamp — the canonical per-frame identifier in RTP,
+    // identical across every packet of one frame, and invariant across the
+    // jitterbuffer (which rewrites GstBuffer PTS). Every packet of a frame
+    // fires this callback; lastSeenRtpTs dedupes to store only the first.
+    if (rtpTs != stats->lastSeenRtpTs.load()) {
+        stats->rtpTsArrivalMap.store(static_cast<uint64_t>(rtpTs), now);
+        stats->lastSeenRtpTs = rtpTs;
+    }
     stats->packetsPerFrame += 1;
 }
 
@@ -854,18 +870,64 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
     bool isLeftCamera = std::string(identity->object.parent->name) == "pipeline_left";
     auto *stats = isLeftCamera ? pair->first.stats : pair->second.stats;
 
-    if (std::string(identity->object.name) == "rtpdepay_ident") {
-        stats->rtpDepayTimestamp = ntpTimer->GetCurrentTimeUs();
-        stats->rtpDepay = stats->rtpDepayTimestamp - stats->udpSrcTimestamp;
+    uint64_t now = ntpTimer->GetCurrentTimeUs();
+    GstClockTime pts = GST_BUFFER_PTS(buffer);
+    uint64_t ptsKey = (pts != GST_CLOCK_TIME_NONE) ? static_cast<uint64_t>(pts) : 0;
+
+    if (std::string(identity->object.name) == "postjb_ident") {
+        // Per-frame: jbHold = (post-jitterbuffer release time) - (first-packet arrival time)
+        // The buffer here is still an RTP packet (post-jitterbuffer, pre-depay), so we read
+        // its RTP timestamp directly. This is the canonical key across the jitterbuffer,
+        // where GstBuffer PTS is rewritten by the buffer itself and therefore unusable.
+        GstRTPBuffer rtp_buf = GST_RTP_BUFFER_INIT;
+        if (gst_rtp_buffer_map(buffer, GST_MAP_READ, &rtp_buf)) {
+            uint32_t rtpTs = gst_rtp_buffer_get_timestamp(&rtp_buf);
+            gst_rtp_buffer_unmap(&rtp_buf);
+            uint64_t arrived = stats->rtpTsArrivalMap.consume(static_cast<uint64_t>(rtpTs));
+            if (arrived != 0 && now > arrived) {
+                stats->jbHold = now - arrived;
+            }
+        }
+        // Hand off to the GstBuffer-PTS-keyed chain for the rest of the pipeline,
+        // where PTS is stable and can serve as the per-frame key.
+        if (ptsKey != 0) {
+            stats->postjbPtsMap.store(ptsKey, now);
+        }
+    } else if (std::string(identity->object.name) == "rtpdepay_ident") {
+        // Per-frame: rtpDepay = (depay emit time) - (post-jitterbuffer release time)
+        // Both probes are downstream of the jitterbuffer, so GstBuffer PTS is stable
+        // and matches across them.
+        if (ptsKey != 0) {
+            uint64_t postjbEnter = stats->postjbPtsMap.consume(ptsKey);
+            if (postjbEnter != 0 && now > postjbEnter) {
+                stats->rtpDepay = now - postjbEnter;
+            }
+            stats->depayPtsMap.store(ptsKey, now);
+        }
     } else if (std::string(identity->object.name) == "dec_ident") {
-        stats->decTimestamp = ntpTimer->GetCurrentTimeUs();
-        stats->dec = stats->decTimestamp - stats->rtpDepayTimestamp;
+        // Per-frame: dec = (this frame's amcviddec emit time) - (this frame's depay emit time).
+        // Critical for HW decoder pipeline visibility — the previous global-timestamp
+        // approach subtracted frame N+depth's depay time, masking ~100 ms of AVC
+        // pipeline depth as ~3 ms steady-state inter-frame interval.
+        if (ptsKey != 0) {
+            uint64_t depayEnter = stats->depayPtsMap.consume(ptsKey);
+            if (depayEnter != 0 && now > depayEnter) {
+                stats->dec = now - depayEnter;
+            }
+            stats->decPtsMap.store(ptsKey, now);
+        }
     } else if (std::string(identity->object.name) == "queue_ident") {
-        stats->queueTimestamp = ntpTimer->GetCurrentTimeUs();
-        stats->queue = stats->queueTimestamp - stats->decTimestamp;
+        // Per-frame: queue = (queue emit time) - (this frame's dec emit time).
+        if (ptsKey != 0) {
+            uint64_t decEnter = stats->decPtsMap.consume(ptsKey);
+            if (decEnter != 0 && now > decEnter) {
+                stats->queue = now - decEnter;
+            }
+            stats->queuePtsMap.store(ptsKey, now);
+        }
         stats->totalLatency =
-                stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream + stats->rtpDepay +
-                stats->dec + stats->queue;
+                stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream +
+                stats->jbHold + stats->rtpDepay + stats->dec + stats->queue;
 
         // Update running average history after all stats are computed.
         // Window size = configured stream FPS, so the rolling average always

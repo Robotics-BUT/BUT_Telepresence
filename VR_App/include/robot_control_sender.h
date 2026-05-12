@@ -34,10 +34,11 @@
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
  *
- * Message Type 0x03 - Debug Info (78 bytes):
- *   [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (float)]
- *   [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)] [udpStream_us (uint64)]
- *   [rtpDepay_us (uint64)] [dec_us (uint64)] [presentation_us (uint64)]
+ * Message Type 0x03 - Debug Info (122 bytes):
+ *   [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (double)]
+ *   [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)]
+ *   [udpStream_us (uint64)] [jbHold_us (uint64)] [rtpDepay_us (uint64)] [dec_us (uint64)]
+ *   [appsink_us (uint64)] [presentation_us (uint64)]
  *   [ntp_offset_us (int64)] [ntp_synced (uint8)] [time_since_ntp_sync_us (uint64)]
  *
  * This simple protocol allows the receiving server to implement its own

@@ -104,6 +104,54 @@ private:
 };
 
 // =============================================================================
+// Per-frame PTS-keyed timestamp map
+// =============================================================================
+
+/**
+ * Bounded thread-safe map from GstBuffer PTS → wall-clock timestamp (µs).
+ *
+ * Used to correctly attribute per-stage latency in pipelined async stages
+ * (HW decoder, queues). Without this, the GStreamer probe that fires when
+ * frame N exits a stage reads the GLOBAL "latest enter timestamp" — which
+ * has been overwritten by frame N+depth's enter event, making the probe
+ * blind to the pipeline depth.
+ *
+ * Each stage stores `now` keyed by buffer.pts on its enter callback, and
+ * the downstream stage consumes that pts to get the *correct* per-frame
+ * enter time for its delta computation.
+ *
+ * Capacity is fixed; if exceeded (e.g., frames dropped between probes),
+ * the oldest half is evicted on next insert. This keeps memory bounded
+ * even under sustained loss without coordinating with frame_id.
+ */
+class PtsTimestampMap {
+public:
+    static constexpr size_t MAX_SIZE = 64;
+
+    void store(uint64_t pts, uint64_t time_us) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (map_.size() >= MAX_SIZE) {
+            map_.clear();  // coarse eviction; fine for telemetry
+        }
+        map_[pts] = time_us;
+    }
+
+    // Returns 0 if pts not found (caller should treat 0 as "skip this delta").
+    uint64_t consume(uint64_t pts) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = map_.find(pts);
+        if (it == map_.end()) return 0;
+        uint64_t t = it->second;
+        map_.erase(it);
+        return t;
+    }
+
+private:
+    mutable std::mutex mtx_;
+    std::unordered_map<uint64_t, uint64_t> map_;
+};
+
+// =============================================================================
 // Camera Statistics
 // =============================================================================
 
@@ -123,6 +171,7 @@ struct CameraStatsSnapshot {
     uint64_t enc{0};
     uint64_t rtpPay{0};
     uint64_t udpStream{0};
+    uint64_t jbHold{0};        // rtpjitterbuffer hold time (udpsrc_ident -> postjb_ident, keyed by RTP timestamp)
     uint64_t rtpDepay{0};
     uint64_t dec{0};
     uint64_t queue{0};
@@ -132,10 +181,6 @@ struct CameraStatsSnapshot {
 
     // Timing timestamps
     uint64_t rtpPayTimestamp{0};
-    uint64_t udpSrcTimestamp{0};
-    uint64_t rtpDepayTimestamp{0};
-    uint64_t decTimestamp{0};
-    uint64_t queueTimestamp{0};
     uint64_t frameReadyTimestamp{0};
 
     // Frame info
@@ -161,6 +206,7 @@ struct CameraStats {
     std::atomic<uint64_t> enc{0};
     std::atomic<uint64_t> rtpPay{0};
     std::atomic<uint64_t> udpStream{0};
+    std::atomic<uint64_t> jbHold{0};
     std::atomic<uint64_t> rtpDepay{0};
     std::atomic<uint64_t> dec{0};
     std::atomic<uint64_t> queue{0};
@@ -170,10 +216,6 @@ struct CameraStats {
 
     // Timestamps
     std::atomic<uint64_t> rtpPayTimestamp{0};
-    std::atomic<uint64_t> udpSrcTimestamp{0};
-    std::atomic<uint64_t> rtpDepayTimestamp{0};
-    std::atomic<uint64_t> decTimestamp{0};
-    std::atomic<uint64_t> queueTimestamp{0};
     std::atomic<uint64_t> frameReadyTimestamp{0};
 
     // Frame info
@@ -182,6 +224,27 @@ struct CameraStats {
 
     // Only measure presentation on the first render after a new frame arrives
     std::atomic<uint64_t> lastMeasuredFrameReady{0};
+
+    // Per-frame enter-time maps. Each stage stores its emit time so the
+    // downstream stage can compute the *correct* per-frame delta (instead
+    // of being fooled by a global "latest" timestamp when the stage is
+    // async/pipelined). See comment on PtsTimestampMap.
+    //
+    // Key choice follows the invariant that survives the interval:
+    //   - rtpTsArrivalMap is keyed by the RTP timestamp (uint32_t cast to
+    //     uint64_t) because rtpjitterbuffer rewrites GstBuffer PTS across
+    //     its interval; the RTP timestamp does not change.
+    //   - All other maps are keyed by GstBuffer PTS, which is preserved
+    //     across the post-jitterbuffer stages (depay, decoder, queue).
+    PtsTimestampMap rtpTsArrivalMap;  // first-packet arrival per RTP ts (udpsrc -> postjb)
+    PtsTimestampMap postjbPtsMap;     // post-jitterbuffer emit per pts  (postjb -> rtpdepay)
+    PtsTimestampMap depayPtsMap;      // rtpdepay emit per pts            (rtpdepay -> dec)
+    PtsTimestampMap decPtsMap;        // amcviddec emit per pts           (dec -> queue)
+    PtsTimestampMap queuePtsMap;      // post-decoder queue emit per pts  (queue -> appsink)
+
+    // Per-packet dedup: every RTP packet of one frame carries the same RTP
+    // timestamp; rtpTsArrivalMap should record only the first packet's arrival.
+    std::atomic<uint32_t> lastSeenRtpTs{0};
 
     /**
      * Create a copyable snapshot of current values

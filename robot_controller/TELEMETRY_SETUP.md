@@ -10,10 +10,17 @@ Quick guide to set up real-time telemetry monitoring for your telepresence robot
 curl -O https://www.influxdata.com/d/install_influxdb3.sh && sh install_influxdb3.sh
 source ~/.bashrc
 influxdb3 create token --admin # Keep the output somewhere safe
-
-# To actually run the server (without authentification!)
-influxdb3 serve --node-id but_telepresence_telemetry --object-store file --without-auth
 ```
+
+The installer drops the binary at `~/.influxdb/influxdb3` but does **not** install a systemd unit. Use the one shipped with this repo so the server starts on boot and survives crashes:
+
+```bash
+sudo cp services/influxdb3.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now influxdb3
+```
+
+The unit launches the server with `--node-id but_telepresence_telemetry --object-store file --without-auth` as `defuser`, with data under `~/.influxdb/`. Edit the unit if your install path or user differs.
 
 ### 2. Install Grafana
 
@@ -82,8 +89,8 @@ Auto-refreshes every 5 seconds.
 
 ### Check if services are running:
 ```bash
-sudo systemctl status influxdb
-sudo systemctl status grafana-server
+systemctl status influxdb3
+systemctl status grafana-server
 ```
 
 ### Verify data in InfluxDB:
@@ -97,7 +104,7 @@ influx
 ### Check logs:
 ```bash
 # InfluxDB
-sudo journalctl -u influxdb -f
+sudo journalctl -u influxdb3 -f
 
 # Grafana
 sudo journalctl -u grafana-server -f

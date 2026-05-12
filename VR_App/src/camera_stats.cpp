@@ -19,6 +19,7 @@ CameraStatsSnapshot CameraStats::snapshot() const {
         enc.load(),
         rtpPay.load(),
         udpStream.load(),
+        jbHold.load(),
         rtpDepay.load(),
         dec.load(),
         queue.load(),
@@ -26,10 +27,6 @@ CameraStatsSnapshot CameraStats::snapshot() const {
         presentation.load(),
         totalLatency.load(),
         rtpPayTimestamp.load(),
-        udpSrcTimestamp.load(),
-        rtpDepayTimestamp.load(),
-        decTimestamp.load(),
-        queueTimestamp.load(),
         frameReadyTimestamp.load(),
         frameId.load(),
         packetsPerFrame.load()
@@ -75,6 +72,7 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
         avg.enc += snap.enc;
         avg.rtpPay += snap.rtpPay;
         avg.udpStream += snap.udpStream;
+        avg.jbHold += snap.jbHold;
         avg.rtpDepay += snap.rtpDepay;
         avg.dec += snap.dec;
         avg.queue += snap.queue;
@@ -91,6 +89,7 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     avg.enc /= count;
     avg.rtpPay /= count;
     avg.udpStream /= count;
+    avg.jbHold /= count;
     avg.rtpDepay /= count;
     avg.dec /= count;
     avg.queue /= count;
@@ -111,10 +110,6 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     avg.frameId = latest.frameId;
     avg.packetsPerFrame = latest.packetsPerFrame;
     avg.rtpPayTimestamp = latest.rtpPayTimestamp;
-    avg.udpSrcTimestamp = latest.udpSrcTimestamp;
-    avg.rtpDepayTimestamp = latest.rtpDepayTimestamp;
-    avg.decTimestamp = latest.decTimestamp;
-    avg.queueTimestamp = latest.queueTimestamp;
     avg.frameReadyTimestamp = latest.frameReadyTimestamp;
 
     return avg;
