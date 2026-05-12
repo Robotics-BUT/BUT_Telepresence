@@ -186,6 +186,7 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, u
     serializeLittleEndian(packet, stats.enc);
     serializeLittleEndian(packet, stats.rtpPay);
     serializeLittleEndian(packet, stats.udpStream);
+    serializeLittleEndian(packet, stats.jbHold);
     serializeLittleEndian(packet, stats.rtpDepay);
     serializeLittleEndian(packet, stats.dec);
     serializeLittleEndian(packet, stats.appsink);

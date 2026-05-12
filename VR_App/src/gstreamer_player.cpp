@@ -27,6 +27,223 @@
     "framerate = (fraction) [ 0/1, max ], "           \
     "texture-target = (string) { 2D, external-oes } "
 
+// ============================================================================
+// OES -> GL_TEXTURE_2D blitter
+// ----------------------------------------------------------------------------
+// glsinkbin on Adreno emits external-oes textures backed by Android
+// SurfaceTexture. SurfaceTexture has one persistent GLuint whose underlying
+// gralloc buffer is swapped by MediaCodec.updateTexImage() asynchronously,
+// with no app-side fence. The render thread binds the OES texture, GPU
+// processes glDrawElements, and during processing the backing buffer can be
+// swapped/freed → driver SIGSEGV inside libGLESv2_adreno.
+//
+// Fix: copy each new sample into an app-owned GL_TEXTURE_2D before the
+// render thread sees it. The blit runs on the GstGL worker thread (where
+// the GL context is current and the OES handle is fresh) via
+// gst_gl_context_thread_add. Destination texture lifetime is fully ours,
+// so render is decoupled from the SurfaceTexture pool.
+// ============================================================================
+
+struct OesBlitter {
+    GLuint program = 0;
+    GLuint vbo = 0;
+    GLint  loc_pos = -1;
+    GLint  loc_uv  = -1;
+    GLint  loc_tex = -1;
+    bool   initialized = false;
+
+    bool init();              // GL-context-current required
+    void blit(GLuint oesTex); // GL-context-current required; FBO bound by caller
+};
+
+static OesBlitter g_oesBlitter;
+
+static GLuint compileShaderOES(GLenum type, const char *src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, nullptr);
+    glCompileShader(s);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[1024];
+        glGetShaderInfoLog(s, sizeof(log), nullptr, log);
+        LOG_ERROR("OesBlitter: shader compile failed: %s", log);
+        glDeleteShader(s);
+        return 0;
+    }
+    return s;
+}
+
+bool OesBlitter::init() {
+    if (initialized) return true;
+
+    static const char *VS =
+        "#version 300 es\n"
+        "in vec2 a_pos;\n"
+        "in vec2 a_uv;\n"
+        "out vec2 v_uv;\n"
+        "void main(){ v_uv = a_uv; gl_Position = vec4(a_pos, 0.0, 1.0); }\n";
+
+    static const char *FS =
+        "#version 300 es\n"
+        "#extension GL_OES_EGL_image_external_essl3 : require\n"
+        "precision mediump float;\n"
+        "uniform samplerExternalOES u_tex;\n"
+        "in vec2 v_uv;\n"
+        "out vec4 fragColor;\n"
+        "void main(){ fragColor = texture(u_tex, v_uv); }\n";
+
+    GLuint vs = compileShaderOES(GL_VERTEX_SHADER, VS);
+    GLuint fs = compileShaderOES(GL_FRAGMENT_SHADER, FS);
+    if (!vs || !fs) {
+        if (vs) glDeleteShader(vs);
+        if (fs) glDeleteShader(fs);
+        return false;
+    }
+
+    program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        LOG_ERROR("OesBlitter: program link failed: %s", log);
+        glDeleteProgram(program);
+        program = 0;
+        return false;
+    }
+
+    loc_pos = glGetAttribLocation(program, "a_pos");
+    loc_uv  = glGetAttribLocation(program, "a_uv");
+    loc_tex = glGetUniformLocation(program, "u_tex");
+
+    static const GLfloat verts[] = {
+        -1.f, -1.f,  0.f, 0.f,
+         1.f, -1.f,  1.f, 0.f,
+        -1.f,  1.f,  0.f, 1.f,
+         1.f,  1.f,  1.f, 1.f,
+    };
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    initialized = true;
+    return true;
+}
+
+void OesBlitter::blit(GLuint oesTex) {
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    glUseProgram(program);
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glEnableVertexAttribArray(loc_pos);
+    glEnableVertexAttribArray(loc_uv);
+    glVertexAttribPointer(loc_pos, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                          reinterpret_cast<const void *>(0));
+    glVertexAttribPointer(loc_uv, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                          reinterpret_cast<const void *>(2 * sizeof(GLfloat)));
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, oesTex);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glUniform1i(loc_tex, 0);
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glDisableVertexAttribArray(loc_pos);
+    glDisableVertexAttribArray(loc_uv);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glUseProgram(0);
+}
+
+struct OesBlitJob {
+    CameraFrame *frame;
+    GLuint       oesTex;
+    int          width;
+    int          height;
+    bool         success;
+};
+
+static void oesBlitOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
+    auto *job = static_cast<OesBlitJob *>(data);
+    job->success = false;
+
+    if (job->frame->hwBackingTex == 0 ||
+        job->frame->hwBackingWidth  != job->width ||
+        job->frame->hwBackingHeight != job->height) {
+        // Drain GPU before freeing FBO/texture that may still be referenced
+        // by an in-flight render command (Adreno does not honour GL deferred
+        // deletion for FBO-attached textures cleanly).
+        if (job->frame->hwBackingFBO != 0 || job->frame->hwBackingTex != 0) {
+            glFinish();
+        }
+        if (job->frame->hwBackingFBO != 0) {
+            GLuint fbo = job->frame->hwBackingFBO;
+            glDeleteFramebuffers(1, &fbo);
+            job->frame->hwBackingFBO = 0;
+        }
+        if (job->frame->hwBackingTex != 0) {
+            GLuint tex = job->frame->hwBackingTex;
+            glDeleteTextures(1, &tex);
+            job->frame->hwBackingTex = 0;
+        }
+
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, job->width, job->height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        GLuint fbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, tex, 0);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            LOG_ERROR("OesBlit: FBO incomplete (status=0x%x)", status);
+            glDeleteFramebuffers(1, &fbo);
+            glDeleteTextures(1, &tex);
+            return;
+        }
+
+        job->frame->hwBackingTex    = tex;
+        job->frame->hwBackingFBO    = fbo;
+        job->frame->hwBackingWidth  = job->width;
+        job->frame->hwBackingHeight = job->height;
+    }
+
+    if (!g_oesBlitter.init()) return;
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, job->frame->hwBackingFBO);
+    glViewport(0, 0, job->width, job->height);
+    g_oesBlitter.blit(job->oesTex);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glFlush();
+
+    job->success = true;
+}
+
 GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair_(camPair),
                                                                          ntpTimer_(ntpTimer) {
     guint major, minor, micro, nano;
@@ -145,6 +362,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
                                          const std::string &xDimString, int payload) {
     // Get optional identity elements
     GstElement *udpsrc_ident = getElementOptional(pipeline, "udpsrc_ident");
+    GstElement *postjb_ident = getElementOptional(pipeline, "postjb_ident");
     GstElement *rtpdepay_ident = getElementOptional(pipeline, "rtpdepay_ident");
     GstElement *dec_ident = getElementOptional(pipeline, "dec_ident");
     GstElement *queue_ident = getElementOptional(pipeline, "queue_ident");
@@ -210,6 +428,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
 
     // Connect and unref optional identity elements
     connectAndUnref(udpsrc_ident, "handoff", (GCallback) onRtpHeaderMetadata, callbackObj_);
+    connectAndUnref(postjb_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(rtpdepay_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(dec_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
     connectAndUnref(queue_ident, "handoff", (GCallback) onIdentityHandoff, callbackObj_);
@@ -453,17 +672,20 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
     frame.stats->currTimestamp.store(currentTime);
     frame.stats->frameReadyTimestamp.store(static_cast<uint64_t>(currentTime));
 
-    // appsink stage = time between the last GStreamer probe (queue_ident) and
-    // this new-sample callback firing. Captures the previously-uninstrumented
-    // stretch: for H.264/H.265 it's glsinkbin's GL upload + embedded appsink
-    // hand-off; for JPEG it's near-zero (queue_ident -> appsink direct).
-    uint64_t queueTs = frame.stats->queueTimestamp.load();
-    if (queueTs > 0 && static_cast<uint64_t>(currentTime) >= queueTs) {
-        frame.stats->appsink.store(static_cast<uint64_t>(currentTime) - queueTs);
-    }
-
     GstBuffer *buffer = gst_sample_get_buffer(sample);
     GstCaps *caps = gst_sample_get_caps(sample);
+
+    // appsink stage = time between the last GStreamer probe (queue_ident) and
+    // this new-sample callback firing. Per-frame correct via PTS lookup —
+    // pulls THIS frame's queue emit time rather than the latest global one,
+    // so async stages (glsinkbin GL upload on H.264/H.265 path) are honest.
+    GstClockTime appsinkPts = GST_BUFFER_PTS(buffer);
+    if (appsinkPts != GST_CLOCK_TIME_NONE) {
+        uint64_t queueEnter = frame.stats->queuePtsMap.consume(static_cast<uint64_t>(appsinkPts));
+        if (queueEnter != 0 && static_cast<uint64_t>(currentTime) >= queueEnter) {
+            frame.stats->appsink.store(static_cast<uint64_t>(currentTime) - queueEnter);
+        }
+    }
 
     if (!caps) {
         LOG_ERROR("GSTREAMER: Sample has no caps");
@@ -495,19 +717,28 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
             return GST_FLOW_ERROR;
         }
 
-        // Make sure memorySize is correct (width * height * 3 for RGB, etc.)
-        memcpy(frame.dataHandle, mapInfo.data, frame.memorySize);
+        {
+            std::lock_guard<std::mutex> lk(frame.frameMutex);
+            memcpy(frame.dataHandle, mapInfo.data, frame.memorySize);
+            frame.hasGlTexture = false;
+        }
 
         gst_buffer_unmap(buffer, &mapInfo);
         gst_sample_unref(sample);
 
-        frame.hasGlTexture = false;  // we uploaded into CPU buffer
         return GST_FLOW_OK;
 
     } else {
         // -----------------------------------------------------------------
-        // HARDWARE PATH (H.264 → GLMemory)
-        // NO CPU mapping – grab texture ID via GstVideoFrame + GST_MAP_GL
+        // HARDWARE PATH (H.264 / H.265 → GLMemory, typically external-oes
+        // on Adreno via amcviddec + SurfaceTexture).
+        //
+        // Strategy: copy the OES sample into an app-owned GL_TEXTURE_2D on
+        // GstGL's worker thread (where the OES handle is fresh and the GL
+        // context is current), publish *our* 2D texture to the render
+        // thread, then unref the sample. The render thread never sees an
+        // external-OES handle, so MediaCodec.updateTexImage() can no
+        // longer race with glDrawElements.
         // -----------------------------------------------------------------
         GstVideoInfo vinfo;
         if (!gst_video_info_from_caps(&vinfo, caps)) {
@@ -524,17 +755,41 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
             return GST_FLOW_ERROR;
         }
 
-        // vframe.data[0] contains a GLuint* with the texture ID
-        GLuint tex_id = *(guint *) vframe.data[0];
-        LOG_DEBUG("GStreamer: GL frame texture id=%u", tex_id);
+        const GLuint tex_id = *(guint *) vframe.data[0];
+        const int    newW   = GST_VIDEO_INFO_WIDTH(&vinfo);
+        const int    newH   = GST_VIDEO_INFO_HEIGHT(&vinfo);
 
-        frame.glTexture = tex_id;
-        frame.hasGlTexture = true;
-        frame.frameWidth = GST_VIDEO_INFO_WIDTH(&vinfo);
-        frame.frameHeight = GST_VIDEO_INFO_HEIGHT(&vinfo);
+        GstGLContext *gl_ctx = nullptr;
+        GstMemory *mem = gst_buffer_peek_memory(buffer, 0);
+        if (mem && gst_is_gl_memory(mem)) {
+            gl_ctx = ((GstGLBaseMemory *) mem)->context;
+        }
+        if (!gl_ctx) {
+            LOG_ERROR("GSTREAMER: GL sample has no GstGLContext attached");
+            gst_video_frame_unmap(&vframe);
+            gst_sample_unref(sample);
+            return GST_FLOW_ERROR;
+        }
+
+        OesBlitJob job{&frame, tex_id, newW, newH, false};
+        gst_gl_context_thread_add(gl_ctx, oesBlitOnGstGlThread, &job);
 
         gst_video_frame_unmap(&vframe);
         gst_sample_unref(sample);
+
+        if (!job.success) {
+            LOG_ERROR("GSTREAMER: OES->2D blit failed");
+            return GST_FLOW_ERROR;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(frame.frameMutex);
+            frame.glTexture    = frame.hwBackingTex;
+            frame.glTarget     = GL_TEXTURE_2D;
+            frame.hasGlTexture = true;
+            frame.frameWidth   = newW;
+            frame.frameHeight  = newH;
+        }
 
         return GST_FLOW_OK;
     }
@@ -580,13 +835,24 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
     if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 5, &myInfoBuf, &size_64) != 0) {
         stats->rtpPayTimestamp = *(static_cast<uint64_t *>(myInfoBuf));
     }
+    uint32_t rtpTs = gst_rtp_buffer_get_timestamp(&rtp_buf);
     gst_rtp_buffer_unmap(&rtp_buf);
 
     LOG_DEBUG("GStreamer: RTP header from %s, frame %lu",
               identity->object.parent->name, (unsigned long)stats->frameId.load());
-    // This is so the last packet of rtp gets saved
-    stats->udpSrcTimestamp = ntpTimer->GetCurrentTimeUs();
-    stats->udpStream = stats->udpSrcTimestamp - stats->rtpPayTimestamp;
+
+    uint64_t now = ntpTimer->GetCurrentTimeUs();
+    stats->udpStream = now - stats->rtpPayTimestamp;
+
+    // Anchor the jitter-buffer-hold timer at first-packet-of-frame arrival.
+    // Key by the RTP timestamp — the canonical per-frame identifier in RTP,
+    // identical across every packet of one frame, and invariant across the
+    // jitterbuffer (which rewrites GstBuffer PTS). Every packet of a frame
+    // fires this callback; lastSeenRtpTs dedupes to store only the first.
+    if (rtpTs != stats->lastSeenRtpTs.load()) {
+        stats->rtpTsArrivalMap.store(static_cast<uint64_t>(rtpTs), now);
+        stats->lastSeenRtpTs = rtpTs;
+    }
     stats->packetsPerFrame += 1;
 }
 
@@ -604,18 +870,64 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
     bool isLeftCamera = std::string(identity->object.parent->name) == "pipeline_left";
     auto *stats = isLeftCamera ? pair->first.stats : pair->second.stats;
 
-    if (std::string(identity->object.name) == "rtpdepay_ident") {
-        stats->rtpDepayTimestamp = ntpTimer->GetCurrentTimeUs();
-        stats->rtpDepay = stats->rtpDepayTimestamp - stats->udpSrcTimestamp;
+    uint64_t now = ntpTimer->GetCurrentTimeUs();
+    GstClockTime pts = GST_BUFFER_PTS(buffer);
+    uint64_t ptsKey = (pts != GST_CLOCK_TIME_NONE) ? static_cast<uint64_t>(pts) : 0;
+
+    if (std::string(identity->object.name) == "postjb_ident") {
+        // Per-frame: jbHold = (post-jitterbuffer release time) - (first-packet arrival time)
+        // The buffer here is still an RTP packet (post-jitterbuffer, pre-depay), so we read
+        // its RTP timestamp directly. This is the canonical key across the jitterbuffer,
+        // where GstBuffer PTS is rewritten by the buffer itself and therefore unusable.
+        GstRTPBuffer rtp_buf = GST_RTP_BUFFER_INIT;
+        if (gst_rtp_buffer_map(buffer, GST_MAP_READ, &rtp_buf)) {
+            uint32_t rtpTs = gst_rtp_buffer_get_timestamp(&rtp_buf);
+            gst_rtp_buffer_unmap(&rtp_buf);
+            uint64_t arrived = stats->rtpTsArrivalMap.consume(static_cast<uint64_t>(rtpTs));
+            if (arrived != 0 && now > arrived) {
+                stats->jbHold = now - arrived;
+            }
+        }
+        // Hand off to the GstBuffer-PTS-keyed chain for the rest of the pipeline,
+        // where PTS is stable and can serve as the per-frame key.
+        if (ptsKey != 0) {
+            stats->postjbPtsMap.store(ptsKey, now);
+        }
+    } else if (std::string(identity->object.name) == "rtpdepay_ident") {
+        // Per-frame: rtpDepay = (depay emit time) - (post-jitterbuffer release time)
+        // Both probes are downstream of the jitterbuffer, so GstBuffer PTS is stable
+        // and matches across them.
+        if (ptsKey != 0) {
+            uint64_t postjbEnter = stats->postjbPtsMap.consume(ptsKey);
+            if (postjbEnter != 0 && now > postjbEnter) {
+                stats->rtpDepay = now - postjbEnter;
+            }
+            stats->depayPtsMap.store(ptsKey, now);
+        }
     } else if (std::string(identity->object.name) == "dec_ident") {
-        stats->decTimestamp = ntpTimer->GetCurrentTimeUs();
-        stats->dec = stats->decTimestamp - stats->rtpDepayTimestamp;
+        // Per-frame: dec = (this frame's amcviddec emit time) - (this frame's depay emit time).
+        // Critical for HW decoder pipeline visibility — the previous global-timestamp
+        // approach subtracted frame N+depth's depay time, masking ~100 ms of AVC
+        // pipeline depth as ~3 ms steady-state inter-frame interval.
+        if (ptsKey != 0) {
+            uint64_t depayEnter = stats->depayPtsMap.consume(ptsKey);
+            if (depayEnter != 0 && now > depayEnter) {
+                stats->dec = now - depayEnter;
+            }
+            stats->decPtsMap.store(ptsKey, now);
+        }
     } else if (std::string(identity->object.name) == "queue_ident") {
-        stats->queueTimestamp = ntpTimer->GetCurrentTimeUs();
-        stats->queue = stats->queueTimestamp - stats->decTimestamp;
+        // Per-frame: queue = (queue emit time) - (this frame's dec emit time).
+        if (ptsKey != 0) {
+            uint64_t decEnter = stats->decPtsMap.consume(ptsKey);
+            if (decEnter != 0 && now > decEnter) {
+                stats->queue = now - decEnter;
+            }
+            stats->queuePtsMap.store(ptsKey, now);
+        }
         stats->totalLatency =
-                stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream + stats->rtpDepay +
-                stats->dec + stats->queue;
+                stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream +
+                stats->jbHold + stats->rtpDepay + stats->dec + stats->queue;
 
         // Update running average history after all stats are computed.
         // Window size = configured stream FPS, so the rolling average always

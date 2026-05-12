@@ -50,6 +50,64 @@ static const char *ImageVertexShaderGlsl = R"_(#version 320 es
     }
     )_";
 
+// ----------------------------------------------------------------------------
+// LATENCY_RIG_MODE
+// ----------------------------------------------------------------------------
+// 1 = compile the photon-to-photon measurement shaders. Both fragment shaders
+//     sample the center pixel of the streamed frame, threshold its luminance,
+//     and paint the whole quad pure white above the threshold or pure black
+//     below it. This gives the PT5800B phototransistor a clean binary signal
+//     synchronised to the rig's LED pulse.
+//
+// 0 = normal video rendering. Sample the full texture per-pixel; OES path
+//     applies the limited-range (16-235) expansion used for HW-decoded YUV.
+//
+// The two fragment-shader strings below are the only places this toggle
+// affects; the C++ render path (FBO setup, texture binding, draw call) is
+// identical either way. Set to 1 while running paper measurements; set
+// back to 0 for actual teleoperation viewing.
+// ----------------------------------------------------------------------------
+#define LATENCY_RIG_MODE 0
+
+#if LATENCY_RIG_MODE
+static const char *ImageFragmentShaderGlsl = R"_(#version 320 es
+    in lowp vec2 v_TexCoord;
+
+    out lowp vec4 color;
+
+    uniform sampler2D u_Texture;
+
+    const lowp float LATENCY_THRESHOLD = 0.7;
+
+    void main() {
+        lowp vec4 c = texture(u_Texture, vec2(0.5, 0.5));
+        lowp float Y = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        color = (Y > LATENCY_THRESHOLD) ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    )_";
+
+static const char *ImageFragmentShaderOES = R"_(#version 320 es
+    #extension GL_OES_EGL_image_external_essl3 : require
+
+    in lowp vec2 v_TexCoord;
+    out lowp vec4 color;
+
+    uniform samplerExternalOES u_Texture;
+
+    const lowp float LATENCY_THRESHOLD = 0.7;
+
+    void main() {
+        lowp vec4 c = texture(u_Texture, vec2(0.5, 0.5));
+
+        // Limited-range 16-235 expansion (match normal-mode OES shader).
+        lowp vec3 rgb = (c.rgb - vec3(40.0/255.0)) * (255.0/235.0);
+        rgb = clamp(rgb, 0.0, 1.0);
+
+        lowp float Y = dot(rgb, vec3(0.299, 0.587, 0.114));
+        color = (Y > LATENCY_THRESHOLD) ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    )_";
+#else
 static const char *ImageFragmentShaderGlsl = R"_(#version 320 es
     in lowp vec2 v_TexCoord;
 
@@ -73,7 +131,7 @@ static const char *ImageFragmentShaderOES = R"_(#version 320 es
     void main() {
         lowp vec4 c = texture(u_Texture, v_TexCoord);
 
-        // Assume limited-range 35–235 and expand to full range
+        // Assume limited-range 16-235 and expand to full range.
         lowp vec3 rgb = (c.rgb - vec3(40.0/255.0)) * (255.0/235.0);
         rgb = clamp(rgb, 0.0, 1.0);
         rgb = rgb * 0.8;
@@ -81,6 +139,7 @@ static const char *ImageFragmentShaderOES = R"_(#version 320 es
         color = vec4(rgb, c.a);
     }
     )_";
+#endif
 
 static const char *GuiVertexShaderGlsl = R"_(#version 320 es
     in vec3 position;
@@ -209,24 +268,41 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
 
     if(!cameraFrame) { return 0; }
 
+    // Hold frame.frameMutex for the entire draw. The GStreamer thread takes
+    // the same lock when publishing a new sample, so the texture bound below
+    // cannot be torn down between glBindTexture and glDrawElements. The
+    // Phase 2 glFinish() at the bottom additionally guarantees the GPU has
+    // fully consumed the binding before we release the lock — defense in
+    // depth against any residual OES update/unref racing the draw.
+    std::lock_guard<std::mutex> lk(cameraFrame->frameMutex);
+
+    const bool   hasGl       = cameraFrame->hasGlTexture;
+    const GLenum gTargetSnap = cameraFrame->glTarget;
+    const GLuint gTexSnap    = cameraFrame->glTexture;
+    void* const  dataSnap    = cameraFrame->dataHandle;
+    const int    fwSnap      = cameraFrame->frameWidth;
+    const int    fhSnap      = cameraFrame->frameHeight;
+
     const shader_obj_t *shader = nullptr;
     GLenum              target = GL_TEXTURE_2D;
 
-    if (cameraFrame->hasGlTexture) {
-        target = cameraFrame->glTarget; // set by GStreamer callback
-
+    if (hasGl) {
+        target = gTargetSnap;
         if (target == GL_TEXTURE_EXTERNAL_OES) {
             shader = &image_shader_object_oes;
         } else { // treat everything else as 2D
             shader = &image_shader_object_2d;
         }
-    } else if (cameraFrame->dataHandle) {
-        // SW/JPEG fallback: will upload to our own GL_TEXTURE_2D
+        if (gTexSnap == 0) return 0;
+    } else if (dataSnap) {
         shader = &image_shader_object_2d;
         target = GL_TEXTURE_2D;
+        if (fwSnap <= 0 || fhSnap <= 0) return 0;
     } else {
         return 0;
     }
+
+    if (!shader || shader->program == 0 || vertexArrayObject == 0) return 0;
 
     glUseProgram(shader->program);
     glBindVertexArray(vertexArrayObject);
@@ -240,21 +316,24 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
 
     glActiveTexture(GL_TEXTURE0);
 
-    if(cameraFrame->hasGlTexture) {
-        // HW decode path: use GL texture from GStreamer
-        glBindTexture(target, cameraFrame->glTexture);
+    if(hasGl) {
+        glBindTexture(target, gTexSnap);
         glUniform1i((GLint)shader->loc_texture, 0);
-        LOG_DEBUG("GStreamer: rendering GL texture %u (target=0x%x)", cameraFrame->glTexture, target);
+        LOG_DEBUG("GStreamer: rendering GL texture %u (target=0x%x)", gTexSnap, target);
     } else {
-        // SW / JPEG path: upload bytes
         glBindTexture(GL_TEXTURE_2D, texture2D);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB, cameraFrame->frameWidth, cameraFrame->frameHeight, 0,
-                     GL_SRGB, GL_UNSIGNED_BYTE, cameraFrame->dataHandle);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB, fwSnap, fhSnap, 0,
+                     GL_SRGB, GL_UNSIGNED_BYTE, dataSnap);
         glUniform1i((GLint)shader->loc_texture, 0);
     }
 
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(ArraySize(Geometry::c_quadIndices)),GL_UNSIGNED_SHORT, nullptr);
     glBindVertexArray(0);
+
+    // Phase 2: drain GPU before releasing the lock so the bound texture is
+    // fully consumed before GstGL can overwrite anything. ~1 ms cost per
+    // eye render, but eliminates the residual race window inside the driver.
+    glFinish();
 
     return 0;
 }

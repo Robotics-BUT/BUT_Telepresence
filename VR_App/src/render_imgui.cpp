@@ -183,17 +183,18 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState,
             uint16_t encMs = snapshot.enc / 1000;
             uint16_t rtpPayMs = snapshot.rtpPay / 1000;
             uint16_t udpStreamMs = snapshot.udpStream / 1000;
+            uint16_t jbHoldMs = snapshot.jbHold / 1000;
             uint16_t rtpDepayMs = snapshot.rtpDepay / 1000;
             uint16_t decMs = snapshot.dec / 1000;
             uint16_t queueMs = snapshot.queue / 1000;
             uint16_t displayMs = snapshot.presentation / 1000;
 
             ImGui::Text(
-                    "camera: %u vidConv: %u enc: %u\nrtpPay: %u udpStream: %u rtpDepay: %u\ndec: %u queue: %u display: %u",
-                    cameraMs, vidConvMs, encMs, rtpPayMs, udpStreamMs, rtpDepayMs, decMs, queueMs,
-                    displayMs);
+                    "camera: %u vidConv: %u enc: %u\nrtpPay: %u udpStream: %u jbHold: %u\nrtpDepay: %udec: %u queue: %u display: %u",
+                    cameraMs, vidConvMs, encMs, rtpPayMs, udpStreamMs, jbHoldMs, rtpDepayMs,
+                    decMs, queueMs, displayMs);
             ImGui::Text("In Total: %u: \n", cameraMs + vidConvMs + encMs + rtpPayMs + udpStreamMs +
-                                             rtpDepayMs + decMs + queueMs + displayMs);
+                                             jbHoldMs + rtpDepayMs + decMs + queueMs + displayMs);
             ImGui::Text("Camera FPS: %.1f | App: %.1f Hz",
                         snapshot.fps, appState->appFrameRate);
         }
