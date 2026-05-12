@@ -44,13 +44,29 @@ void StopPipeline(GstElement *pipeline) {
     if (pipeline == nullptr) { return; };
     std::cout << "Stopping the pipeline!\n";
 
-    // Set pipeline to NULL state
+    // 1. Send EOS so nvarguscamerasrc / encoders can drain cleanly.
+    //    Without this, Argus session teardown races with the NULL transition
+    //    and can wedge the CSI driver / SIGSEGV nvargus-daemon on next start.
+    gst_element_send_event(pipeline, gst_event_new_eos());
+
+    // 2. Wait briefly for EOS to propagate to the sink (cap at 1 s — if it
+    //    doesn't drain in time, force NULL anyway).
+    {
+        GstBus *bus = gst_element_get_bus(pipeline);
+        if (bus) {
+            GstMessage *msg = gst_bus_timed_pop_filtered(
+                    bus, 1 * GST_SECOND,
+                    static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
+            if (msg) gst_message_unref(msg);
+            gst_object_unref(bus);
+        }
+    }
+
+    // 3. Now set pipeline to NULL.
     gst_element_set_state(pipeline, GST_STATE_NULL);
 
-    // Wait for state change to complete (with 5 second timeout)
     GstState state, pending;
     GstStateChangeReturn ret = gst_element_get_state(pipeline, &state, &pending, 5 * GST_SECOND);
-
     if (ret == GST_STATE_CHANGE_FAILURE) {
         std::cerr << "Failed to stop pipeline cleanly\n";
     } else if (ret == GST_STATE_CHANGE_ASYNC) {
@@ -58,6 +74,13 @@ void StopPipeline(GstElement *pipeline) {
     }
 
     gst_object_unref(pipeline);
+
+    // 4. Settle. Gives the kernel CSI driver and Argus daemon time to free
+    //    the sensor handle and return frame buffers to their pools before
+    //    the next pipeline (re)builds. 200 ms is empirically enough for
+    //    routine reconfigures; without this, rapid restart loops trip the
+    //    daemon's error-handling races.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 }
 
 void SetPipelineToPlayingState(GstElement *pipeline, const std::string &name) {
@@ -83,6 +106,7 @@ void SetPipelineToPlayingState(GstElement *pipeline, const std::string &name) {
 }
 
 GstElement *BuildCameraPipeline(int sensorId, const StreamingConfig &streamingConfig) {
+    SetSensorStaticLatencyForFps(streamingConfig.fps);
     std::ostringstream oss;
 
     switch (streamingConfig.codec) {

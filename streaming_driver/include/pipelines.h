@@ -29,7 +29,7 @@ inline std::ostringstream GetJpegStreamingPipeline(const StreamingConfig &stream
     int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
 
     std::ostringstream oss;
-    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
+    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 exposuretimerange=\"4000000 4000000\" sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
         << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
         << " ! identity name=camsrc_ident"
@@ -47,13 +47,15 @@ inline std::ostringstream GetH264StreamingPipeline(const StreamingConfig &stream
     int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
 
     std::ostringstream oss;
-    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
+    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 exposuretimerange=\"4000000 4000000\" sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
-        << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
-	    << " ! identity name=camsrc_ident"
-	    << " ! nvvidconv flip-method=vertical-flip"
+        << ",framerate=(fraction)80/1,format=(string)NV12"
+	<< " ! identity name=camsrc_ident"
+	<< " ! nvvidconv flip-method=vertical-flip"
         << " ! identity name=vidconv_ident"
-        << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+        << " ! videorate drop-only=true"
+        << " ! video/x-raw(memory:NVMM),framerate=" << streamingConfig.fps << "/1"
+        << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
         << " ! identity name=enc_ident"
         << " ! rtph264pay mtu=1300 config-interval=1 pt=96"
         << " ! identity name=rtppay_ident"
@@ -65,13 +67,13 @@ inline std::ostringstream GetH265StreamingPipeline(const StreamingConfig &stream
     int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
 
     std::ostringstream oss;
-    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
+    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 exposuretimerange=\"4000000 4000000\" sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
         << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
-	    << " ! identity name=camsrc_ident"
-	    << " ! nvvidconv flip-method=vertical-flip"
+	<< " ! identity name=camsrc_ident"
+	<< " ! nvvidconv flip-method=vertical-flip"
         << " ! identity name=vidconv_ident"
-        << " ! nvv4l2h265enc name=encoder insert-sps-pps=1 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+        << " ! nvv4l2h265enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
         << " ! identity name=enc_ident"
         << " ! rtph265pay mtu=1300 config-interval=1 pt=96"
         << " ! identity name=rtppay_ident"
@@ -118,12 +120,12 @@ inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &s
                 << " ! rtpjpegpay mtu=1300";
             break;
         case Codec::H264:
-            oss << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+            oss << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph264pay mtu=1300 config-interval=1 pt=96";
             break;
         case Codec::H265:
-            oss << " ! nvv4l2h265enc name=encoder insert-sps-pps=1 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+            oss << " ! nvv4l2h265enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph265pay mtu=1300 config-interval=1 pt=96";
             break;
