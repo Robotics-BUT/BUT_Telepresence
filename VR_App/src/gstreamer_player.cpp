@@ -87,11 +87,21 @@ bool OesBlitter::init() {
     static const char *FS =
         "#version 300 es\n"
         "#extension GL_OES_EGL_image_external_essl3 : require\n"
-        "precision mediump float;\n"
+        "precision highp float;\n"
         "uniform samplerExternalOES u_tex;\n"
         "in vec2 v_uv;\n"
         "out vec4 fragColor;\n"
-        "void main(){ fragColor = texture(u_tex, v_uv); }\n";
+        "void main(){\n"
+        "  vec3 c = texture(u_tex, v_uv).rgb;\n"
+        "  // The HW decoders emit limited/video range (16-235); expand to full range.\n"
+        "  vec3 s = clamp((c - vec3(16.0/255.0)) * (255.0/219.0), 0.0, 1.0);\n"
+        "  // sRGB EOTF (gamma-encoded -> linear) so the GL_RGBA8 backing texture holds\n"
+        "  // the same linear-light values the JPEG GL_SRGB texture yields on sample.\n"
+        "  vec3 lin = mix(s / 12.92,\n"
+        "                 pow((s + vec3(0.055)) / 1.055, vec3(2.4)),\n"
+        "                 step(vec3(0.04045), s));\n"
+        "  fragColor = vec4(lin, 1.0);\n"
+        "}\n";
 
     GLuint vs = compileShaderOES(GL_VERTEX_SHADER, VS);
     GLuint fs = compileShaderOES(GL_FRAGMENT_SHADER, FS);
