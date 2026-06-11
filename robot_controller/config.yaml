@@ -10,7 +10,7 @@ network:
 
   # Servo driver configuration
   servo:
-    ip: "192.168.1.150"    # IP address of the servo driver
+    ip: "10.0.31.150"      # IP address of the servo driver
     port: 502              # Port of the servo driver
     response_timeout: 1.0  # Timeout for servo responses (seconds)
     translator: "tg_drives"  # Servo translator type (tg_drives)

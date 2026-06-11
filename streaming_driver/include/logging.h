@@ -30,17 +30,19 @@ namespace IdentityNames {
 // value is reported alongside the dynamic per-stage measurements to keep the
 // latency budget complete.
 //
-// 2026-05-10: empirically calibrated to 1 x frame_interval at the configured FPS
-// by back-solving from JPEG ideal photon-to-photon data (~17 ms at 60 FPS).
-// The IMX415 datasheet figure of "3.5 frame intervals" is an upper-bound for a
-// different sensor mode; for our lock-exposure 4 ms config it overestimates
-// substantially. Tying the model to live FPS keeps it honest across rates.
-inline uint64_t SENSOR_STATIC_LATENCY_US = 16667;  // initialized for 60 FPS, updated by SetSensorStaticLatencyForFps()
+// 2026-05-18: model revised to a fixed wall-clock latency of 37.5 ms,
+// corresponding to 3 sensor frames at the fixed 80 Hz nvarguscamerasrc capture
+// rate, consistent with NVIDIA's documented Argus capture-to-output pipeline
+// depth of ~3-4 sensor frames (see paper §VI.B). The prior 1 x output-frame
+// model under-counted at 60 FPS because the sensor's capture cadence is
+// independent of the output FPS, so the real camera contribution does not
+// shrink at higher output rates. SetSensorStaticLatencyForFps() is retained
+// as a no-op to preserve the main.cpp call site.
+inline uint64_t SENSOR_STATIC_LATENCY_US = 37500;  // 3 sensor frames at 80 Hz
 
-inline void SetSensorStaticLatencyForFps(uint32_t fps) {
-    if (fps > 0) {
-        SENSOR_STATIC_LATENCY_US = (1ULL * 1'000'000ULL) / static_cast<uint64_t>(fps);
-    }
+inline void SetSensorStaticLatencyForFps(uint32_t /*fps*/) {
+    // Intentionally a no-op: the camera/ISP latency is wall-clock-fixed and
+    // does not depend on the output frame rate. See the comment above.
 }
 
 // ============================================================================

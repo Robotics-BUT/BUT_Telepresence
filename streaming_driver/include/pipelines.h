@@ -38,10 +38,12 @@ inline std::ostringstream GetJpegStreamingPipeline(const StreamingConfig &stream
     std::ostringstream oss;
     oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 " << CAMERA_EXPOSURE_LOCK << "sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
-        << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
+        << ",framerate=(fraction)80/1,format=(string)NV12"
         << " ! identity name=camsrc_ident"
         << " ! nvvidconv flip-method=vertical-flip"
         << " ! identity name=vidconv_ident"
+        << " ! videorate drop-only=true"
+        << " ! video/x-raw(memory:NVMM),framerate=" << streamingConfig.fps << "/1"
         << " ! nvjpegenc name=encoder quality=" << streamingConfig.encodingQuality << " idct-method=ifast"
         << " ! identity name=enc_ident"
         << " ! rtpjpegpay mtu=1300"
