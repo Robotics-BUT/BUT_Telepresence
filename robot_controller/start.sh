@@ -42,48 +42,19 @@ fi
 TELEMETRY_ENABLED=$(python3 -c "import yaml; print(yaml.safe_load(open('config.yaml')).get('telemetry',{}).get('enabled', False))" 2>/dev/null || echo "False")
 
 if [ "$TELEMETRY_ENABLED" = "True" ]; then
-    echo "Telemetry enabled — starting InfluxDB3..."
-
-    # Find influxdb3 binary
-    INFLUXDB3_BIN="${HOME}/.influxdb/influxdb3"
-    if [ ! -x "$INFLUXDB3_BIN" ]; then
-        echo "ERROR: influxdb3 not found at $INFLUXDB3_BIN"
-        echo "Please install influxdb3 first, or disable telemetry in config.yaml."
-        exit 1
-    fi
-
-    echo "Serving the database..."
-    "$INFLUXDB3_BIN" serve \
-        --object-store file \
-        --without-auth \
-        --node-id=but_telepresence_telemetry &
-    INFLUX_PID=$!
-
-    # Wait for InfluxDB to be ready
-    echo "Waiting for InfluxDB to be ready..."
+    echo "Telemetry enabled: waiting for influxdb3.service on port 8181..."
     for i in {1..30}; do
-        # Check if process is still alive
-        if ! kill -0 $INFLUX_PID 2>/dev/null; then
-            echo "ERROR: InfluxDB process died during startup!"
-            echo "Check logs at ~/.influxdb/but_telepresence_telemetry/ for errors"
-            exit 1
-        fi
-
-        # Check if port 8181 is accepting connections
         if nc -z localhost 8181 2>/dev/null || curl -s http://localhost:8181/health > /dev/null 2>&1; then
             echo "InfluxDB is ready!"
             break
         fi
-
-        if [ $i -eq 30 ]; then
-            echo "ERROR: InfluxDB failed to start within 30 seconds"
-            kill $INFLUX_PID 2>/dev/null
-            exit 1
+        if [ "$i" -eq 30 ]; then
+            echo "WARNING: InfluxDB (influxdb3.service) not ready after 30s; starting relay anyway."
         fi
         sleep 1
     done
 else
-    echo "Telemetry disabled — skipping InfluxDB startup."
+    echo "Telemetry disabled: skipping InfluxDB."
 fi
 
 # Run the service

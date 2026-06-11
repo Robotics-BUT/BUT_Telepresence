@@ -25,11 +25,18 @@ struct StreamingConfig {
     int fps{};
 };
 
+// Camera exposure control (single source of truth for all pipelines).
+// "" (empty) => auto-exposure: correct for normal use / live teleoperation.
+// To re-lock for a latency-rig capture campaign, set this to a GStreamer
+// property fragment WITH a trailing space, e.g. the 4 ms lock used previously:
+//     exposuretimerange=4000000 4000000   (remember the escaped quotes + trailing space)
+inline constexpr const char *CAMERA_EXPOSURE_LOCK = "";
+
 inline std::ostringstream GetJpegStreamingPipeline(const StreamingConfig &streamingConfig, int sensorId) {
     int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
 
     std::ostringstream oss;
-    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 exposuretimerange=\"4000000 4000000\" sensor-id=" << sensorId
+    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 " << CAMERA_EXPOSURE_LOCK << "sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
         << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
         << " ! identity name=camsrc_ident"
@@ -47,14 +54,14 @@ inline std::ostringstream GetH264StreamingPipeline(const StreamingConfig &stream
     int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
 
     std::ostringstream oss;
-    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 exposuretimerange=\"4000000 4000000\" sensor-id=" << sensorId
+    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 " << CAMERA_EXPOSURE_LOCK << "sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution << ",framerate=(fraction)80/1,format=(string)NV12"
 	    << " ! identity name=camsrc_ident"
 	    << " ! nvvidconv flip-method=vertical-flip"
         << " ! identity name=vidconv_ident"
         << " ! videorate drop-only=true"
         << " ! video/x-raw(memory:NVMM),framerate=" << streamingConfig.fps << "/1"
-        << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+        << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 insert-vui=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
         << " ! identity name=enc_ident"
         << " ! rtph264pay mtu=1300 config-interval=1 pt=96"
         << " ! identity name=rtppay_ident"
@@ -66,7 +73,7 @@ inline std::ostringstream GetH265StreamingPipeline(const StreamingConfig &stream
     int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
 
     std::ostringstream oss;
-    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 exposuretimerange=\"4000000 4000000\" sensor-id=" << sensorId
+    oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 " << CAMERA_EXPOSURE_LOCK << "sensor-id=" << sensorId
         << " ! " << "video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution << ",framerate=(fraction)80/1,format=(string)NV12"
 	    << " ! identity name=camsrc_ident"
 	    << " ! nvvidconv flip-method=vertical-flip"
@@ -97,7 +104,7 @@ inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &s
     for (int i = 0; i < PANORAMIC_WINDOW_SIZE; i++) {
         int sensorId = initialSensors[i];
         oss << "nvarguscamerasrc name=cam_src_" << i
-            << " aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 sensor-id=" << sensorId
+            << " aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 " << CAMERA_EXPOSURE_LOCK << "sensor-id=" << sensorId
             << " ! capsfilter name=cam_capsfilter_" << i
             << " caps=video/x-raw(memory:NVMM),width=(int)" << streamingConfig.horizontalResolution << ",height=(int)" << streamingConfig.verticalResolution
             << ",framerate=(fraction)" << streamingConfig.fps << "/1,format=(string)NV12"
@@ -120,7 +127,7 @@ inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &s
                 << " ! rtpjpegpay mtu=1300";
             break;
         case Codec::H264:
-            oss << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+            oss << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 insert-vui=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph264pay mtu=1300 config-interval=1 pt=96";
             break;

@@ -373,7 +373,11 @@ class UDPRelayService:
         # Update panoramic camera selection based on head azimuth
         self._update_camera_selection(data)
 
-        return
+        # Servo motion is gated by config: disabled during latency/p2p capture
+        # campaigns (keeps the optical rig static), enabled for normal use.
+        if not self.config.servo_motion_enabled:
+            return
+
         try:
             # Translator handles protocol conversion, sending, and receiving
             response = self.servo_translator.translate_and_forward(data, client_addr)

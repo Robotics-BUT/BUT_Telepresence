@@ -14,6 +14,8 @@ network:
     port: 502              # Port of the servo driver
     response_timeout: 1.0  # Timeout for servo responses (seconds)
     translator: "tg_drives"  # Servo translator type (tg_drives)
+    motion_enabled: true   # Forward head pose to pan-tilt servos. Set false for
+                           # latency/p2p capture campaigns (keeps optical rig static).
 
   # Robot controller configuration
   robot:

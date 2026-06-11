@@ -27,6 +27,10 @@ class RelayConfig:
     servo_ip: str = "192.168.1.150"
     servo_port: int = 502
     servo_translator: str = "tg_drives"
+    # When False, head pose is not forwarded to the pan-tilt servos (camera
+    # selection still runs). Set False for latency/p2p capture campaigns so the
+    # optical rig stays static; True for normal use and live demos.
+    servo_motion_enabled: bool = True
 
     # TG Drives servo configuration
     tg_azimuth_min: int = -180000
@@ -145,6 +149,9 @@ class RelayConfig:
                     )
                     config_dict['servo_translator'] = data['network']['servo'].get(
                         'translator', cls.servo_translator
+                    )
+                    config_dict['servo_motion_enabled'] = data['network']['servo'].get(
+                        'motion_enabled', cls.servo_motion_enabled
                     )
 
                 if 'robot' in data['network']:
