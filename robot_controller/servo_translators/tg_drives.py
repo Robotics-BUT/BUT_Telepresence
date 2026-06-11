@@ -264,15 +264,17 @@ class TGDrivesTranslator(ServoTranslator):
         Returns:
             Complete GT protocol message bytes
         """
-        # Calculate revolution counts (for multi-turn servos)
-        az_revol = -1 if azimuth < 0 else 0
-        el_revol = -1 if elevation < 0 else 0
-
-        # Serialize values as little-endian int32
-        az_angle_bytes = struct.pack('<i', azimuth)
-        az_revol_bytes = struct.pack('<i', az_revol)
-        el_angle_bytes = struct.pack('<i', elevation)
-        el_revol_bytes = struct.pack('<i', el_revol)
+        # Position is a 64-bit value carried as angle (low 32 bits) + revolution
+        # (high 32 bits) for multi-turn servos. Packing the whole value into the
+        # int32 angle field capped the range at +/-2147483647 and dropped any
+        # command beyond it (e.g. an elevation_min below -2.1e9). Splitting the
+        # 64-bit value across the two fields lifts that cap. Within int32 this is
+        # identical to the previous encoding (low word == old angle, high word ==
+        # old revol of -1/0).
+        az_angle_bytes = struct.pack('<I', azimuth & 0xFFFFFFFF)
+        az_revol_bytes = struct.pack('<i', azimuth >> 32)
+        el_angle_bytes = struct.pack('<I', elevation & 0xFFFFFFFF)
+        el_revol_bytes = struct.pack('<i', elevation >> 32)
         speed_bytes = struct.pack('<i', speed)
 
         # Build the complete message
