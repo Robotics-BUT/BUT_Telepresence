@@ -63,7 +63,7 @@ inline std::ostringstream GetH264StreamingPipeline(const StreamingConfig &stream
         << " ! identity name=vidconv_ident"
         << " ! videorate drop-only=true"
         << " ! video/x-raw(memory:NVMM),framerate=" << streamingConfig.fps << "/1"
-        << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 insert-vui=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+        << " ! nvv4l2h264enc name=encoder control-rate=1 insert-sps-pps=1 insert-vui=1 iframeinterval=10 idrinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
         << " ! identity name=enc_ident"
         << " ! rtph264pay mtu=1300 config-interval=1 pt=96"
         << " ! identity name=rtppay_ident"
@@ -82,7 +82,7 @@ inline std::ostringstream GetH265StreamingPipeline(const StreamingConfig &stream
         << " ! identity name=vidconv_ident"
         << " ! videorate drop-only=true"
         << " ! video/x-raw(memory:NVMM),framerate=" << streamingConfig.fps << "/1"
-        << " ! nvv4l2h265enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+        << " ! nvv4l2h265enc name=encoder control-rate=1 insert-sps-pps=1 iframeinterval=10 idrinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
         << " ! identity name=enc_ident"
         << " ! rtph265pay mtu=1300 config-interval=1 pt=96"
         << " ! identity name=rtppay_ident"
@@ -129,12 +129,12 @@ inline std::ostringstream GetPanoramicStreamingPipeline(const StreamingConfig &s
                 << " ! rtpjpegpay mtu=1300";
             break;
         case Codec::H264:
-            oss << " ! nvv4l2h264enc name=encoder insert-sps-pps=1 insert-vui=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+            oss << " ! nvv4l2h264enc name=encoder control-rate=1 insert-sps-pps=1 insert-vui=1 iframeinterval=10 idrinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph264pay mtu=1300 config-interval=1 pt=96";
             break;
         case Codec::H265:
-            oss << " ! nvv4l2h265enc name=encoder insert-sps-pps=1 iframeinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
+            oss << " ! nvv4l2h265enc name=encoder control-rate=1 insert-sps-pps=1 iframeinterval=10 idrinterval=10 bitrate=" << streamingConfig.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph265pay mtu=1300 config-interval=1 pt=96";
             break;
