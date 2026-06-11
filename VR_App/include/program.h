@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <optional>
+
 #include "util_openxr.h"
 #include "util_egl.h"
 #include "BS_thread_pool.hpp"
@@ -107,6 +109,11 @@ private:
 
     /* --- Shared application state --- */
     std::shared_ptr<AppState> appState_{};
+
+    /* --- Last streaming config successfully pushed to the robot. Used by the
+     *     Apply handler to decide between a full decode/render rebuild
+     *     (structural change) and a fast live encoder update (bitrate/quality). */
+    std::optional<StreamingConfig> lastAppliedConfig_{};
 
     /* --- Data-driven GUI settings table --- */
     std::vector<GuiSetting> settings_;

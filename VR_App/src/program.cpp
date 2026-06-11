@@ -692,6 +692,10 @@ void TelepresenceProgram::InitializeStreaming() {
 
     // Configure pipelines regardless - they will wait for data
     gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
+
+    // Record the baseline so the first Apply can diff against it and avoid an
+    // unnecessary rebuild when only bitrate/quality changes.
+    lastAppliedConfig_ = appState_->streamingConfig;
 }
 
 /**
@@ -806,18 +810,45 @@ void TelepresenceProgram::BuildSettings() {
             nullptr, noop, noop,
             [this]() {
                 stateStorage_->SaveAppState(*appState_);
-                init_scene(appState_->streamingConfig.resolution.getWidth(),
-                           appState_->streamingConfig.resolution.getHeight(), true);
-                gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
+                const StreamingConfig &cfg = appState_->streamingConfig;
 
-                int updateResult = restClient_->UpdateStreamingConfig(appState_->streamingConfig);
+                // Decide whether this change can ride on the live pipeline or
+                // needs a full teardown + rebuild. This MUST agree with the
+                // robot driver's CanUpdateDynamically(): if the two ends
+                // disagree, the headset decoder jumps into a mid-GOP stream and
+                // the OES->2D blit FBO is left at the old resolution -> black
+                // screen / GL 0x506. See classifyStreamConfigChange().
+                const StreamConfigChange change = lastAppliedConfig_
+                    ? classifyStreamConfigChange(*lastAppliedConfig_, cfg)
+                    : StreamConfigChange::Structural;  // no baseline yet -> rebuild
+
+                switch (change) {
+                    case StreamConfigChange::Structural:
+                        LOG_INFO("Apply: structural change -> rebuilding decode pipeline + GL render targets");
+                        init_scene(cfg.resolution.getWidth(), cfg.resolution.getHeight(), true);
+                        gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, cfg);
+                        break;
+                    case StreamConfigChange::LiveOnly:
+                        LOG_INFO("Apply: live-only change (bitrate/quality) -> no rebuild, keeping pipeline");
+                        break;
+                    case StreamConfigChange::None:
+                        LOG_INFO("Apply: no streaming-config change -> nothing to rebuild");
+                        break;
+                }
+
+                // Always push the config to the robot. For a live-only change
+                // it updates the encoder in place; for a structural change it
+                // rebuilds its pipeline and emits a fresh keyframe so the
+                // freshly-rebuilt headset decoder re-syncs cleanly.
+                int updateResult = restClient_->UpdateStreamingConfig(cfg);
                 if (updateResult != 0) {
                     appState_->connectionState.cameraServer = ConnectionStatus::Failed;
                     appState_->cameraServerStatus = "Update Failed";
-                    LOG_ERROR("HandleControllers: Failed to update streaming config - camera server not responding");
+                    LOG_ERROR("Apply: failed to update streaming config - camera server not responding");
                 } else {
                     appState_->connectionState.cameraServer = ConnectionStatus::Connected;
                     appState_->cameraServerStatus = "Connected";
+                    lastAppliedConfig_ = cfg;  // remember only what the robot acknowledged
                 }
             }
         },

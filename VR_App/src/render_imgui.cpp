@@ -190,7 +190,7 @@ static void render_settings_gui(const std::shared_ptr<AppState> &appState,
             uint16_t displayMs = snapshot.presentation / 1000;
 
             ImGui::Text(
-                    "camera: %u vidConv: %u enc: %u\nrtpPay: %u udpStream: %u jbHold: %u\nrtpDepay: %udec: %u queue: %u display: %u",
+                    "camera: %u vidConv: %u enc: %u\nrtpPay: %u udpStream: %u jbHold: %u\nrtpDepay: %u dec: %u queue: %u display: %u",
                     cameraMs, vidConvMs, encMs, rtpPayMs, udpStreamMs, jbHoldMs, rtpDepayMs,
                     decMs, queueMs, displayMs);
             ImGui::Text("In Total: %u: \n", cameraMs + vidConvMs + encMs + rtpPayMs + udpStreamMs +

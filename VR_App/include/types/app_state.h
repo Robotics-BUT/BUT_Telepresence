@@ -48,6 +48,45 @@ struct StreamingConfig {
     }
 };
 
+/**
+ * Classification of a streaming-config change.
+ * - None:       nothing relevant changed; no action needed.
+ * - LiveOnly:   only bitrate / encoding quality changed. The robot updates the
+ *               encoder in place and the headset keeps decoding the same stream,
+ *               so neither side tears anything down (fast, no glitch).
+ * - Structural: resolution, codec, video mode, fps, ip, or ports changed. Both
+ *               ends must rebuild: the robot re-launches its GStreamer pipeline
+ *               (fresh SPS/keyframe at the new format) and the headset rebuilds
+ *               its decode pipeline + GL render targets.
+ *
+ * This MUST stay in lockstep with the robot driver's CanUpdateDynamically()
+ * (streaming_driver/main.cpp). If one end rebuilds while the other live-updates,
+ * the headset decoder jumps into a mid-GOP stream and the OES->2D blit FBO is
+ * left sized for the old resolution -- the black-screen /
+ * GL_INVALID_FRAMEBUFFER_OPERATION (0x506) failure mode.
+ */
+enum class StreamConfigChange { None, LiveOnly, Structural };
+
+inline StreamConfigChange classifyStreamConfigChange(const StreamingConfig& a,
+                                                     const StreamingConfig& b) {
+    const bool structural =
+        a.headset_ip != b.headset_ip ||
+        a.jetson_ip  != b.jetson_ip ||
+        a.portLeft   != b.portLeft ||
+        a.portRight  != b.portRight ||
+        a.codec      != b.codec ||
+        a.resolution.getWidth()  != b.resolution.getWidth() ||
+        a.resolution.getHeight() != b.resolution.getHeight() ||
+        a.videoMode  != b.videoMode ||
+        a.fps        != b.fps;
+    if (structural) return StreamConfigChange::Structural;
+
+    const bool live =
+        a.bitrate != b.bitrate ||
+        a.encodingQuality != b.encodingQuality;
+    return live ? StreamConfigChange::LiveOnly : StreamConfigChange::None;
+}
+
 // =============================================================================
 // System Information
 // =============================================================================

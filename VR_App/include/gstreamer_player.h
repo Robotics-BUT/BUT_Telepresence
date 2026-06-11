@@ -125,7 +125,7 @@ private:
         " ! identity name=postjb_ident"
         " ! rtph264depay ! identity name=rtpdepay_ident"
         " ! h264parse config-interval=-1 ! queue"
-        " ! video/x-h264, stream-format=byte-stream, alignment=au, parsed=true"
+        " ! capsfilter name=dec_capsfilter"
         " ! amcviddec-omxqcomvideodecoderavc name=dec"
         // leaky=downstream max-size-buffers=1: drop older decoded frames so the
         // renderer always sees the freshest frame, never a stale backlog.
@@ -142,7 +142,7 @@ private:
         " ! identity name=postjb_ident"
         " ! rtph265depay ! identity name=rtpdepay_ident"
         " ! h265parse config-interval=-1 ! queue"
-        " ! video/x-h265, width=1920, height=1080, framerate=60/1, stream-format=byte-stream, alignment=au, parsed=true"
+        " ! capsfilter name=dec_capsfilter"
         " ! amcviddec-omxqcomvideodecoderhevc name=dec"
         // leaky=downstream max-size-buffers=1: drop older decoded frames so the
         // renderer always sees the freshest frame, never a stale backlog.

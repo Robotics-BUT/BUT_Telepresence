@@ -239,7 +239,7 @@ static void oesBlitOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
     glViewport(0, 0, job->width, job->height);
     g_oesBlitter.blit(job->oesTex);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glFlush();
+    glFinish();
 
     job->success = true;
 }
@@ -396,6 +396,17 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
     if (config.codec != Codec::JPEG) {
         dec = getElementRequired(pipeline, "dec", pipelineName);
 
+        GstElement *dec_capsfilter = getElementOptional(pipeline, "dec_capsfilter");
+        if (dec_capsfilter) {
+            GstCaps *decCaps = buildDecoderSrcCaps(config.codec,
+                                                   config.resolution.getWidth(),
+                                                   config.resolution.getHeight(),
+                                                   config.fps);
+            g_object_set(dec_capsfilter, "caps", decCaps, NULL);
+            gst_caps_unref(decCaps);
+            gst_object_unref(dec_capsfilter);
+        }
+
         glsink = getElementRequired(pipeline, "glsink", pipelineName);
         gst_element_set_context(glsink, gContext_);
 
@@ -482,18 +493,20 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         return;
     }
 
-    // 1. Stop data flow by setting pipelines to NULL (synchronous).
-    //    This stops streaming threads and flushes MediaCodec, preventing
-    //    new-sample / identity handoff callbacks from firing during teardown.
-    //    Do NOT send EOS — it triggers an async MediaCodec flush that races
-    //    with the NULL transition on live pipelines.
     if (pipelineLeft_) {
         LOG_INFO("Setting left pipeline to NULL");
         gst_element_set_state(pipelineLeft_, GST_STATE_NULL);
+        gst_element_get_state(pipelineLeft_, nullptr, nullptr, 5 * GST_SECOND);
     }
     if (pipelineRight_) {
         LOG_INFO("Setting right pipeline to NULL");
         gst_element_set_state(pipelineRight_, GST_STATE_NULL);
+        gst_element_get_state(pipelineRight_, nullptr, nullptr, 5 * GST_SECOND);
+    }
+    // Give the HW decoder a moment to fully release the MediaCodec instance and
+    // its output surface before the next decoder is created.
+    if (pipelineLeft_ || pipelineRight_) {
+        g_usleep(200 * 1000);  // 200 ms
     }
 
     // 2. Stop the GLib main loop — no more bus callbacks can be generated
@@ -550,6 +563,13 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     camPair_->first.stats = new CameraStats();
     camPair_->second.stats = new CameraStats();
 
+    camPair_->first.frameWidth = config.resolution.getWidth();
+    camPair_->first.frameHeight = config.resolution.getHeight();
+    camPair_->second.frameWidth = config.resolution.getWidth();
+    camPair_->second.frameHeight = config.resolution.getHeight();
+    camPair_->first.memorySize = camPair_->first.frameWidth * camPair_->first.frameHeight * 3;
+    camPair_->second.memorySize = camPair_->second.frameWidth * camPair_->second.frameHeight * 3;
+
     auto *emptyFrameLeft = new unsigned char[camPair_->first.memorySize];
     memset(emptyFrameLeft, 0, camPair_->first.memorySize);
     camPair_->first.dataHandle = (void *) emptyFrameLeft;
@@ -558,12 +578,18 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     memset(emptyFrameRight, 0, camPair_->second.memorySize);
     camPair_->second.dataHandle = (void *) emptyFrameRight;
 
-    camPair_->first.frameWidth = config.resolution.getWidth();
-    camPair_->first.frameHeight = config.resolution.getHeight();
-    camPair_->second.frameWidth = config.resolution.getWidth();
-    camPair_->second.frameHeight = config.resolution.getHeight();
-    camPair_->first.memorySize = camPair_->first.frameWidth * camPair_->first.frameHeight * 3;
-    camPair_->second.memorySize = camPair_->second.frameWidth * camPair_->second.frameHeight * 3;
+    camPair_->first.hwBackingTex = 0;
+    camPair_->first.hwBackingFBO = 0;
+    camPair_->first.hwBackingWidth = 0;
+    camPair_->first.hwBackingHeight = 0;
+    camPair_->first.glTexture = 0;
+    camPair_->first.hasGlTexture = false;
+    camPair_->second.hwBackingTex = 0;
+    camPair_->second.hwBackingFBO = 0;
+    camPair_->second.hwBackingWidth = 0;
+    camPair_->second.hwBackingHeight = 0;
+    camPair_->second.glTexture = 0;
+    camPair_->second.hasGlTexture = false;
 
     // Determine if we need one or two decode pipelines
     bool singlePipeline = (config.videoMode == VideoMode::Mono || config.videoMode == VideoMode::Panoramic);
@@ -772,7 +798,17 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
         }
 
         OesBlitJob job{&frame, tex_id, newW, newH, false};
-        gst_gl_context_thread_add(gl_ctx, oesBlitOnGstGlThread, &job);
+        {
+            std::lock_guard<std::mutex> lk(frame.frameMutex);
+            gst_gl_context_thread_add(gl_ctx, oesBlitOnGstGlThread, &job);
+            if (job.success) {
+                frame.glTexture    = frame.hwBackingTex;
+                frame.glTarget     = GL_TEXTURE_2D;
+                frame.hasGlTexture = true;
+                frame.frameWidth   = newW;
+                frame.frameHeight  = newH;
+            }
+        }
 
         gst_video_frame_unmap(&vframe);
         gst_sample_unref(sample);
@@ -780,15 +816,6 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
         if (!job.success) {
             LOG_ERROR("GSTREAMER: OES->2D blit failed");
             return GST_FLOW_ERROR;
-        }
-
-        {
-            std::lock_guard<std::mutex> lk(frame.frameMutex);
-            frame.glTexture    = frame.hwBackingTex;
-            frame.glTarget     = GL_TEXTURE_2D;
-            frame.hasGlTexture = true;
-            frame.frameWidth   = newW;
-            frame.frameHeight  = newH;
         }
 
         return GST_FLOW_OK;
@@ -1006,12 +1033,15 @@ GstCaps *GstreamerPlayer::buildDecoderSrcCaps(Codec codec, int width, int height
             media_type,
             "width", G_TYPE_INT, width,
             "height", G_TYPE_INT, height,
-            "framerate", GST_TYPE_FRACTION, fps, 1,
             "stream-format", G_TYPE_STRING, "byte-stream",
             "alignment", G_TYPE_STRING, "au",
             "parsed", G_TYPE_BOOLEAN, TRUE,
             nullptr
     );
+
+    if (codec == Codec::H265) {
+        gst_caps_set_simple(caps, "framerate", GST_TYPE_FRACTION, fps, 1, nullptr);
+    }
 
     return caps;
 }
