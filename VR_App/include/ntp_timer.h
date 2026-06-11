@@ -21,10 +21,21 @@ struct Sample {
     uint64_t diff;    /* difference between local and server transmit time */
 };
 
+/** Outcome of a single sample attempt — used by SyncWithServer for diagnostics. */
+enum class SampleOutcome {
+    Accepted,
+    RttRejected,   /* response arrived but RTT exceeded threshold */
+    Failed,        /* socket/recv/resolve/exception path */
+};
+
 class NtpTimer {
 public:
     explicit NtpTimer(const std::string& ntpServerAddress,
                       const std::string& fallbackServerAddress = "pool.ntp.org");
+
+    /** Stop the io_context and join the sync thread. Must run before the
+     *  embedded std::thread is destroyed; otherwise std::terminate() fires. */
+    ~NtpTimer();
 
     /** Start the background sync loop (runs on its own io_context thread). */
     void StartAutoSync();
@@ -43,10 +54,15 @@ public:
     [[nodiscard]] bool IsSyncHealthy() const { return syncHealthy_; }
     [[nodiscard]] int GetConsecutiveFailures() const { return consecutiveSyncFailures_; }
 
+    /** True if no successful sample has been accepted within STALE_THRESHOLD_US. */
+    [[nodiscard]] bool IsSyncStale() const {
+        return hasInitialOffset_ && GetTimeSinceLastSyncUs() > STALE_THRESHOLD_US;
+    }
+
 private:
     void SyncWithServer(boost::asio::io_context& io);
 
-    std::optional<Sample> GetOneNtpSample(boost::asio::io_context& io);
+    std::optional<Sample> GetOneNtpSample(boost::asio::io_context& io, SampleOutcome& outcome);
 
     static uint64_t GetCurrentTimeUsNonAdjusted();
 
@@ -66,6 +82,7 @@ private:
     static constexpr uint32_t NTP_TIMESTAMP_DELTA = 2208988800U;  /* seconds between 1900 and 1970 */
     static constexpr double alpha = 0.1;              /* EMA smoothing factor */
     static constexpr int FALLBACK_THRESHOLD = 5;      /* failures before switching to fallback server */
+    static constexpr uint64_t STALE_THRESHOLD_US = 5'000'000;  /* 5 s without a successful sample → stale */
 
     boost::asio::io_context io_;
     std::unique_ptr<boost::asio::steady_timer> timer_;

@@ -101,7 +101,11 @@ void TelepresenceProgram::UpdateFrame() {
 
     /* Update NTP sync status for HUD display */
     if (ntpTimer_) {
-        if (ntpTimer_->IsSyncHealthy()) {
+        if (ntpTimer_->IsSyncStale()) {
+            appState_->connectionState.ntpSync = ConnectionStatus::Failed;
+            appState_->ntpSyncStatus = "Stale (" +
+                std::to_string(ntpTimer_->GetTimeSinceLastSyncUs() / 1'000'000) + " s)";
+        } else if (ntpTimer_->IsSyncHealthy()) {
             appState_->connectionState.ntpSync = ConnectionStatus::Connected;
             appState_->ntpSyncStatus = "Synced";
         } else if (ntpTimer_->GetConsecutiveFailures() > 0) {

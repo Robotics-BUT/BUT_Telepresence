@@ -23,31 +23,55 @@ NtpTimer::NtpTimer(const std::string &ntpServerAddress, const std::string &fallb
              ntpServerAddress_.c_str(), fallbackServerAddress_.c_str());
 };
 
+NtpTimer::~NtpTimer() {
+    boost::system::error_code ec;
+    if (timer_) timer_->cancel(ec);
+    io_.stop();
+    if (ioThread_.joinable()) ioThread_.join();
+}
+
 void NtpTimer::StartAutoSync() {
     timer_ = std::make_unique<boost::asio::steady_timer>(io_);
+
     auto syncLoop = std::make_shared<std::function<void()>>();
     *syncLoop = [this, syncLoop]() {
-        SyncWithServer(io_);
-        timer_->expires_after(std::chrono::seconds(2));
-        auto handler = [this, syncLoop](const boost::system::error_code &ec) {
-            try {
-                if (!ec) {
-                    (*syncLoop)();
-                }
-            } catch (const std::exception &e) {
-                LOG_ERROR("NtpTimer: Exception in timer callback: %s", e.what());
-            }
-        };
-        timer_->async_wait(handler);
+        try {
+            SyncWithServer(io_);
+        } catch (const std::exception &e) {
+            LOG_ERROR("NtpTimer: SyncWithServer threw: %s", e.what());
+        } catch (...) {
+            LOG_ERROR("NtpTimer: SyncWithServer threw unknown exception");
+        }
+
+        // Always re-arm — a broken sync attempt must not stop the loop.
+        try {
+            timer_->expires_after(std::chrono::seconds(2));
+            timer_->async_wait([syncLoop](const boost::system::error_code &ec) {
+                if (!ec) (*syncLoop)();
+            });
+        } catch (const std::exception &e) {
+            LOG_ERROR("NtpTimer: timer re-arm failed: %s. Loop will end.", e.what());
+        }
     };
     // Post the first sync to io_context so StartAutoSync() returns immediately.
-    // Running it synchronously would block the caller for seconds/minutes
-    // when the primary NTP server is unreachable (DNS resolve has no timeout).
     boost::asio::post(io_, [syncLoop]() { (*syncLoop)(); });
 
-    // Start io_context in background
+    // Run the io_context in a background thread. Use a work_guard so run() does
+    // not return between async waits, and wrap in a try-loop so a single bad
+    // handler can't kill the sync thread.
     ioThread_ = std::thread([this]() {
-        io_.run();
+        auto work_guard = boost::asio::make_work_guard(io_);
+        while (!io_.stopped()) {
+            try {
+                io_.run();
+            } catch (const std::exception &e) {
+                LOG_ERROR("NtpTimer: io_context.run() handler threw: %s. Restarting.", e.what());
+                io_.restart();
+            } catch (...) {
+                LOG_ERROR("NtpTimer: io_context.run() handler threw unknown. Restarting.");
+                io_.restart();
+            }
+        }
     });
 }
 
@@ -56,14 +80,37 @@ void NtpTimer::StartAutoSync() {
  * Switches to the fallback server after FALLBACK_THRESHOLD consecutive failures.
  */
 void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
+    // Heartbeat: one line per cycle so the loop's liveness is visible without
+    // needing DEBUG-level logs to be enabled.
+    LOG_INFO("NtpTimer: cycle start (server='%s', stale_for=%lu ms)",
+             ntpServerAddress_.c_str(),
+             (unsigned long)(GetTimeSinceLastSyncUs() / 1000));
+
     std::vector<Sample> goodSamples;
+    int rttRejected = 0;
+    int failed = 0;
 
     for (int i = 0; i < 3; ++i) {
-        auto result = GetOneNtpSample(io);
+        SampleOutcome outcome;
+        auto result = GetOneNtpSample(io, outcome);
         if (result.has_value()) {
             goodSamples.push_back(result.value());
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        } else if (outcome == SampleOutcome::RttRejected) {
+            ++rttRejected;
+        } else {
+            ++failed;
         }
+    }
+
+    // Per-cycle diagnostic: surface the rejection breakdown so silent-freeze
+    // failure modes (all samples RTT-rejected, no failures incremented, no
+    // fallback engaged) are visible in logcat.
+    if (goodSamples.empty()) {
+        LOG_WARN("NtpTimer: sync cycle yielded no good samples "
+                 "(rttRejected=%d, failed=%d, server='%s', stale_for=%lu ms)",
+                 rttRejected, failed, ntpServerAddress_.c_str(),
+                 (unsigned long)(GetTimeSinceLastSyncUs() / 1000));
     }
 
     // Fall back to public NTP server if primary is unreachable
@@ -112,7 +159,8 @@ void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
  * Returns a Sample with offset and RTT, or nullopt on failure.
  * Rejects samples with RTT > 20ms as unreliable.
  */
-std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
+std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io, SampleOutcome &outcome) {
+    outcome = SampleOutcome::Failed;
     try {
         udp::resolver resolver(io);
         boost::system::error_code ec;
@@ -191,7 +239,12 @@ std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
 
         LOG_DEBUG("NtpTimer: Sample offset=%ld us | RTT=%lu us", offset, (unsigned long)delay);
 
-        if (delay > 20000) return std::nullopt; // reject bad RTTs
+        if (delay > 20000) {
+            outcome = SampleOutcome::RttRejected;
+            LOG_INFO("NtpTimer: sample rejected for high RTT=%lu us (offset=%ld us)",
+                     (unsigned long)delay, offset);
+            return std::nullopt;
+        }
 
         // Successful sync
         if (consecutiveSyncFailures_ > 0) {
@@ -199,6 +252,7 @@ std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io) {
         }
         consecutiveSyncFailures_ = 0;
         syncHealthy_ = true;
+        outcome = SampleOutcome::Accepted;
 
         return Sample{offset, delay, GetCurrentTimeUs() - T3};
     } catch (const std::exception &e) {
