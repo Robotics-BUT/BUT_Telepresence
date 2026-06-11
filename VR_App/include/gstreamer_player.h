@@ -24,6 +24,22 @@
 #include <gst/gl/gstglcontext.h>
 #include <gst/gl/egl/gstgldisplay_egl.h>
 
+// ---------------------------------------------------------------------------
+// HW decoder selection
+// 1 = Quest dedicated low-latency AVC/HEVC components (emit frames as soon as
+//     decoded, no output-reorder queue; best for a single live stream).
+// 0 = stock decoders.
+// ---------------------------------------------------------------------------
+#define BUT_USE_LOW_LATENCY_DECODER 1
+
+#if BUT_USE_LOW_LATENCY_DECODER
+#define BUT_H264_DECODER "amcviddec-omxqcomvideodecoderavclowlatency"
+#define BUT_H265_DECODER "amcviddec-omxqcomvideodecoderhevclowlatency"
+#else
+#define BUT_H264_DECODER "amcviddec-omxqcomvideodecoderavc"
+#define BUT_H265_DECODER "amcviddec-omxqcomvideodecoderhevc"
+#endif
+
 
 class GstreamerPlayer {
 public:
@@ -126,7 +142,7 @@ private:
         " ! rtph264depay ! identity name=rtpdepay_ident"
         " ! h264parse config-interval=-1 ! queue"
         " ! capsfilter name=dec_capsfilter"
-        " ! amcviddec-omxqcomvideodecoderavc name=dec"
+        " ! " BUT_H264_DECODER " name=dec"
         // leaky=downstream max-size-buffers=1: drop older decoded frames so the
         // renderer always sees the freshest frame, never a stale backlog.
         " ! identity name=dec_ident ! queue max-size-buffers=1 leaky=downstream"
@@ -143,7 +159,7 @@ private:
         " ! rtph265depay ! identity name=rtpdepay_ident"
         " ! h265parse config-interval=-1 ! queue"
         " ! capsfilter name=dec_capsfilter"
-        " ! amcviddec-omxqcomvideodecoderhevc name=dec"
+        " ! " BUT_H265_DECODER " name=dec"
         // leaky=downstream max-size-buffers=1: drop older decoded frames so the
         // renderer always sees the freshest frame, never a stale backlog.
         " ! identity name=dec_ident ! queue max-size-buffers=1 leaky=downstream"
