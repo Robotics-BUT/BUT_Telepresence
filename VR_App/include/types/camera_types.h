@@ -186,6 +186,12 @@ struct CameraStatsSnapshot {
     // Frame info
     uint64_t frameId{0};
     uint16_t packetsPerFrame{0};
+
+    // Per-stream network health (one stream per eye; right-eye snapshot stays 0 in mono)
+    uint32_t jbNumLost{0};         // rtpjitterbuffer cumulative lost RTP packets
+    uint32_t rtxCount{0};          // rtpjitterbuffer cumulative retransmission requests
+    uint32_t jitterUs{0};          // RFC 3550 interarrival jitter (microseconds)
+    uint32_t actualBitrateBps{0};  // measured received bitrate at udpsrc (bits/sec)
 };
 
 /**
@@ -245,6 +251,20 @@ struct CameraStats {
     // Per-packet dedup: every RTP packet of one frame carries the same RTP
     // timestamp; rtpTsArrivalMap should record only the first packet's arrival.
     std::atomic<uint32_t> lastSeenRtpTs{0};
+
+    // Per-stream network health, published via snapshot(). loss/rtx are read from
+    // the named rtpjitterbuffer "stats"; jitter/bitrate are computed at the udpsrc
+    // probe. The *Win*/jitterPrev* accumulators are internal scratch for those
+    // computations (written only by this stream's probe thread).
+    std::atomic<uint32_t> jbNumLost{0};
+    std::atomic<uint32_t> rtxCount{0};
+    std::atomic<uint32_t> jitterUs{0};
+    std::atomic<uint32_t> actualBitrateBps{0};
+    std::atomic<uint64_t> bitrateWinBytes{0};
+    std::atomic<uint64_t> bitrateWinStartUs{0};
+    std::atomic<uint64_t> jitterPrevArrivalUs{0};
+    std::atomic<uint32_t> jitterPrevRtpTs{0};
+    std::atomic<double>   jitterAccum{0.0};
 
     /**
      * Create a copyable snapshot of current values

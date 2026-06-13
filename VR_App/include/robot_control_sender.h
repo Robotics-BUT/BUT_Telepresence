@@ -34,12 +34,19 @@
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
  *
- * Message Type 0x03 - Debug Info (122 bytes):
+ * Message Type 0x03 - Debug Info (166 bytes):
  *   [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (double)]
  *   [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)]
  *   [udpStream_us (uint64)] [jbHold_us (uint64)] [rtpDepay_us (uint64)] [dec_us (uint64)]
  *   [appsink_us (uint64)] [presentation_us (uint64)]
  *   [ntp_offset_us (int64)] [ntp_synced (uint8)] [time_since_ntp_sync_us (uint64)]
+ *   --- streaming config (shared by both eyes) ---
+ *   [codec (uint8)] [video_mode (uint8)] [res_width (uint16)] [res_height (uint16)]
+ *   [fps_config (uint16)] [bitrate_cfg (uint32)]
+ *   --- per-eye network health (right = 0 in mono) ---
+ *   [left_lost (uint32)] [left_rtx (uint32)] [left_jitter_us (uint32)] [left_bitrate_bps (uint32)]
+ *   [right_lost (uint32)] [right_rtx (uint32)] [right_jitter_us (uint32)] [right_bitrate_bps (uint32)]
+ *   The latency stages above are the left stream (per-eye-symmetric, representative).
  *
  * This simple protocol allows the receiving server to implement its own
  * robot-specific control logic without coupling the VR headset to specific hardware.
@@ -60,8 +67,10 @@ public:
     /** Send robot mobile base velocity commands. */
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);
 
-    /** Send pipeline latency telemetry for debugging and validation. */
-    void sendDebugInfo(const CameraStatsSnapshot &stats, BS::thread_pool<BS::tp::none> &threadPool);
+    /** Send pipeline latency + streaming config + per-eye stream-health telemetry.
+     *  left/right are the two eyes' stats (right is default-zero in mono). */
+    void sendDebugInfo(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
+                       const StreamingConfig &config, BS::thread_pool<BS::tp::none> &threadPool);
 
 private:
     struct AzimuthElevation {
@@ -81,7 +90,8 @@ private:
 
     void sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp);
     void sendRobotControlPacket(float linearX, float linearY, float angular, uint64_t timestamp);
-    void sendDebugInfoPacket(const CameraStatsSnapshot &stats, uint64_t timestamp);
+    void sendDebugInfoPacket(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
+                             const StreamingConfig &config, uint64_t timestamp);
 
     int socket_{-1};
     struct sockaddr_in destAddr_{};

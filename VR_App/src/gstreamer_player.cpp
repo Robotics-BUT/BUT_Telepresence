@@ -891,6 +891,41 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
         stats->lastSeenRtpTs = rtpTs;
     }
     stats->packetsPerFrame += 1;
+
+    // Per-stream network health from RTP packet arrivals (this eye's stats).
+    // Actual received bitrate: bytes over a ~1 s window -> bits/sec.
+    gsize pktBytes = gst_buffer_get_size(buffer);
+    uint64_t winStart = stats->bitrateWinStartUs.load();
+    if (winStart == 0) {
+        stats->bitrateWinStartUs.store(now);
+        stats->bitrateWinBytes.store(pktBytes);
+    } else {
+        uint64_t bytes = stats->bitrateWinBytes.fetch_add(pktBytes) + pktBytes;
+        uint64_t elapsed = now - winStart;
+        if (elapsed >= 1000000ULL) {
+            uint64_t bps = bytes * 8ULL * 1000000ULL / elapsed;
+            if (bps > 0xFFFFFFFFULL) bps = 0xFFFFFFFFULL;
+            stats->actualBitrateBps.store(static_cast<uint32_t>(bps));
+            stats->bitrateWinStartUs.store(now);
+            stats->bitrateWinBytes.store(0);
+        }
+    }
+    // RFC 3550 interarrival jitter (RTP clock-rate 90000): D = arrival-delta minus
+    // rtp-timestamp-delta; J += (|D| - J)/16. Published in microseconds.
+    uint64_t prevArr = stats->jitterPrevArrivalUs.load();
+    if (prevArr != 0) {
+        int64_t dArrUs = static_cast<int64_t>(now - prevArr);
+        int32_t dTicks = static_cast<int32_t>(rtpTs - stats->jitterPrevRtpTs.load());
+        int64_t dRtpUs = static_cast<int64_t>(dTicks) * 1000000LL / 90000LL;
+        double D = static_cast<double>(dArrUs - dRtpUs);
+        if (D < 0) D = -D;
+        double J = stats->jitterAccum.load();
+        J += (D - J) / 16.0;
+        stats->jitterAccum.store(J);
+        stats->jitterUs.store(static_cast<uint32_t>(J < 0.0 ? 0.0 : J));
+    }
+    stats->jitterPrevArrivalUs.store(now);
+    stats->jitterPrevRtpTs.store(rtpTs);
 }
 
 /**
@@ -923,6 +958,24 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
             uint64_t arrived = stats->rtpTsArrivalMap.consume(static_cast<uint64_t>(rtpTs));
             if (arrived != 0 && now > arrived) {
                 stats->jbHold = now - arrived;
+            }
+        }
+        // Read this stream's rtpjitterbuffer loss/rtx counters (cumulative). The
+        // identity's parent is the pipeline; the jitterbuffer is named per pipeline.
+        if (GstObject *parent = identity->object.parent) {
+            GstElement *jb = gst_bin_get_by_name(GST_BIN(parent), "jitterbuffer");
+            if (jb) {
+                GstStructure *jbStats = nullptr;
+                g_object_get(jb, "stats", &jbStats, NULL);
+                if (jbStats) {
+                    guint64 lost = 0, rtx = 0;
+                    gst_structure_get_uint64(jbStats, "num-lost", &lost);
+                    gst_structure_get_uint64(jbStats, "rtx-count", &rtx);
+                    stats->jbNumLost.store(static_cast<uint32_t>(lost));
+                    stats->rtxCount.store(static_cast<uint32_t>(rtx));
+                    gst_structure_free(jbStats);
+                }
+                gst_object_unref(jb);
             }
         }
         // Hand off to the GstBuffer-PTS-keyed chain for the rest of the pipeline,

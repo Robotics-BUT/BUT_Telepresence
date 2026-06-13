@@ -440,15 +440,19 @@ class UDPRelayService:
             data: Debug info data
             client_addr: Client address
 
-        Message format (122 bytes):
+        Message format (166 bytes):
             [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (double)]
             [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)]
             [udpStream_us (uint64)] [jbHold_us (uint64)] [rtpDepay_us (uint64)] [dec_us (uint64)]
             [appsink_us (uint64)] [presentation_us (uint64)]
             [ntp_offset_us (int64)] [ntp_synced (uint8)] [time_since_ntp_sync_us (uint64)]
+            [codec (uint8)] [video_mode (uint8)] [res_width (uint16)] [res_height (uint16)]
+            [fps_config (uint16)] [bitrate_cfg (uint32)]
+            [left_lost/rtx/jitter_us/bitrate_bps (4x uint32)]
+            [right_lost/rtx/jitter_us/bitrate_bps (4x uint32)]
         """
         try:
-            expected_length = 122
+            expected_length = 166
             if len(data) != expected_length:
                 self.logger.warning(f"Invalid debug info packet length: {len(data)} bytes, expected {expected_length}")
                 return
@@ -504,6 +508,38 @@ class UDPRelayService:
             time_since_ntp_sync_us = struct.unpack('<Q', data[offset:offset+8])[0]
             offset += 8
 
+            # Streaming config (shared by both eyes)
+            codec = struct.unpack('<B', data[offset:offset+1])[0]
+            offset += 1
+            video_mode = struct.unpack('<B', data[offset:offset+1])[0]
+            offset += 1
+            res_width = struct.unpack('<H', data[offset:offset+2])[0]
+            offset += 2
+            res_height = struct.unpack('<H', data[offset:offset+2])[0]
+            offset += 2
+            fps_config = struct.unpack('<H', data[offset:offset+2])[0]
+            offset += 2
+            bitrate_cfg = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+
+            # Per-eye network health (right = 0 in mono)
+            left_lost = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            left_rtx = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            left_jitter_us = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            left_bitrate_bps = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            right_lost = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            right_rtx = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            right_jitter_us = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+            right_bitrate_bps = struct.unpack('<I', data[offset:offset+4])[0]
+            offset += 4
+
             # Log the debug information
             self.logger.debug(
                 f"DEBUG INFO from {client_addr[0]}:{client_addr[1]} - "
@@ -544,6 +580,22 @@ class UDPRelayService:
                         .field("ntp_offset_us", int(ntp_offset_us))
                         .field("ntp_synced", int(ntp_synced))
                         .field("time_since_ntp_sync_us", int(time_since_ntp_sync_us))
+                        # Streaming config (shared)
+                        .field("codec", int(codec))
+                        .field("video_mode", int(video_mode))
+                        .field("resolution_width", int(res_width))
+                        .field("resolution_height", int(res_height))
+                        .field("fps_config", int(fps_config))
+                        .field("bitrate_cfg", int(bitrate_cfg))
+                        # Per-eye network health
+                        .field("left_lost", int(left_lost))
+                        .field("left_rtx", int(left_rtx))
+                        .field("left_jitter_us", int(left_jitter_us))
+                        .field("left_bitrate_bps", int(left_bitrate_bps))
+                        .field("right_lost", int(right_lost))
+                        .field("right_rtx", int(right_rtx))
+                        .field("right_jitter_us", int(right_jitter_us))
+                        .field("right_bitrate_bps", int(right_bitrate_bps))
                         .time(timestamp_ns)
                     )
 

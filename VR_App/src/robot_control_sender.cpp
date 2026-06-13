@@ -74,18 +74,20 @@ void RobotControlSender::sendRobotControl(float linearX, float linearY, float an
     });
 }
 
-void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &stats,
+void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &left,
+                                       const CameraStatsSnapshot &right,
+                                       const StreamingConfig &config,
                                        BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
 
-    threadPool.detach_task([this, stats]() {
+    threadPool.detach_task([this, left, right, config]() {
         // Get current timestamp
         uint64_t timestamp = ntpTimer_->GetCurrentTimeUs();
 
         // Send the packet
-        sendDebugInfoPacket(stats, timestamp);
+        sendDebugInfoPacket(left, right, config, timestamp);
     });
 }
 
@@ -170,31 +172,52 @@ void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, fl
     }
 }
 
-void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &stats, uint64_t timestamp) {
+void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &left,
+                                             const CameraStatsSnapshot &right,
+                                             const StreamingConfig &config, uint64_t timestamp) {
     std::vector<uint8_t> packet;
-    packet.reserve(106);
+    packet.reserve(166);
 
     // Message type
     packet.push_back(MSG_DEBUG_INFO);
 
+    // Latency stages: left stream (per-eye-symmetric, representative).
     serializeLittleEndian(packet, timestamp);
-    serializeLittleEndian(packet, stats.frameId);
-    serializeLittleEndian(packet, stats.fps);
+    serializeLittleEndian(packet, left.frameId);
+    serializeLittleEndian(packet, left.fps);
 
-    serializeLittleEndian(packet, stats.camera);
-    serializeLittleEndian(packet, stats.vidConv);
-    serializeLittleEndian(packet, stats.enc);
-    serializeLittleEndian(packet, stats.rtpPay);
-    serializeLittleEndian(packet, stats.udpStream);
-    serializeLittleEndian(packet, stats.jbHold);
-    serializeLittleEndian(packet, stats.rtpDepay);
-    serializeLittleEndian(packet, stats.dec);
-    serializeLittleEndian(packet, stats.appsink);
-    serializeLittleEndian(packet, stats.presentation);
+    serializeLittleEndian(packet, left.camera);
+    serializeLittleEndian(packet, left.vidConv);
+    serializeLittleEndian(packet, left.enc);
+    serializeLittleEndian(packet, left.rtpPay);
+    serializeLittleEndian(packet, left.udpStream);
+    serializeLittleEndian(packet, left.jbHold);
+    serializeLittleEndian(packet, left.rtpDepay);
+    serializeLittleEndian(packet, left.dec);
+    serializeLittleEndian(packet, left.appsink);
+    serializeLittleEndian(packet, left.presentation);
 
     serializeLittleEndian(packet, ntpTimer_->GetSmoothedOffsetUs());
     packet.push_back(ntpTimer_->HasInitialOffset() ? 1 : 0);
     serializeLittleEndian(packet, ntpTimer_->GetTimeSinceLastSyncUs());
+
+    // Streaming config (shared by both eyes).
+    packet.push_back(static_cast<uint8_t>(config.codec));
+    packet.push_back(static_cast<uint8_t>(config.videoMode));
+    serializeLittleEndian(packet, static_cast<uint16_t>(config.resolution.getWidth()));
+    serializeLittleEndian(packet, static_cast<uint16_t>(config.resolution.getHeight()));
+    serializeLittleEndian(packet, static_cast<uint16_t>(config.fps));
+    serializeLittleEndian(packet, static_cast<uint32_t>(config.bitrate));
+
+    // Per-eye network health (right is default-zero in mono).
+    serializeLittleEndian(packet, left.jbNumLost);
+    serializeLittleEndian(packet, left.rtxCount);
+    serializeLittleEndian(packet, left.jitterUs);
+    serializeLittleEndian(packet, left.actualBitrateBps);
+    serializeLittleEndian(packet, right.jbNumLost);
+    serializeLittleEndian(packet, right.rtxCount);
+    serializeLittleEndian(packet, right.jitterUs);
+    serializeLittleEndian(packet, right.actualBitrateBps);
 
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
                           (sockaddr *) &destAddr_, sizeof(destAddr_));

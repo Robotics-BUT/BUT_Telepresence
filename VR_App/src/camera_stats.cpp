@@ -29,7 +29,11 @@ CameraStatsSnapshot CameraStats::snapshot() const {
         rtpPayTimestamp.load(),
         frameReadyTimestamp.load(),
         frameId.load(),
-        packetsPerFrame.load()
+        packetsPerFrame.load(),
+        jbNumLost.load(),
+        rtxCount.load(),
+        jitterUs.load(),
+        actualBitrateBps.load()
     };
 }
 

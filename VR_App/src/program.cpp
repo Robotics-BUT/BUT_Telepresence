@@ -651,10 +651,16 @@ void TelepresenceProgram::SendControllerDatagram() {
                                               threadPool_);
         }
 
-        // Send debug/validation information
+        // Send debug/validation information. Left = the (only) stream in mono;
+        // right is captured too so stereo reports per-eye health (right stays
+        // zero-valued in mono since that pipeline/stats never updates).
         if (appState_->cameraStreamingStates.first.stats) {
-            auto snapshot = appState_->cameraStreamingStates.first.stats->snapshot();
-            robotControlSender_->sendDebugInfo(snapshot, threadPool_);
+            auto leftSnap = appState_->cameraStreamingStates.first.stats->snapshot();
+            CameraStatsSnapshot rightSnap{};
+            if (appState_->cameraStreamingStates.second.stats) {
+                rightSnap = appState_->cameraStreamingStates.second.stats->snapshot();
+            }
+            robotControlSender_->sendDebugInfo(leftSnap, rightSnap, appState_->streamingConfig, threadPool_);
         }
 
         // Update connection status based on health

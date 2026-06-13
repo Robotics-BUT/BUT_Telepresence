@@ -492,6 +492,212 @@
       ],
       "title": "NTP Offset",
       "type": "stat"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] },
+          "unit": "none",
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "codec" },
+            "properties": [
+              { "id": "mappings", "value": [ { "type": "value", "options": {
+                "0": { "text": "JPEG" }, "1": { "text": "VP8" }, "2": { "text": "VP9" },
+                "3": { "text": "H264" }, "4": { "text": "H265" } } } ] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "video_mode" },
+            "properties": [
+              { "id": "mappings", "value": [ { "type": "value", "options": {
+                "0": { "text": "Stereo" }, "1": { "text": "Mono" }, "2": { "text": "Panoramic" } } } ] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "bitrate_cfg" },
+            "properties": [ { "id": "unit", "value": "bps" } ]
+          }
+        ]
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 24 },
+      "id": 8,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": null,
+          "rawSql": "SELECT codec, video_mode, resolution_width, resolution_height, fps_config, bitrate_cfg FROM pipeline_metrics ORDER BY time DESC LIMIT 1",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "title": "Streaming Config (codec / mode / res / fps / bitrate)",
+      "type": "stat"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "Lost packets (cumulative)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 9,
+      "options": {
+        "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, left_lost, right_lost FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
+      ],
+      "title": "RTP Frame Loss per Eye (cumulative)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "RTX requests (cumulative)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 10,
+      "options": {
+        "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, left_rtx, right_rtx FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
+      ],
+      "title": "RTX (Retransmissions) per Eye (cumulative)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "Jitter (µs)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "µs"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "id": 11,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, left_jitter_us, right_jitter_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
+      ],
+      "title": "RTP Interarrival Jitter per Eye",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "Bitrate (bps)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "bps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "id": 12,
+      "options": {
+        "legend": { "calcs": ["mean", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, left_bitrate_bps, right_bitrate_bps, bitrate_cfg FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
+      ],
+      "title": "Actual Bitrate per Eye vs Configured",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",

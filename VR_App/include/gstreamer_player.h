@@ -124,7 +124,7 @@ private:
         " ! capsfilter name=rtp_capsfilter"
             " caps=\"application/x-rtp, media=video, encoding-name=JPEG, payload=26, clock-rate=90000\""
         " ! identity name=udpsrc_ident"
-        " ! rtpjitterbuffer latency=15 do-lost=true drop-on-latency=true do-retransmission=false"
+        " ! rtpjitterbuffer name=jitterbuffer latency=15 do-lost=true drop-on-latency=true do-retransmission=false"
         " ! identity name=postjb_ident"
         " ! rtpjpegdepay ! identity name=rtpdepay_ident"
         " ! jpegparse ! jpegdec ! videoconvert"
@@ -137,14 +137,12 @@ private:
         " ! capsfilter name=rtp_capsfilter"
             " caps=\"application/x-rtp, encoding-name=H264, media=video, clock-rate=90000, payload=96\""
         " ! identity name=udpsrc_ident"
-        " ! rtpjitterbuffer latency=25 do-lost=true drop-on-latency=true do-retransmission=true"
+        " ! rtpjitterbuffer name=jitterbuffer latency=25 do-lost=true drop-on-latency=true do-retransmission=true"
         " ! identity name=postjb_ident"
         " ! rtph264depay ! identity name=rtpdepay_ident"
         " ! h264parse config-interval=-1 ! queue"
         " ! capsfilter name=dec_capsfilter"
         " ! " BUT_H264_DECODER " name=dec"
-        // leaky=downstream max-size-buffers=1: drop older decoded frames so the
-        // renderer always sees the freshest frame, never a stale backlog.
         " ! identity name=dec_ident ! queue max-size-buffers=1 leaky=downstream"
         " ! identity name=queue_ident"
         " ! glsinkbin name=glsink";
@@ -154,14 +152,12 @@ private:
         " ! capsfilter name=rtp_capsfilter"
             " caps=\"application/x-rtp, encoding-name=H265, media=video, clock-rate=90000, payload=96\""
         " ! identity name=udpsrc_ident"
-        " ! rtpjitterbuffer latency=25 do-lost=true drop-on-latency=true do-retransmission=true"
+        " ! rtpjitterbuffer name=jitterbuffer latency=25 do-lost=true drop-on-latency=true do-retransmission=true"
         " ! identity name=postjb_ident"
         " ! rtph265depay ! identity name=rtpdepay_ident"
         " ! h265parse config-interval=-1 ! queue"
         " ! capsfilter name=dec_capsfilter"
         " ! " BUT_H265_DECODER " name=dec"
-        // leaky=downstream max-size-buffers=1: drop older decoded frames so the
-        // renderer always sees the freshest frame, never a stale backlog.
         " ! identity name=dec_ident ! queue max-size-buffers=1 leaky=downstream"
         " ! identity name=queue_ident"
         " ! glsinkbin name=glsink";
