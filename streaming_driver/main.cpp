@@ -22,6 +22,12 @@ StreamingConfig DEFAULT_STREAMING_CONFIG = {
 };
 std::vector<GstElement *> pipelines = {nullptr, nullptr};
 std::mutex pipelines_mutex;
+// Serializes Argus session open/teardown across the two stereo camera threads.
+// Concurrent V4L2 STREAMON/STREAMOFF on both CSI channels trips a tegra_camera
+// kernel module-refcount race (module_put underflow -> fusa VI timeout ->
+// NvBufSurfaceFromFd) that wedges the VI engine and needs a reboot. Only one
+// camera may build or tear down at a time; steady streaming is NOT serialized.
+std::mutex camera_lifecycle_mutex;
 
 std::mutex cfg_mutex;
 StreamingConfig desired_cfg = {};
@@ -75,12 +81,13 @@ void StopPipeline(GstElement *pipeline) {
 
     gst_object_unref(pipeline);
 
-    // 4. Settle. Gives the kernel CSI driver and Argus daemon time to free
-    //    the sensor handle and return frame buffers to their pools before
-    //    the next pipeline (re)builds. 200 ms is empirically enough for
-    //    routine reconfigures; without this, rapid restart loops trip the
-    //    daemon's error-handling races.
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // 4. Settle. Gives the kernel CSI/VI driver and Argus daemon time to free
+    //    the sensor handle and return frame buffers to their pools before the
+    //    next pipeline (re)builds. Raised 200 ms -> 1500 ms after a rebuild-storm
+    //    (2026-06-12) reproduced a tegra_camera module_put refcount underflow
+    //    (kernel VI wedge / NvBufSurfaceFromFd) at ~3 s/rebuild: 200 ms did not
+    //    let the VI channel fully release. Works with camera_lifecycle_mutex.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 }
 
 void SetPipelineToPlayingState(GstElement *pipeline, const std::string &name) {
@@ -105,64 +112,228 @@ void SetPipelineToPlayingState(GstElement *pipeline, const std::string &name) {
     StopPipeline(pipeline);
 }
 
+// Connect the four latency-instrumentation identities' handoff signals.
+// camsrc_ident/vidconv_ident live in the camera front-end; enc_ident/rtppay_ident
+// live in the swappable enc_tail bin (gst_bin_get_by_name recurses into it).
+// The lookup ref is dropped immediately -- the pipeline owns the elements and the
+// signal connection does not need its own ref.
+static void ConnectLatencyHandoffs(GstElement *pipeline) {
+    const char *names[] = {"camsrc_ident", "vidconv_ident", "enc_ident", "rtppay_ident"};
+    for (const char *n : names) {
+        GstElement *e = gst_bin_get_by_name(GST_BIN(pipeline), n);
+        if (e) {
+            g_signal_connect(e, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+            gst_object_unref(e);
+        }
+    }
+}
+
+// Build a per-camera pipeline as a permanent camera front-end + a SWAPPABLE
+// encoder tail + a codec-independent udpsink:
+//     nvarguscamerasrc ... videorate ! rate_capsfilter ! [enc_tail bin] ! udpsink
+// The front-end and udpsink live for the pipeline's whole life; codec changes
+// hot-swap only the enc_tail bin (SwapEncoderTail) and fps changes only retime
+// rate_capsfilter
 GstElement *BuildCameraPipeline(int sensorId, const StreamingConfig &streamingConfig) {
     SetSensorStaticLatencyForFps(streamingConfig.fps);
-    std::ostringstream oss;
-
-    switch (streamingConfig.codec) {
-        case JPEG: oss = GetJpegStreamingPipeline(streamingConfig, sensorId);
-            break;
-        case H264: oss = GetH264StreamingPipeline(streamingConfig, sensorId);
-            break;
-        case H265: oss = GetH265StreamingPipeline(streamingConfig, sensorId);
-            break;
-        case VP8:
-        case VP9:
-        default:
-            throw std::runtime_error("Unsupported codec in this build");
-    }
 
     const std::string side = sensorId == 0 ? "left" : "right";
-    const std::string pipelineStr = oss.str();
+    const int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
+
+    const std::string frontStr = GetCameraFrontEndDescription(streamingConfig, sensorId);
+    const std::string tailStr = GetEncoderTailDescription(streamingConfig);
 
     std::cout << "=== Building Pipeline for Camera " << sensorId << " (" << side << ") ===\n";
-    std::cout << pipelineStr << "\n";
+    std::cout << frontStr << "\n  ! [enc_tail] " << tailStr
+              << "\n  ! udpsink host=" << streamingConfig.ip << " port=" << port << "\n";
     std::cout << "=== End Pipeline ===\n";
 
-    GstElement *pipeline = gst_parse_launch(pipelineStr.c_str(), nullptr);
+    // 1. Camera front-end (kept PLAYING for the pipeline's whole life).
+    GError *err = nullptr;
+    GstElement *pipeline = gst_parse_launch(frontStr.c_str(), &err);
+    if (!pipeline) {
+        const std::string m = err ? err->message : "unknown error";
+        if (err) g_error_free(err);
+        throw std::runtime_error("Front-end parse failed: " + m);
+    }
     gst_element_set_name(pipeline, ("pipeline_" + side).c_str());
 
-    GstElement *camsrc_ident = gst_bin_get_by_name(GST_BIN(pipeline), "camsrc_ident");
-    GstElement *vidconv_ident = gst_bin_get_by_name(GST_BIN(pipeline), "vidconv_ident");
-    GstElement *enc_ident = gst_bin_get_by_name(GST_BIN(pipeline), "enc_ident");
-    GstElement *rtppay_ident = gst_bin_get_by_name(GST_BIN(pipeline), "rtppay_ident");
+    // 2. udpsink (codec-independent) -- created directly so it survives swaps.
+    GstElement *udpsink = gst_element_factory_make("udpsink", "udpsink");
+    if (!udpsink) {
+        gst_object_unref(pipeline);
+        throw std::runtime_error("Failed to create udpsink");
+    }
+    g_object_set(udpsink, "host", streamingConfig.ip.c_str(), "port", port, "sync", FALSE, nullptr);
 
-    g_signal_connect(camsrc_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
-    g_signal_connect(vidconv_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
-    g_signal_connect(enc_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
-    g_signal_connect(rtppay_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+    // 3. Swappable encoder tail as a named bin with ghost pads.
+    err = nullptr;
+    GstElement *encTail = gst_parse_bin_from_description(tailStr.c_str(), TRUE, &err);
+    if (!encTail) {
+        const std::string m = err ? err->message : "unknown error";
+        if (err) g_error_free(err);
+        gst_object_unref(udpsink);
+        gst_object_unref(pipeline);
+        throw std::runtime_error("Encoder-tail parse failed: " + m);
+    }
+    gst_element_set_name(encTail, "enc_tail");
 
+    gst_bin_add_many(GST_BIN(pipeline), encTail, udpsink, nullptr);
+
+    // 4. Link rate_capsfilter -> enc_tail -> udpsink.
+    GstElement *rateCaps = gst_bin_get_by_name(GST_BIN(pipeline), "rate_capsfilter");
+    const bool linked = rateCaps && gst_element_link_many(rateCaps, encTail, udpsink, nullptr);
+    if (rateCaps) gst_object_unref(rateCaps);
+    if (!linked) {
+        gst_object_unref(pipeline);
+        throw std::runtime_error("Failed to link front-end -> enc_tail -> udpsink");
+    }
+
+    ConnectLatencyHandoffs(pipeline);
     return pipeline;
 }
 
 bool CanUpdateDynamically(const StreamingConfig &oldCfg, const StreamingConfig &newCfg) {
-    // Check if only quality/bitrate changed (can be updated without rebuild)
-    bool structuralChange = (
-        oldCfg.horizontalResolution != newCfg.horizontalResolution ||
-        oldCfg.verticalResolution != newCfg.verticalResolution ||
-        oldCfg.fps != newCfg.fps ||
-        oldCfg.codec != newCfg.codec ||
-        oldCfg.videoMode != newCfg.videoMode ||
+    // Always structural: videoMode changes the active camera count; ip/ports change
+    // the endpoint. (Resolution is NO LONGER structural for stereo/mono -- the
+    // camera captures at a fixed resolution is a downstream nvvidconv scale.)
+    if (oldCfg.videoMode != newCfg.videoMode ||
         oldCfg.ip != newCfg.ip ||
         oldCfg.portLeft != newCfg.portLeft ||
-        oldCfg.portRight != newCfg.portRight
-    );
+        oldCfg.portRight != newCfg.portRight) {
+        return false;
+    }
 
-    // Can update dynamically if no structural changes
-    return !structuralChange;
+    // EXPERIMENTAL: Panoramic is not yet decoupled (inline encoder, per-slot caps), so codec, fps
+    // and resolution there still require a rebuild.
+    if (newCfg.videoMode == VideoMode::PANORAMIC &&
+        (oldCfg.codec != newCfg.codec || oldCfg.fps != newCfg.fps ||
+         oldCfg.horizontalResolution != newCfg.horizontalResolution ||
+         oldCfg.verticalResolution != newCfg.verticalResolution)) {
+        return false;
+    }
+
+    // Stereo/mono: codec + resolution -> encoder-tail swap (+ scale caps); fps ->
+    // rate_capsfilter; bitrate/quality -> live property. Camera never torn down.
+    return true;
 }
 
-bool UpdatePipelineProperties(GstElement *pipeline, const StreamingConfig &newCfg, int sensorId) {
+// ForceKeyFrame is defined further down (shared with the panoramic path).
+void ForceKeyFrame(GstElement *pipeline);
+
+struct EncSwapContext {
+    GstElement *pipeline;
+    StreamingConfig cfg;
+};
+
+// Pad-probe (BLOCK_DOWNSTREAM on rate_capsfilter:src) that hot-swaps the encoder
+// tail for a new codec WITHOUT touching nvarguscamerasrc. Mirrors SwapCameraProbe:
+// while the pad is blocked, detach + NULL + remove the old enc_tail bin, build the
+// new codec's tail, relink rate_capsfilter -> enc_tail -> udpsink, sync to PLAYING,
+// reissue a keyframe, then remove the probe to resume flow. The camera front-end
+// never stops.
+GstPadProbeReturn SwapEncoderProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
+    (void) pad;
+    (void) info;
+    auto *ctx = static_cast<EncSwapContext *>(user_data);
+
+    // Resolution rides the same swap: re-assert the downstream scale caps so
+    // nvvidconv rescales to the new delivered resolution. The block holds the new
+    // caps event at rate_capsfilter:src until the fresh encoder (rebuilt below) is
+    // linked, so it negotiates the new resolution cleanly. Codec-only changes just
+    // re-set the same caps (harmless). The camera capture stays fixed at pre-defined resolution.
+    {
+        GstElement *scaleCaps = gst_bin_get_by_name(GST_BIN(ctx->pipeline), "scale_capsfilter");
+        if (scaleCaps) {
+            const std::string s = "video/x-raw(memory:NVMM),width=(int)" +
+                std::to_string(ctx->cfg.horizontalResolution) + ",height=(int)" +
+                std::to_string(ctx->cfg.verticalResolution);
+            GstCaps *c = gst_caps_from_string(s.c_str());
+            g_object_set(scaleCaps, "caps", c, nullptr);
+            gst_caps_unref(c);
+            gst_object_unref(scaleCaps);
+        }
+    }
+
+    GstElement *oldTail = gst_bin_get_by_name(GST_BIN(ctx->pipeline), "enc_tail");
+    GstElement *udpsink = gst_bin_get_by_name(GST_BIN(ctx->pipeline), "udpsink");
+    GstElement *rateCaps = gst_bin_get_by_name(GST_BIN(ctx->pipeline), "rate_capsfilter");
+
+    if (oldTail && udpsink && rateCaps) {
+        gst_element_set_state(oldTail, GST_STATE_NULL);
+        gst_element_unlink(rateCaps, oldTail);
+        gst_element_unlink(oldTail, udpsink);
+        gst_bin_remove(GST_BIN(ctx->pipeline), oldTail);  // drops the pipeline's ref
+
+        GError *err = nullptr;
+        const std::string tailStr = GetEncoderTailDescription(ctx->cfg);
+        GstElement *newTail = gst_parse_bin_from_description(tailStr.c_str(), TRUE, &err);
+        if (!newTail) {
+            std::cerr << "Encoder-tail swap: build failed: " << (err ? err->message : "unknown") << "\n";
+            if (err) g_error_free(err);
+        } else {
+            gst_element_set_name(newTail, "enc_tail");
+            gst_bin_add(GST_BIN(ctx->pipeline), newTail);
+
+            // Re-arm the latency handoffs on the fresh enc_ident / rtppay_ident.
+            GstElement *enc_ident = gst_bin_get_by_name(GST_BIN(newTail), "enc_ident");
+            GstElement *rtppay_ident = gst_bin_get_by_name(GST_BIN(newTail), "rtppay_ident");
+            if (enc_ident) {
+                g_signal_connect(enc_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+                gst_object_unref(enc_ident);
+            }
+            if (rtppay_ident) {
+                g_signal_connect(rtppay_ident, "handoff", G_CALLBACK(OnIdentityHandoffCameraStreaming), nullptr);
+                gst_object_unref(rtppay_ident);
+            }
+
+            if (!gst_element_link_many(rateCaps, newTail, udpsink, nullptr)) {
+                std::cerr << "Encoder-tail swap: relink failed\n";
+            }
+            gst_element_sync_state_with_parent(newTail);
+
+            if (ctx->cfg.codec == Codec::H264 || ctx->cfg.codec == Codec::H265) {
+                ForceKeyFrame(ctx->pipeline);
+            }
+            std::cout << "Encoder tail swapped (codec " << ctx->cfg.codec << ", camera kept alive)\n";
+        }
+    } else {
+        std::cerr << "Encoder-tail swap: missing enc_tail/udpsink/rate_capsfilter\n";
+    }
+
+    if (oldTail) gst_object_unref(oldTail);
+    if (udpsink) gst_object_unref(udpsink);
+    if (rateCaps) gst_object_unref(rateCaps);
+
+    delete ctx;
+    return GST_PAD_PROBE_REMOVE;
+}
+
+// Arm the encoder-tail swap probe on rate_capsfilter's src pad. Returns true once
+// the probe is installed (the swap itself runs on the next buffer). On failure the
+// caller falls back to a full rebuild.
+bool SwapEncoderTail(GstElement *pipeline, const StreamingConfig &newCfg) {
+    GstElement *rateCaps = gst_bin_get_by_name(GST_BIN(pipeline), "rate_capsfilter");
+    if (!rateCaps) {
+        std::cerr << "SwapEncoderTail: rate_capsfilter not found\n";
+        return false;
+    }
+    GstPad *srcPad = gst_element_get_static_pad(rateCaps, "src");
+    gst_object_unref(rateCaps);
+    if (!srcPad) {
+        std::cerr << "SwapEncoderTail: rate_capsfilter src pad not found\n";
+        return false;
+    }
+
+    auto *ctx = new EncSwapContext{pipeline, newCfg};
+    gst_pad_add_probe(srcPad, GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM, SwapEncoderProbe, ctx, nullptr);
+    gst_object_unref(srcPad);
+    std::cout << "Encoder-tail swap armed (codec " << newCfg.codec << ")\n";
+    return true;
+}
+
+bool UpdatePipelineProperties(GstElement *pipeline, const StreamingConfig &oldCfg,
+                              const StreamingConfig &newCfg, int sensorId) {
     if (pipeline == nullptr) {
         std::cerr << "Cannot update properties - pipeline is null\n";
         return false;
@@ -170,40 +341,61 @@ bool UpdatePipelineProperties(GstElement *pipeline, const StreamingConfig &newCf
 
     std::cout << "=== Dynamic Property Update for Camera " << sensorId << " ===\n";
 
-    // Find the encoder element by name
-    GstElement *encoder = gst_bin_get_by_name(GST_BIN(pipeline), "encoder");
-    if (encoder == nullptr) {
-        std::cerr << "Failed to find encoder element\n";
-        return false;
+    const bool codecChanged = (oldCfg.codec != newCfg.codec);
+    const bool resChanged = (oldCfg.horizontalResolution != newCfg.horizontalResolution) ||
+                            (oldCfg.verticalResolution != newCfg.verticalResolution);
+
+    // 1. Codec and/or resolution change -> hot-swap the encoder tail. The swap
+    //    probe also re-asserts scale_capsfilter for the new resolution, and the
+    //    fresh encoder negotiates it. The camera front-end stays PLAYING throughout.
+    if (codecChanged || resChanged) {
+        std::cout << "Swapping encoder tail (codec " << oldCfg.codec << "->" << newCfg.codec
+                  << ", res " << oldCfg.horizontalResolution << "x" << oldCfg.verticalResolution
+                  << "->" << newCfg.horizontalResolution << "x" << newCfg.verticalResolution << ")\n";
+        if (!SwapEncoderTail(pipeline, newCfg)) {
+            std::cerr << "Encoder-tail swap could not be armed\n";
+            return false;  // caller falls back to a full rebuild
+        }
     }
 
-    bool success = true;
-
-    switch (newCfg.codec) {
-        case Codec::JPEG:
-            std::cout << "Updating JPEG quality to " << newCfg.encodingQuality << "\n";
-            g_object_set(encoder, "quality", newCfg.encodingQuality, nullptr);
-            break;
-
-        case Codec::H264:
-        case Codec::H265:
-            std::cout << "Updating bitrate to " << newCfg.bitrate << "\n";
-            g_object_set(encoder, "bitrate", newCfg.bitrate, nullptr);
-            break;
-
-        default:
-            std::cerr << "Unsupported codec for dynamic update\n";
-            success = false;
-            break;
+    // 2. FPS change -> retime via rate_capsfilter caps (sensor stays at 60 Hz).
+    if (oldCfg.fps != newCfg.fps) {
+        std::cout << "FPS change " << oldCfg.fps << " -> " << newCfg.fps
+                  << ": updating rate_capsfilter\n";
+        SetSensorStaticLatencyForFps(newCfg.fps);
+        GstElement *rateCaps = gst_bin_get_by_name(GST_BIN(pipeline), "rate_capsfilter");
+        if (rateCaps) {
+            const std::string capsStr = "video/x-raw(memory:NVMM),framerate=(fraction)" +
+                                        std::to_string(newCfg.fps) + "/1";
+            GstCaps *caps = gst_caps_from_string(capsStr.c_str());
+            g_object_set(rateCaps, "caps", caps, nullptr);
+            gst_caps_unref(caps);
+            gst_object_unref(rateCaps);
+        } else {
+            std::cerr << "FPS change: rate_capsfilter not found\n";
+        }
     }
 
-    gst_object_unref(encoder);
-
-    if (success) {
-        std::cout << "=== Dynamic Update Complete ===\n";
+    // 3. Bitrate / quality -> live property on the encoder. Skipped when the tail
+    //    just swapped (codec or resolution): the new tail was built from newCfg.
+    if (!codecChanged && !resChanged) {
+        GstElement *encoder = gst_bin_get_by_name(GST_BIN(pipeline), "encoder");
+        if (encoder) {
+            if (newCfg.codec == Codec::JPEG) {
+                std::cout << "Updating JPEG quality to " << newCfg.encodingQuality << "\n";
+                g_object_set(encoder, "quality", newCfg.encodingQuality, nullptr);
+            } else {
+                std::cout << "Updating bitrate to " << newCfg.bitrate << "\n";
+                g_object_set(encoder, "bitrate", newCfg.bitrate, nullptr);
+            }
+            gst_object_unref(encoder);
+        } else {
+            std::cerr << "Bitrate/quality update: encoder not found\n";
+        }
     }
 
-    return success;
+    std::cout << "=== Dynamic Update Complete ===\n";
+    return true;
 }
 
 void RunCameraStreamingPipelineDynamic(int sensorId) {
@@ -247,13 +439,38 @@ void RunCameraStreamingPipelineDynamic(int sensorId) {
             continue;
         }
 
+        // Build + STREAMON under the lifecycle lock (serialized with the other
+        // camera). The lock wraps ONLY the Argus operations (build, PLAYING, and
+        // any failure teardown) and is released before the backoff sleep and the
+        // streaming loop below, so a failing/retrying camera never holds the lock
+        // during its backoff and starves the other camera.
         GstElement *pipeline = nullptr;
-        try {
-            pipeline = BuildCameraPipeline(sensorId, cfg);
-        } catch (const std::exception &e) {
-            std::cerr << "Build failed: " << e.what() << "\n";
-            consecutive_failures++;
+        {
+            std::lock_guard<std::mutex> lifecycle(camera_lifecycle_mutex);
+            try {
+                pipeline = BuildCameraPipeline(sensorId, cfg);
+            } catch (const std::exception &e) {
+                std::cerr << "Build failed: " << e.what() << "\n";
+                pipeline = nullptr;
+            }
+            if (pipeline) {
+                {
+                    // publish for SignalHandler / debugging
+                    std::lock_guard<std::mutex> lock(pipelines_mutex);
+                    pipelines[sensorId] = pipeline;
+                }
+                if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+                    std::cerr << "Unable to set pipeline PLAYING\n";
+                    StopPipeline(pipeline);
+                    std::lock_guard<std::mutex> lock(pipelines_mutex);
+                    pipelines[sensorId] = nullptr;
+                    pipeline = nullptr;
+                }
+            }
+        }  // lifecycle released BEFORE the backoff sleep below
 
+        if (!pipeline) {
+            consecutive_failures++;
             // Exponential backoff: 200ms, 500ms, 1s, 2s, 5s, then 10s
             int backoff_ms = consecutive_failures < MAX_CONSECUTIVE_FAILURES ?
                             (200 * (1 << (consecutive_failures - 1))) : 10000;
@@ -263,27 +480,7 @@ void RunCameraStreamingPipelineDynamic(int sensorId) {
             continue;
         }
 
-        {
-            // publish for SignalHandler / debugging
-            std::lock_guard<std::mutex> lock(pipelines_mutex);
-            pipelines[sensorId] = pipeline;
-        }
-
-        if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-            std::cerr << "Unable to set pipeline PLAYING\n";
-            StopPipeline(pipeline);
-            consecutive_failures++;
-
-            int backoff_ms = consecutive_failures < MAX_CONSECUTIVE_FAILURES ?
-                            (200 * (1 << (consecutive_failures - 1))) : 10000;
-            std::cerr << "Camera " << sensorId << " failed " << consecutive_failures
-                      << " times, waiting " << backoff_ms << "ms before retry\n";
-            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
-            continue;
-        }
-
-        // Store current config after successful pipeline start
-        // Reset failure counter on success
+        // Store current config after successful pipeline start. Reset failure counter.
         if (consecutive_failures > 0) {
             std::cout << "Camera " << sensorId << " recovered after " << consecutive_failures << " failures\n";
         }
@@ -323,7 +520,7 @@ void RunCameraStreamingPipelineDynamic(int sensorId) {
                 // Check if we can update dynamically (only quality/bitrate changed)
                 if (CanUpdateDynamically(current_configs[sensorId], new_cfg)) {
                     std::cout << "Config change detected - applying dynamic update\n";
-                    if (UpdatePipelineProperties(pipeline, new_cfg, sensorId)) {
+                    if (UpdatePipelineProperties(pipeline, current_configs[sensorId], new_cfg, sensorId)) {
                         // Update successful, store new config
                         current_configs[sensorId] = new_cfg;
                         // NO rebuild needed!
@@ -339,9 +536,12 @@ void RunCameraStreamingPipelineDynamic(int sensorId) {
         }
 
         gst_object_unref(bus);
-        StopPipeline(pipeline);
 
         {
+            // Serialize Argus STREAMOFF/teardown with the other camera thread
+            // (see camera_lifecycle_mutex rationale at the build block above).
+            std::lock_guard<std::mutex> lifecycle(camera_lifecycle_mutex);
+            StopPipeline(pipeline);
             std::lock_guard<std::mutex> lock(pipelines_mutex);
             pipelines[sensorId] = nullptr;
         }
@@ -696,8 +896,12 @@ void RunPanoramicPipeline() {
                     std::cout << "Video mode changed from PANORAMIC, rebuilding\n";
                     rebuild = true;
                 } else if (CanUpdateDynamically(cfg, new_cfg)) {
-                    UpdatePipelineProperties(pipeline, new_cfg, 0);
-                    cfg = new_cfg;
+                    if (UpdatePipelineProperties(pipeline, cfg, new_cfg, 0)) {
+                        cfg = new_cfg;
+                    } else {
+                        std::cout << "Panoramic dynamic update failed, rebuilding\n";
+                        rebuild = true;
+                    }
                 } else {
                     std::cout << "Panoramic config change requires rebuild\n";
                     rebuild = true;
@@ -826,15 +1030,13 @@ void DumpConfig(const StreamingConfig &cfg) {
 }
 
 void SignalHandler(int signum) {
-    std::cout << "Interrupt signal (" << signum << ") received. Will be stopping " << pipelines.size() <<
-            " pipelines!\n";
-
-    std::lock_guard<std::mutex> lock(pipelines_mutex);
-    for (auto pipeline: pipelines) {
-        StopPipeline(pipeline);
-    }
-
-    exit(signum);
+    // Async-signal-safe: ONLY set the stop flag (an atomic store is signal-safe).
+    // The control loop and the camera threads observe stop_requested and tear
+    // down their own pipelines cleanly. Running gst teardown / a mutex / std::cout
+    // here executes in signal context and races the worker threads' StopPipeline,
+    // which deadlocks and hangs the whole process.
+    (void) signum;
+    stop_requested.store(true);
 }
 
 void ControlLoop() {
@@ -884,7 +1086,11 @@ int main(int argc, char *argv[]) {
     int rc = RunCameraStreaming();
 
     stop_requested.store(true);
-    ctrl.join();
+    // ControlLoop may be parked in getline() on a SIGTERM-only stop (e.g.
+    // `systemctl restart`, which does not send the stdin "stop" command), so a
+    // join would block forever. The camera threads have already released Argus
+    // cleanly by the time RunCameraStreaming() returns, so detach and exit.
+    ctrl.detach();
 
     return rc;
 }

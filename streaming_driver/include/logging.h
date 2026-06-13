@@ -169,7 +169,20 @@ inline void AddRtpHeaderMetadataPerFrame(GstBuffer* buffer, PipelineState& state
 
 inline void OnIdentityHandoffCameraStreaming(GstElement* identity, GstBuffer* buffer, gpointer /*data*/) {
     const uint64_t now = GetCurrentUs();
-    const std::string pipelineName = identity->object.parent->name;
+    // Key per-frame state by the TOP-LEVEL pipeline name (pipeline_left /
+    // pipeline_right / pipeline_panoramic), not the immediate parent. Since the
+    // encoder-tail decouple, enc_ident/rtppay_ident live inside the swappable
+    // "enc_tail" bin, so their immediate parent is that bin, not the pipeline.
+    // Walk up to the root so all four identities of one camera resolve to the
+    // same PipelineState (and the two eyes stay distinct). Without this the
+    // rtppay stage reads an empty camsrc/vidconv map, skips embedding, and the
+    // headset sees zeroed robot stages -> udpStream_us balloons to a full epoch
+    // timestamp.
+    GstObject* root = &identity->object;
+    while (root->parent != nullptr) {
+        root = root->parent;
+    }
+    const std::string pipelineName = (root->name != nullptr) ? root->name : "";
     const std::string identityName = identity->object.name;
 
     auto& state = GetState(pipelineName);
