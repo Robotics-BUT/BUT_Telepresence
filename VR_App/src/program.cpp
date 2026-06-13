@@ -218,6 +218,14 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
             imageHandle = &appState_->cameraStreamingStates.first;
         }
 
+        // Stereo convergence (horizontal image translation): shift the two eyes'
+        // image planes horizontally in opposite directions to set convergence/comfort.
+        // Headset-only; only meaningful in stereo (mono/panoramic show one image to
+        // both eyes). 0 = no shift = unchanged behaviour.
+        quad.Pose.position.x = (vm == VideoMode::Stereo)
+            ? (i == 0 ? +0.5f : -0.5f) * appState_->stereoConvergence
+            : 0.0f;
+
         // Measure presentation latency only on the first render after a NEW camera frame.
         // Without this guard, repeated renders of the same frame produce increasing
         // values (the frame ages), and updateHistory() always captures the worst case.
@@ -875,6 +883,12 @@ void TelepresenceProgram::BuildSettings() {
             [this]() { return fmt::format("Headset movement prediction: {} ms", appState_->headMovementPredictionMs); },
             [this]() { if (appState_->headMovementPredictionMs < 100) appState_->headMovementPredictionMs += 1; },
             [this]() { if (appState_->headMovementPredictionMs > 0) appState_->headMovementPredictionMs -= 1; }
+        },
+        {
+            "Stereo convergence", GuiSettingType::Text, "Rendering",
+            [this]() { return fmt::format("Stereo convergence (HIT): {:.3f}", appState_->stereoConvergence); },
+            [this]() { if (appState_->stereoConvergence <  0.5f) appState_->stereoConvergence += 0.01f; },
+            [this]() { if (appState_->stereoConvergence > -0.5f) appState_->stereoConvergence -= 0.01f; }
         },
     };
 }

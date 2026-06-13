@@ -196,6 +196,10 @@ struct AppState {
 
     /* Display settings */
     AspectRatioMode aspectRatioMode{AspectRatioMode::FullFOV};
+    /* Stereo convergence / horizontal image translation (HIT): per-eye horizontal
+     * shift of the camera image plane for stereo comfort. Headset-render only, NOT
+     * sent to the robot. World metres at the image plane; 0 = no shift (default). */
+    float stereoConvergence{0.0f};
 
     /* Performance metrics */
     float appFrameRate{0.0f};       /* measured render FPS */

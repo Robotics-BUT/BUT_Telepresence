@@ -56,6 +56,7 @@ void StateStorage::SaveAppState(const AppState &appState) {
         SaveKeyValuePair(editor, putString, "head_movement_prediction_ms", appState.headMovementPredictionMs);
         SaveKeyValuePair(editor, putString, "head_movement_speed_multiplier", appState.headMovementSpeedMultiplier * 10); // To build around integer formatting
         SaveKeyValuePair(editor, putString, "robot_control_enabled", appState.robotControlEnabled);
+        SaveKeyValuePair(editor, putString, "stereo_convergence", static_cast<int>(appState.stereoConvergence * 1000)); // scaled to survive integer formatting
     }
 
 
@@ -118,6 +119,7 @@ void StateStorage::LoadAppState(AppState& appState) {
         appState.headMovementPredictionMs = std::stoi(LoadValue(sharedPreferences, getString, "head_movement_prediction_ms"));
         appState.headMovementSpeedMultiplier = std::stof(LoadValue(sharedPreferences, getString, "head_movement_speed_multiplier") ) / 10.0f; // To build around integer formatting
         appState.robotControlEnabled = std::stoi(LoadValue(sharedPreferences, getString, "robot_control_enabled"));
+        appState.stereoConvergence = std::stof(LoadValue(sharedPreferences, getString, "stereo_convergence")) / 1000.0f;
 
     } catch(const std::exception& e) {
         // Parse failure: leave appState as the caller's default-constructed state.
