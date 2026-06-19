@@ -83,10 +83,7 @@ void StopPipeline(GstElement *pipeline) {
 
     // 4. Settle. Gives the kernel CSI/VI driver and Argus daemon time to free
     //    the sensor handle and return frame buffers to their pools before the
-    //    next pipeline (re)builds. Raised 200 ms -> 1500 ms after a rebuild-storm
-    //    (2026-06-12) reproduced a tegra_camera module_put refcount underflow
-    //    (kernel VI wedge / NvBufSurfaceFromFd) at ~3 s/rebuild: 200 ms did not
-    //    let the VI channel fully release. Works with camera_lifecycle_mutex.
+    //    next pipeline (re)builds.
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 }
 
@@ -193,19 +190,32 @@ GstElement *BuildCameraPipeline(int sensorId, const StreamingConfig &streamingCo
     return pipeline;
 }
 
-bool CanUpdateDynamically(const StreamingConfig &oldCfg, const StreamingConfig &newCfg) {
-    // Always structural: videoMode changes the active camera count; ip/ports change
-    // the endpoint. (Resolution is NO LONGER structural for stereo/mono -- the
-    // camera captures at a fixed resolution is a downstream nvvidconv scale.)
-    if (oldCfg.videoMode != newCfg.videoMode ||
-        oldCfg.ip != newCfg.ip ||
+bool CanUpdateDynamically(const StreamingConfig &oldCfg, const StreamingConfig &newCfg, int sensorId) {
+    // Always structural: ip/ports change the stream endpoint.
+    if (oldCfg.ip != newCfg.ip ||
         oldCfg.portLeft != newCfg.portLeft ||
         oldCfg.portRight != newCfg.portRight) {
         return false;
     }
 
-    // EXPERIMENTAL: Panoramic is not yet decoupled (inline encoder, per-slot caps), so codec, fps
-    // and resolution there still require a rebuild.
+    // videoMode change.
+    if (oldCfg.videoMode != newCfg.videoMode) {
+        // To/from panoramic is an entirely different pipeline -> structural.
+        if (oldCfg.videoMode == VideoMode::PANORAMIC || newCfg.videoMode == VideoMode::PANORAMIC) {
+            return false;
+        }
+        // mono<->stereo: ONLY sensor 1's participation changes (it streams in stereo,
+        // parks in mono). Sensor 0 streams identically in both modes, so the toggle is
+        // a NO-OP for the left camera -- it must NOT tear down. Restructuring only the
+        // sensor-1 thread decouples the two cameras' fates and eliminates the
+        // dual-teardown race that intermittently black-screened the mono<->stereo
+        // toggle.
+        if (sensorId == 1) return false;  // sensor 1 must park (mono) or build (stereo)
+        // sensorId == 0: fall through -- no rebuild for the left eye on a mono<->stereo toggle.
+    }
+
+    // EXPERIMENTAL: Panoramic is not yet decoupled (inline encoder, per-slot caps), so
+    // codec, fps and resolution there still require a rebuild.
     if (newCfg.videoMode == VideoMode::PANORAMIC &&
         (oldCfg.codec != newCfg.codec || oldCfg.fps != newCfg.fps ||
          oldCfg.horizontalResolution != newCfg.horizontalResolution ||
@@ -518,7 +528,7 @@ void RunCameraStreamingPipelineDynamic(int sensorId) {
                 }
 
                 // Check if we can update dynamically (only quality/bitrate changed)
-                if (CanUpdateDynamically(current_configs[sensorId], new_cfg)) {
+                if (CanUpdateDynamically(current_configs[sensorId], new_cfg, sensorId)) {
                     std::cout << "Config change detected - applying dynamic update\n";
                     if (UpdatePipelineProperties(pipeline, current_configs[sensorId], new_cfg, sensorId)) {
                         // Update successful, store new config
@@ -895,7 +905,7 @@ void RunPanoramicPipeline() {
                 if (new_cfg.videoMode != VideoMode::PANORAMIC) {
                     std::cout << "Video mode changed from PANORAMIC, rebuilding\n";
                     rebuild = true;
-                } else if (CanUpdateDynamically(cfg, new_cfg)) {
+                } else if (CanUpdateDynamically(cfg, new_cfg, 0)) {
                     if (UpdatePipelineProperties(pipeline, cfg, new_cfg, 0)) {
                         cfg = new_cfg;
                     } else {

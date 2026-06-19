@@ -70,22 +70,28 @@ inline std::string GetEncoderTailDescription(const StreamingConfig &cfg) {
     return oss.str();
 }
 
-// Fixed camera capture geometry. The sensor + ISP run at this resolution and rate
-// for the pipeline's whole life and are NEVER reconfigured. The delivered
-// resolution is a downstream nvvidconv scale (scale_capsfilter, changed live) and
-// the delivered framerate a videorate cap (rate_capsfilter, changed live), so
-// neither resolution nor fps triggers a camera STREAMOFF.
-inline constexpr int CAMERA_CAPTURE_WIDTH = 2560;
-inline constexpr int CAMERA_CAPTURE_HEIGHT = 1440;
+// Fixed camera capture geometry: the resolution requested from nvarguscamerasrc. The
+// sensor + ISP run this for the pipeline's whole life and are NEVER reconfigured; the
+// delivered resolution is a downstream nvvidconv scale (scale_capsfilter, live) and the
+// framerate a videorate cap (rate_capsfilter, live), so neither triggers a STREAMOFF.
+// Capturing at native 4K and downscaling lets every resolution change happen live (just
+// retarget scale_capsfilter) with no camera teardown.
+inline constexpr int CAMERA_CAPTURE_WIDTH = 3840;
+inline constexpr int CAMERA_CAPTURE_HEIGHT = 2160;
 
 // Camera front-end -- built once and kept PLAYING for the whole pipeline life.
 // Tearing it down is expensive.
 inline std::string GetCameraFrontEndDescription(const StreamingConfig &cfg, int sensorId) {
     std::ostringstream oss;
     oss << "nvarguscamerasrc aeantibanding=AeAntibandingMode_Off ee-mode=EdgeEnhancement_Off tnr-mode=NoiseReduction_Off saturation=1.2 " << CAMERA_EXPOSURE_LOCK << "sensor-id=" << sensorId
-        << " ! video/x-raw(memory:NVMM),width=(int)" << CAMERA_CAPTURE_WIDTH << ",height=(int)" << CAMERA_CAPTURE_HEIGHT << ",framerate=(fraction)60/1,format=(string)NV12"
+        // Capture framerate = the SENSOR request; 80 matches the native 4K@82.9 mode.
+        // The delivered fps cap (<=80) is the videorate/rate_capsfilter below, NOT here.
+        << " ! video/x-raw(memory:NVMM),width=(int)" << CAMERA_CAPTURE_WIDTH << ",height=(int)" << CAMERA_CAPTURE_HEIGHT << ",framerate=(fraction)80/1,format=(string)NV12"
         << " ! identity name=camsrc_ident"
         << " ! nvvidconv flip-method=vertical-flip"
+        // scale_capsfilter: nvvidconv downscales native 4K -> the delivered resolution.
+        // Retargeted live by SwapEncoderProbe so a resolution change never tears down the
+        // camera. width/height == 4K means passthrough (no scaling).
         << " ! capsfilter name=scale_capsfilter caps=video/x-raw(memory:NVMM),width=(int)" << cfg.horizontalResolution << ",height=(int)" << cfg.verticalResolution
         << " ! identity name=vidconv_ident"
         << " ! videorate drop-only=true"
