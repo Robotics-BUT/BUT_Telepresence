@@ -154,9 +154,10 @@ class TGDrivesTranslator(ServoTranslator):
             self.logger.error("Socket not initialized")
             return None
 
-        # Validate packet length (21 bytes expected)
-        if len(data) != 21:
-            self.logger.warning(f"Invalid packet length: {len(data)} bytes, expected 21")
+        # Validate packet length (25 bytes: type + az + el + speed + timestamp +
+        # prediction_ms). prediction_ms is consumed by the relay, not here.
+        if len(data) != 25:
+            self.logger.warning(f"Invalid packet length: {len(data)} bytes, expected 25")
             return None
 
         # Verify message type

@@ -38,21 +38,21 @@ RobotControlSender::~RobotControlSender() {
     }
 }
 
-void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, float speed,
+void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, float speed, uint32_t predictionMs,
                                       BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
 
-    threadPool.detach_task([this, quatPose, speed]() {
+    threadPool.detach_task([this, quatPose, speed, predictionMs]() {
         // Convert quaternion to azimuth/elevation
         auto azElev = quaternionToAzimuthElevation(quatPose);
 
-        // Get current timestamp
+        // Get current timestamp (NTP-corrected, robot-clock-aligned)
         uint64_t timestamp = ntpTimer_->GetCurrentTimeUs();
 
         // Send the packet
-        sendHeadPosePacket(azElev.azimuth, azElev.elevation, speed, timestamp);
+        sendHeadPosePacket(azElev.azimuth, azElev.elevation, speed, timestamp, predictionMs);
     });
 }
 
@@ -92,9 +92,9 @@ void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &left,
 }
 
 void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed,
-                                            uint64_t timestamp) {
+                                            uint64_t timestamp, uint32_t predictionMs) {
     std::vector<uint8_t> packet;
-    packet.reserve(21);
+    packet.reserve(25);
 
     // Message type
     packet.push_back(MSG_HEAD_POSE);
@@ -110,6 +110,10 @@ void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, floa
 
     // Timestamp (uint64, 8 bytes, little-endian)
     serializeLittleEndian(packet, timestamp);
+
+    // Head-pose prediction horizon in ms (uint32, 4 bytes). The camera-head
+    // forecast interval; the relay logs it alongside the M2M command-path latency.
+    serializeLittleEndian(packet, predictionMs);
 
     // Send UDP packet
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,

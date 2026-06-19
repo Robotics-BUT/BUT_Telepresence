@@ -75,6 +75,10 @@ class UDPRelayService:
         self.influx_buffer: List[Point] = []
         self.influx_buffer_lock = Lock()
         self.influx_batch_thread: Optional[Thread] = None
+        # Control-telemetry write throttles (head-pose + robot-control packets arrive
+        # at the render rate; ~20 Hz is plenty for a latency/command distribution).
+        self._last_control_write_ns: int = 0
+        self._last_robot_write_ns: int = 0
 
     def _init_influxdb(self):
         """Initialize InfluxDB client if telemetry is enabled."""
@@ -358,6 +362,92 @@ class UDPRelayService:
         except (struct.error, Exception) as e:
             self.logger.warning(f"Failed to update camera selection: {e}")
 
+    def _record_control_metrics(self, data: bytes, client_addr: Tuple[str, int]):
+        """
+        Record M2M command-path latency + prediction horizon + the requested head
+        position (azimuth/elevation) to InfluxDB.
+
+        Head pose packet (25 bytes):
+            [0x01][azimuth f][elevation f][speed f][timestamp u64][prediction_ms u32]
+
+        timestamp is the headset's NTP-corrected (robot-clock-aligned) send time, so
+        m2m_command_us = relay_ingest_now - timestamp is the headset-pose-sample ->
+        relay command-path latency: the software/network half of M2M. (Physical servo
+        actuation is mechanics-dependent and characterised separately.) Same clock
+        basis as the video udpStream stage, in reverse. Written to the
+        'control_metrics' measurement, throttled to ~20 Hz to bound InfluxDB load.
+        Recorded independently of the servo_motion gate so it is captured in
+        video-only campaigns too.
+        """
+        if not self.influx_client or len(data) < 25:
+            return
+        try:
+            now_ns = time.time_ns()
+            if now_ns - self._last_control_write_ns < 50_000_000:  # ~20 Hz
+                return
+
+            azimuth_rad = struct.unpack('<f', data[1:5])[0]
+            elevation_rad = struct.unpack('<f', data[5:9])[0]
+            timestamp_us = struct.unpack('<Q', data[13:21])[0]
+            prediction_ms = struct.unpack('<I', data[21:25])[0]
+            m2m_command_us = (now_ns // 1000) - int(timestamp_us)
+
+            # Guard against an unsynced/skewed clock poisoning the series.
+            if m2m_command_us < 0 or m2m_command_us > 5_000_000:
+                return
+
+            self._last_control_write_ns = now_ns
+            point = (
+                Point("control_metrics")
+                .tag("source", client_addr[0])
+                .field("m2m_command_us", int(m2m_command_us))
+                .field("prediction_ms", int(prediction_ms))
+                .field("req_azimuth_deg", float(math.degrees(azimuth_rad)))
+                .field("req_elevation_deg", float(math.degrees(elevation_rad)))
+                .time(now_ns)
+            )
+            with self.influx_buffer_lock:
+                self.influx_buffer.append(point)
+        except struct.error as e:
+            self.logger.debug(f"control metrics parse error: {e}")
+        except Exception as e:
+            self.logger.debug(f"control metrics error: {e}")
+
+    def _record_robot_command(self, data: bytes, client_addr: Tuple[str, int]):
+        """
+        Record the requested mobile-base velocity to InfluxDB (control_metrics).
+
+        Robot control packet (21 bytes):
+            [0x02][linear_x f][linear_y f][angular f][timestamp u64]
+        linear_x/linear_y/angular are the operator's requested base velocity
+        (normalised thumbstick, -1..1). Throttled to ~20 Hz. Written as sparse
+        fields on the shared control_metrics measurement.
+        """
+        if not self.influx_client or len(data) < 13:
+            return
+        try:
+            now_ns = time.time_ns()
+            if now_ns - self._last_robot_write_ns < 50_000_000:  # ~20 Hz
+                return
+            linear_x = struct.unpack('<f', data[1:5])[0]
+            linear_y = struct.unpack('<f', data[5:9])[0]
+            angular = struct.unpack('<f', data[9:13])[0]
+            self._last_robot_write_ns = now_ns
+            point = (
+                Point("control_metrics")
+                .tag("source", client_addr[0])
+                .field("req_linear_x", float(linear_x))
+                .field("req_linear_y", float(linear_y))
+                .field("req_angular", float(angular))
+                .time(now_ns)
+            )
+            with self.influx_buffer_lock:
+                self.influx_buffer.append(point)
+        except struct.error as e:
+            self.logger.debug(f"robot command metrics parse error: {e}")
+        except Exception as e:
+            self.logger.debug(f"robot command metrics error: {e}")
+
     def _forward_to_servo(self, data: bytes, client_addr: Tuple[str, int]):
         """
         Forward message to servo driver via translator.
@@ -366,6 +456,10 @@ class UDPRelayService:
             data: Servo command data
             client_addr: Client address to send response to
         """
+        # Record M2M command-path latency + prediction horizon first, independent of
+        # the servo translator and the servo_motion gate.
+        self._record_control_metrics(data, client_addr)
+
         if not self.servo_translator:
             self.logger.error("Servo translator not initialized")
             return
@@ -402,6 +496,9 @@ class UDPRelayService:
             data: Robot command data from VR client
             client_addr: Client address (not used for robot commands)
         """
+        # Record the requested base velocity (independent of forwarding success).
+        self._record_robot_command(data, client_addr)
+
         if not self.robot_socket:
             self.logger.error("Robot socket not initialized")
             return

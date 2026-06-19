@@ -28,8 +28,10 @@
  *
  * Protocol formats (little-endian):
  *
- * Message Type 0x01 - Head Pose (21 bytes):
- *   [0x01] [azimuth (float)] [elevation (float)] [speed (float)] [timestamp (uint64)]
+ * Message Type 0x01 - Head Pose (25 bytes):
+ *   [0x01] [azimuth (float)] [elevation (float)] [speed (float)] [timestamp (uint64)] [prediction_ms (uint32)]
+ *   timestamp is NTP-corrected (robot-clock-aligned); prediction_ms is the
+ *   head-pose forecast horizon applied to the camera-head command (M2M telemetry).
  *
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
@@ -62,7 +64,7 @@ public:
     [[nodiscard]] bool hasEverSucceeded() const { return successfulSends_ > 0; }
 
     /** Send head pose (quaternion is converted to azimuth/elevation internally). */
-    void sendHeadPose(XrQuaternionf quatPose, float speed, BS::thread_pool<BS::tp::none> &threadPool);
+    void sendHeadPose(XrQuaternionf quatPose, float speed, uint32_t predictionMs, BS::thread_pool<BS::tp::none> &threadPool);
 
     /** Send robot mobile base velocity commands. */
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);
@@ -88,7 +90,7 @@ private:
         }
     }
 
-    void sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp);
+    void sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp, uint32_t predictionMs);
     void sendRobotControlPacket(float linearX, float linearY, float angular, uint64_t timestamp);
     void sendDebugInfoPacket(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
                              const StreamingConfig &config, uint64_t timestamp);
