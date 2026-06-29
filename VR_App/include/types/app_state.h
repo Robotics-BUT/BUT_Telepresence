@@ -60,7 +60,7 @@ struct StreamingConfig {
  *               its decode pipeline + GL render targets.
  *
  * This MUST stay in lockstep with the robot driver's CanUpdateDynamically()
- * (streaming_driver/main.cpp). If one end rebuilds while the other live-updates,
+ * (video_driver/main.cpp). If one end rebuilds while the other live-updates,
  * the headset decoder jumps into a mid-GOP stream and the OES->2D blit FBO is
  * left sized for the old resolution -- the black-screen /
  * GL_INVALID_FRAMEBUFFER_OPERATION (0x506) failure mode.

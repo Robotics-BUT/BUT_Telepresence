@@ -1,5 +1,5 @@
 /**
- * gstreamer_player.h - GStreamer stereo video pipeline management
+ * video_player.h - GStreamer stereo video pipeline management
  *
  * Manages two GStreamer pipelines (left and right eye) for receiving and
  * decoding RTP video streams. Supports three codec paths:
@@ -41,12 +41,12 @@
 #endif
 
 
-class GstreamerPlayer {
+class VideoPlayer {
 public:
 
-    explicit GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer);
+    explicit VideoPlayer(CamPair *camPair, NtpTimer *ntpTimer);
 
-    ~GstreamerPlayer();
+    ~VideoPlayer();
 
     /**
      * (Re)configure and start the stereo pipelines for the given streaming config.

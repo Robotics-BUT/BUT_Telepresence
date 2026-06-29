@@ -1,7 +1,7 @@
 //
 // audio_driver — standalone bidirectional audio bridge for BUT_Telepresence.
 //
-// Completely independent of the video streaming_driver: a separate process so an
+// Completely independent of the video_driver: a separate process so an
 // audio fault can never disturb the video/control paths. Launched + fed config by
 // the camera-server (server/.../default_controller.py) exactly like the streaming
 // driver — a single JSON config line on stdin ({"cmd":"update","config":{...}}),

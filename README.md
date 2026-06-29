@@ -35,7 +35,7 @@ A low-latency standalone VR telepresence system for remote robot control. This s
 BUT_Telepresence/
 ├── VR_App/              # Android VR application (C++/OpenXR)
 ├── robot_controller/    # Head pose & robot control relay (Python)
-├── streaming_driver/    # Camera streaming pipeline (C++/GStreamer)
+├── video_driver/    # Camera streaming pipeline (C++/GStreamer)
 ├── server/              # REST API for video stream control (Python/Flask)
 ├── services/            # systemd unit files
 └── scripts/             # Telemetry visualization utilities
@@ -227,7 +227,7 @@ Once you're certain you have all necessary elements (or you've made the needed c
 ### Build
 
 ```bash
-cd streaming_driver
+cd video_driver
 mkdir build && cd build
 cmake ..
 make
@@ -285,7 +285,7 @@ VR Headset                          Jetson
                        │ azimuth → camera_index (0-5)
                        │ 1-byte UDP to localhost:9100
                        ▼
-                     streaming_driver (sliding window of 3)
+                     video_driver (sliding window of 3)
                        │ If camera in window → instant input-selector switch
                        │ If not → pad probe swap on furthest non-active slot
                        ▼

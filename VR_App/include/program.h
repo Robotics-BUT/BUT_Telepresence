@@ -14,7 +14,7 @@
 #include "util_egl.h"
 #include "BS_thread_pool.hpp"
 #include "robot_control_sender.h"
-#include "gstreamer_player.h"
+#include "video_player.h"
 #include "audio_player.h"
 #include "rest_client.h"
 #include "ntp_timer.h"
@@ -102,7 +102,7 @@ private:
     BS::thread_pool<BS::tp::none> threadPool_{3};           /* async network ops */
 
     /* --- Subsystem modules --- */
-    std::unique_ptr<GstreamerPlayer> gstreamerPlayer_;
+    std::unique_ptr<VideoPlayer> videoPlayer_;
     std::unique_ptr<AudioPlayer> audioPlayer_;
     std::unique_ptr<RestClient> restClient_;
     std::unique_ptr<NtpTimer> ntpTimer_;

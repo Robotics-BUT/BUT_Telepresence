@@ -6,10 +6,10 @@ info:
 servers:
 - url: /
 paths:
-  /api/v1/stream/start:
+  /api/v1/video/start:
     post:
       summary: Start the video streaming with configuration.
-      operationId: api_v1_stream_start_post
+      operationId: api_v1_video_start_post
       requestBody:
         content:
           application/json:
@@ -30,10 +30,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/inline_response_500'
       x-openapi-router-controller: swagger_server.controllers.default_controller
-  /api/v1/stream/stop:
+  /api/v1/video/stop:
     post:
       summary: Stop the video streaming.
-      operationId: api_v1_stream_stop_post
+      operationId: api_v1_video_stop_post
       responses:
         "200":
           description: Streaming stopped successfully.
@@ -48,10 +48,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/inline_response_500_1'
       x-openapi-router-controller: swagger_server.controllers.default_controller
-  /api/v1/stream/update:
+  /api/v1/video/update:
     put:
       summary: Update the stream configuration dynamically.
-      operationId: api_v1_stream_update_put
+      operationId: api_v1_video_update_put
       requestBody:
         content:
           application/json:
@@ -72,10 +72,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/inline_response_500_2'
       x-openapi-router-controller: swagger_server.controllers.default_controller
-  /api/v1/stream/state:
+  /api/v1/video/state:
     get:
       summary: Get the current state of the video streaming.
-      operationId: api_v1_stream_state_get
+      operationId: api_v1_video_state_get
       responses:
         "200":
           description: State retrieved successfully.

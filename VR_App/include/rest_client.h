@@ -6,9 +6,9 @@
  * bitrate, etc.). Uses cpp-httplib for HTTP requests.
  *
  * REST endpoints:
- *   POST /api/v1/stream/start  - start streaming with given config
- *   POST /api/v1/stream/stop   - stop streaming
- *   PUT  /api/v1/stream/update - update streaming parameters on the fly
+ *   POST /api/v1/video/start  - start streaming with given config
+ *   POST /api/v1/video/stop   - stop streaming
+ *   PUT  /api/v1/video/update - update streaming parameters on the fly
  */
 #pragma once
 
@@ -21,10 +21,10 @@ public:
     /** Create client connected to the Jetson IP from config on Config::REST_API_PORT. */
     explicit RestClient(StreamingConfig& config);
 
-    /** POST /api/v1/stream/start - returns 0 on success, -1 on failure. */
+    /** POST /api/v1/video/start - returns 0 on success, -1 on failure. */
     int StartStream();
 
-    /** POST /api/v1/stream/stop - returns 0 on success, -1 on failure. */
+    /** POST /api/v1/video/stop - returns 0 on success, -1 on failure. */
     int StopStream();
 
     /** POST /api/v1/audio/start - start/reconfigure the optional robot audio bridge.
@@ -39,7 +39,7 @@ public:
     /** Return the current local copy of the streaming configuration. */
     StreamingConfig GetStreamingConfig();
 
-    /** PUT /api/v1/stream/update - push new config to server. Returns 0 on success. */
+    /** PUT /api/v1/video/update - push new config to server. Returns 0 on success. */
     int UpdateStreamingConfig(const StreamingConfig& config);
 
 private:
