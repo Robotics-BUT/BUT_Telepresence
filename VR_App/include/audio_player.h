@@ -2,7 +2,7 @@
  * audio_player.h - Optional bidirectional audio for the VR headset.
  *
  * Two independent GStreamer pipelines, completely separate from the video
- * GstreamerPlayer so audio can never disturb the video path:
+ * VideoPlayer so audio can never disturb the video path:
  *   RX (robot mic -> headset speakers): udpsrc -> rtpopusdepay -> opusdec
  *                                       -> volume -> openslessink
  *   TX (headset mic -> robot speaker):  openslessrc -> volume(mute gate)

@@ -18,19 +18,19 @@ from swagger_server.models.stream_update_body import StreamUpdateBody  # noqa: E
 from swagger_server import util
 
 # This object represents the current state and is mutated by the setter endpoints
-stream_state = None
-is_streaming = False
+video_state = None
+is_video_running = False
 # Get absolute path relative to this script's location
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-exec_path = os.path.abspath(os.path.join(_script_dir, "../../../streaming_driver/build/telepresence_streaming_driver"))
-process = None
-streaming_thread = None
+video_exec_path = os.path.abspath(os.path.join(_script_dir, "../../../video_driver/build/telepresence_video_driver"))
+video_process = None
+video_thread = None
 
 # Lock to synchronize access to global state across threads
-state_lock = threading.Lock()
+video_state_lock = threading.Lock()
 
 
-def cfg_dict_from_state(s: dict) -> dict:
+def cfg_dict_from_video_state(s: dict) -> dict:
     # Match the keys to what C++ ConfigFromJson expects
     return {
         "ip": s["ip_address"],
@@ -46,32 +46,33 @@ def cfg_dict_from_state(s: dict) -> dict:
     }
 
 
-def stdout_reader_thread(process):
-    """Background thread that continuously drains stdout to prevent pipe blocking."""
+def stdout_reader_thread(proc):
+    """Background thread that continuously drains stdout to prevent pipe blocking.
+    Shared by both the video and audio subprocesses."""
     try:
-        for line in iter(process.stdout.readline, ""):
+        for line in iter(proc.stdout.readline, ""):
             print(line, end="")
     except Exception as e:
         print(f"Stdout reader error: {e}")
     finally:
-        if process.stdout:
-            process.stdout.close()
+        if proc.stdout:
+            proc.stdout.close()
 
 
-def run_streaming_process():
-    global stream_state, is_streaming, process
+def run_video_process():
+    global video_state, is_video_running, video_process
 
-    with state_lock:
-        if is_streaming and process:
+    with video_state_lock:
+        if is_video_running and video_process:
             print("Stream is already running, reconfiguring")
-            configure_streaming_process()
+            configure_video_process()
             return
 
-        print("Starting streaming process!")
-        is_streaming = True
+        print("Starting video stream!")
+        is_video_running = True
 
-        process = subprocess.Popen(
-            [exec_path],
+        video_process = subprocess.Popen(
+            [video_exec_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -80,65 +81,65 @@ def run_streaming_process():
         )
 
     # Start dedicated thread for reading stdout (prevents pipe blocking)
-    stdout_thread = threading.Thread(target=stdout_reader_thread, args=(process,), daemon=True)
+    stdout_thread = threading.Thread(target=stdout_reader_thread, args=(video_process,), daemon=True)
     stdout_thread.start()
 
     # Send initial config immediately after start
-    configure_streaming_process()
+    configure_video_process()
 
-    # Wait for process to exit (don't block on stdout reading)
-    process.wait()
+    # Wait for video_process to exit (don't block on stdout reading)
+    video_process.wait()
 
-    with state_lock:
-        is_streaming = False
-    print("The streaming process has ended")
+    with video_state_lock:
+        is_video_running = False
+    print("The video stream has ended")
 
 
-def configure_streaming_process():
-    global stream_state, is_streaming, process
+def configure_video_process():
+    global video_state, is_video_running, video_process
 
-    with state_lock:
-        if not is_streaming or process is None or process.stdin is None:
-            print("Cannot configure streaming - streaming is not running")
+    with video_state_lock:
+        if not is_video_running or video_process is None or video_process.stdin is None:
+            print("Cannot configure video - video is not running")
             return False
 
-        msg = {"cmd": "update", "config": cfg_dict_from_state(stream_state)}
+        msg = {"cmd": "update", "config": cfg_dict_from_video_state(video_state)}
 
         try:
-            process.stdin.write(json.dumps(msg) + "\n")
-            process.stdin.flush()
-            print("Configuration sent to streaming process")
+            video_process.stdin.write(json.dumps(msg) + "\n")
+            video_process.stdin.flush()
+            print("Configuration sent to video process")
             return True
         except (BrokenPipeError, IOError, OSError) as e:
             print(f"Failed to send configuration - pipe broken: {e}")
-            is_streaming = False
+            is_video_running = False
             return False
 
 
-def api_v1_stream_start_post(body):
-    global stream_state, is_streaming, streaming_thread
+def api_v1_video_start_post(body):
+    global video_state, is_video_running, video_thread
 
     if not connexion.request.is_json:
         return "Missing body!"
 
-    with state_lock:
-        if is_streaming:
+    with video_state_lock:
+        if is_video_running:
             return {"error": "Stream is already running. Use /update to reconfigure or /stop first."}
 
-        stream_state = connexion.request.get_json()
-        RequiredStreamConfiguration.from_dict(stream_state)
+        video_state = connexion.request.get_json()
+        RequiredStreamConfiguration.from_dict(video_state)
 
-        streaming_thread = threading.Thread(target=run_streaming_process, daemon=True)
-        streaming_thread.start()
-        return stream_state
+        video_thread = threading.Thread(target=run_video_process, daemon=True)
+        video_thread.start()
+        return video_state
 
 
-def api_v1_stream_state_get():  # noqa: E501
-    global stream_state, is_streaming, process
+def api_v1_video_state_get():  # noqa: E501
+    global video_state, is_video_running, video_process
 
-    with state_lock:
+    with video_state_lock:
         # Start from last requested/known config; if none, return defaults that satisfy StreamState shape.
-        if stream_state is None:
+        if video_state is None:
             return {
                 "ip_address": "192.168.1.100",
                 "port_left": 8554,
@@ -152,38 +153,38 @@ def api_v1_stream_state_get():  # noqa: E501
                 "is_streaming": False,
             }
 
-        # If the subprocess died unexpectedly, reflect that in is_streaming
-        alive = (process is not None and process.poll() is None)  # None means still running
+        # If the subprocess died unexpectedly, reflect that in is_video_running
+        alive = (video_process is not None and video_process.poll() is None)  # None means still running
 
-        state = dict(stream_state)  # copy
-        state["is_streaming"] = bool(is_streaming and alive)
+        state = dict(video_state)  # copy
+        state["is_streaming"] = bool(is_video_running and alive)
         return state
 
 
-def api_v1_stream_stop_post():
-    global is_streaming, streaming_thread, process
+def api_v1_video_stop_post():
+    global is_video_running, video_thread, video_process
 
-    with state_lock:
-        if not is_streaming or process is None:
+    with video_state_lock:
+        if not is_video_running or video_process is None:
             return "Stream already stopped!"
 
         try:
-            if process.stdin:
-                process.stdin.write(json.dumps({"cmd": "stop"}) + "\n")
-                process.stdin.flush()
+            if video_process.stdin:
+                video_process.stdin.write(json.dumps({"cmd": "stop"}) + "\n")
+                video_process.stdin.flush()
         except Exception as e:
             print(f"Failed to send stop command: {e}")
 
-        process.terminate()
+        video_process.terminate()
 
     # Join thread outside lock to avoid deadlock
-    if streaming_thread:
-        streaming_thread.join(timeout=2.0)
+    if video_thread:
+        video_thread.join(timeout=2.0)
     return "Stopped"
 
 
-def api_v1_stream_update_put(body):
-    global stream_state, is_streaming, streaming_thread
+def api_v1_video_update_put(body):
+    global video_state, is_video_running, video_thread
 
     if not connexion.request.is_json:
         return "Missing body!"
@@ -199,33 +200,33 @@ def api_v1_stream_update_put(body):
     should_configure = False
     should_start = False
 
-    with state_lock:
+    with video_state_lock:
         # Merge new config with existing state (update only provided fields)
-        if stream_state is None:
-            stream_state = new_config
+        if video_state is None:
+            video_state = new_config
         else:
-            stream_state.update(new_config)
+            video_state.update(new_config)
 
-        if is_streaming:
+        if is_video_running:
             should_configure = True
         else:
             should_start = True
 
-    # Call configure_streaming_process OUTSIDE the lock to avoid deadlock
+    # Call configure_video_process OUTSIDE the lock to avoid deadlock
     if should_configure:
-        configure_streaming_process()
-        return stream_state
+        configure_video_process()
+        return video_state
 
     if should_start:
-        streaming_thread = threading.Thread(target=run_streaming_process, daemon=True)
-        streaming_thread.start()
+        video_thread = threading.Thread(target=run_video_process, daemon=True)
+        video_thread.start()
 
-    return stream_state
+    return video_state
 
 
 # ---------------------------------------------------------------------------
 # Audio bridge — optional, fully independent of the video stream above. Manages
-# the standalone audio_driver subprocess exactly like the streaming driver, but
+# the standalone audio_driver subprocess exactly like the video driver, but
 # with its own state/process/lock so audio can never disturb video.
 # ---------------------------------------------------------------------------
 audio_state = None

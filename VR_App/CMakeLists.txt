@@ -78,7 +78,7 @@ add_library(
         src/program.cpp
         src/render_scene.cpp
         src/gstreamer_android.c
-        src/gstreamer_player.cpp
+        src/video_player.cpp
         src/audio_player.cpp
         src/robot_control_sender.cpp
         src/rest_client.cpp
