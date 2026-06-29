@@ -64,6 +64,45 @@ int RestClient::StopStream() {
     return 0;
 }
 
+int RestClient::StartAudio(bool robotMicToHeadset, bool operatorToSpeaker, bool aecEnabled) {
+    json j = {{"headset_ip",              IpToString(config_.headset_ip)},
+              {"mic_to_headset_port",     Config::AUDIO_RX_PORT},      // headset listens here
+              {"headset_to_speaker_port", Config::AUDIO_TX_PORT},      // robot listens here
+              {"sample_rate",             48000},
+              {"bitrate",                 64000},
+              {"aec_enabled",             aecEnabled},
+              {"mic_enabled",             robotMicToHeadset},
+              {"speaker_enabled",         operatorToSpeaker}};
+    auto client = makeClient();
+    auto res = client->Post("/api/v1/audio/start", j.dump(), "application/json");
+    if (!res) {
+        LOG_ERROR("RestClient: Failed to send audio start request - connection error");
+        return -1;
+    }
+    if (res->status != 200) {
+        LOG_ERROR("RestClient: Audio start request failed with status %d: %s", res->status, res->body.c_str());
+        return -1;
+    }
+    LOG_INFO("RestClient: Audio bridge started (mic->headset=%d, operator->speaker=%d)",
+             robotMicToHeadset, operatorToSpeaker);
+    return 0;
+}
+
+int RestClient::StopAudio() {
+    auto client = makeClient();
+    auto res = client->Post("/api/v1/audio/stop");
+    if (!res) {
+        LOG_ERROR("RestClient: Failed to send audio stop request - connection error");
+        return -1;
+    }
+    if (res->status != 200) {
+        LOG_ERROR("RestClient: Audio stop request failed with status %d: %s", res->status, res->body.c_str());
+        return -1;
+    }
+    LOG_INFO("RestClient: Audio bridge stopped");
+    return 0;
+}
+
 StreamingConfig RestClient::GetStreamingConfig() {
     return config_;
 }

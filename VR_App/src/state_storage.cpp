@@ -57,6 +57,12 @@ void StateStorage::SaveAppState(const AppState &appState) {
         SaveKeyValuePair(editor, putString, "head_movement_speed_multiplier", appState.headMovementSpeedMultiplier * 10); // To build around integer formatting
         SaveKeyValuePair(editor, putString, "robot_control_enabled", appState.robotControlEnabled);
         SaveKeyValuePair(editor, putString, "stereo_convergence", static_cast<int>(appState.stereoConvergence * 1000)); // scaled to survive integer formatting
+
+        SaveKeyValuePair(editor, putString, "audio_robot_enable", appState.audioRobotEnable);
+        SaveKeyValuePair(editor, putString, "audio_mic_enable", appState.audioMicEnable);
+        SaveKeyValuePair(editor, putString, "mic_push_to_talk", appState.micPushToTalk);
+        SaveKeyValuePair(editor, putString, "mic_muted", appState.micMuted);
+        SaveKeyValuePair(editor, putString, "audio_volume", appState.audioVolume);
     }
 
 
@@ -120,6 +126,12 @@ void StateStorage::LoadAppState(AppState& appState) {
         appState.headMovementSpeedMultiplier = std::stof(LoadValue(sharedPreferences, getString, "head_movement_speed_multiplier") ) / 10.0f; // To build around integer formatting
         appState.robotControlEnabled = std::stoi(LoadValue(sharedPreferences, getString, "robot_control_enabled"));
         appState.stereoConvergence = std::stof(LoadValue(sharedPreferences, getString, "stereo_convergence")) / 1000.0f;
+
+        appState.audioRobotEnable = std::stoi(LoadValue(sharedPreferences, getString, "audio_robot_enable"));
+        appState.audioMicEnable = std::stoi(LoadValue(sharedPreferences, getString, "audio_mic_enable"));
+        appState.micPushToTalk = std::stoi(LoadValue(sharedPreferences, getString, "mic_push_to_talk"));
+        appState.micMuted = std::stoi(LoadValue(sharedPreferences, getString, "mic_muted"));
+        appState.audioVolume = std::stoi(LoadValue(sharedPreferences, getString, "audio_volume"));
 
     } catch(const std::exception& e) {
         // Parse failure: leave appState as the caller's default-constructed state.

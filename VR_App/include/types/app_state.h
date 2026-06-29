@@ -201,6 +201,14 @@ struct AppState {
      * sent to the robot. World metres at the image plane; 0 = no shift (default). */
     float stereoConvergence{0.0f};
 
+    /* Audio passthrough (optional, headset-only control; all default OFF so the
+     * feature is purely additive and never engages unless the operator turns it on). */
+    bool audioRobotEnable{false};   /* play the robot's mic audio on the headset speakers (RX) */
+    bool audioMicEnable{false};     /* capture the headset mic and stream it to the robot (TX) */
+    bool micPushToTalk{false};      /* true = push-to-talk (transmit while button held); false = open mic */
+    bool micMuted{false};           /* open-mic mute toggle */
+    int audioVolume{80};            /* 0-100 playback volume for the robot audio */
+
     /* Performance metrics */
     float appFrameRate{0.0f};       /* measured render FPS */
     long long appFrameTime{0};      /* last frame duration in microseconds */

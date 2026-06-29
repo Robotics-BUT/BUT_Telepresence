@@ -67,6 +67,7 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
     ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
     gstreamerPlayer_ = std::make_unique<GstreamerPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
+    audioPlayer_ = std::make_unique<AudioPlayer>();
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();
 
     appState_->systemInfo.openXrRuntime = openxr_get_runtime_name(&openxr_instance_);
@@ -81,6 +82,13 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 }
 
 TelepresenceProgram::~TelepresenceProgram() {
+    if (audioPlayer_) {
+        audioPlayer_->stopSend();
+        audioPlayer_->stopReceive();
+    }
+    if (restClient_) {
+        restClient_->StopAudio();
+    }
     if (restClient_ && appState_->connectionState.cameraServer == ConnectionStatus::Connected) {
         LOG_INFO("TelepresenceProgram: Stopping camera stream...");
         restClient_->StopStream();
@@ -115,6 +123,15 @@ void TelepresenceProgram::UpdateFrame() {
     }
 
     PollActions();
+
+    // Drive the mic gate: push-to-talk transmits only while the LEFT grip is held;
+    // otherwise honour the open-mic mute toggle. No-op unless the mic leg is active.
+    if (audioPlayer_ && audioPlayer_->sending()) {
+        const bool muted = appState_->micPushToTalk
+            ? (userState_.squeezeValue[Side::LEFT] < 0.5f)
+            : appState_->micMuted;
+        audioPlayer_->setMuted(muted);
+    }
     SendControllerDatagram();
 
     RenderFrame();
@@ -714,6 +731,9 @@ void TelepresenceProgram::InitializeStreaming() {
     // Record the baseline so the first Apply can diff against it and avoid an
     // unnecessary rebuild when only bitrate/quality changes.
     lastAppliedConfig_ = appState_->streamingConfig;
+
+    // Bring the optional audio bridge in line with the (possibly persisted) flags.
+    ApplyAudioState();
 }
 
 /**
@@ -725,6 +745,36 @@ void TelepresenceProgram::InitializeStreaming() {
  *
  * Sections: Network, Streaming & Rendering, Status Information.
  */
+void TelepresenceProgram::ApplyAudioState() {
+    if (!audioPlayer_ || !restClient_) return;
+
+    const bool hear = appState_->audioRobotEnable;   // robot mic -> headset speakers (RX)
+    const bool talk = appState_->audioMicEnable;      // headset mic -> robot speaker  (TX)
+
+    if (!hear && !talk) {
+        audioPlayer_->stopSend();
+        audioPlayer_->stopReceive();
+        restClient_->StopAudio();
+        return;
+    }
+
+    // Tell the robot bridge which legs to run: it transmits its mic when we want to
+    // hear it, and plays the operator when we transmit. AEC requested on the robot.
+    restClient_->StartAudio(/*robotMicToHeadset=*/hear, /*operatorToSpeaker=*/talk, /*aecEnabled=*/true);
+
+    if (hear) audioPlayer_->startReceive(Config::AUDIO_RX_PORT, appState_->audioVolume);
+    else      audioPlayer_->stopReceive();
+
+    if (talk) {
+        const bool startMuted = appState_->micPushToTalk ? true : appState_->micMuted;
+        audioPlayer_->startSend(IpToString(appState_->streamingConfig.jetson_ip),
+                                Config::AUDIO_TX_PORT, 64000, startMuted);
+    } else {
+        audioPlayer_->stopSend();
+    }
+    audioPlayer_->setVolume(appState_->audioVolume);
+}
+
 void TelepresenceProgram::BuildSettings() {
     auto noop = []() {};
 
@@ -895,6 +945,36 @@ void TelepresenceProgram::BuildSettings() {
             [this]() { return fmt::format("Stereo convergence (HIT): {:.3f}", appState_->stereoConvergence); },
             [this]() { if (appState_->stereoConvergence <  0.5f) appState_->stereoConvergence += 0.01f; },
             [this]() { if (appState_->stereoConvergence > -0.5f) appState_->stereoConvergence -= 0.01f; }
+        },
+        {
+            "Robot sound", GuiSettingType::Text, "Audio",
+            [this]() { return fmt::format("Robot sound: {}", appState_->audioRobotEnable ? "ON" : "OFF"); },
+            [this]() { appState_->audioRobotEnable = true;  ApplyAudioState(); },
+            [this]() { appState_->audioRobotEnable = false; ApplyAudioState(); }
+        },
+        {
+            "Microphone", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Microphone: {}", appState_->audioMicEnable ? "ON" : "OFF"); },
+            [this]() { appState_->audioMicEnable = true;  ApplyAudioState(); },
+            [this]() { appState_->audioMicEnable = false; ApplyAudioState(); }
+        },
+        {
+            "Mic mode", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Mic mode: {}", appState_->micPushToTalk ? "Push-to-talk (L grip)" : "Open mic"); },
+            [this]() { appState_->micPushToTalk = true; },
+            [this]() { appState_->micPushToTalk = false; }
+        },
+        {
+            "Mic mute", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Mic mute: {}", appState_->micMuted ? "MUTED" : "live"); },
+            [this]() { appState_->micMuted = true; },
+            [this]() { appState_->micMuted = false; }
+        },
+        {
+            "Audio volume", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Audio volume: {}", appState_->audioVolume); },
+            [this]() { if (appState_->audioVolume < 100) appState_->audioVolume += 5; if (audioPlayer_) audioPlayer_->setVolume(appState_->audioVolume); },
+            [this]() { if (appState_->audioVolume >   0) appState_->audioVolume -= 5; if (audioPlayer_) audioPlayer_->setVolume(appState_->audioVolume); }
         },
     };
 }
