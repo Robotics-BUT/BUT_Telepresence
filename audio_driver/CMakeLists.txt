@@ -11,9 +11,9 @@ add_definitions(${GSTREAMER_CFLAGS_OTHER})
 
 add_executable(telepresence_audio_driver main.cpp)
 
-# Reuse the streaming driver's bundled nlohmann/json single header.
+# Reuse the video driver's bundled nlohmann/json single header.
 target_include_directories(telepresence_audio_driver PRIVATE
         ${GSTREAMER_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../streaming_driver/include)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../video_driver/include)
 
 target_link_libraries(telepresence_audio_driver ${GSTREAMER_LIBRARIES})

@@ -1,5 +1,5 @@
 /**
- * gstreamer_player.cpp - GStreamer pipeline setup, configuration, and callbacks
+ * video_player.cpp - GStreamer pipeline setup, configuration, and callbacks
  *
  * Implements stereo video pipeline management:
  * - Constructor wraps the EGL context for GStreamer GL interop
@@ -7,7 +7,7 @@
  * - configureSinglePipeline() wires up a single eye's pipeline elements
  * - Callbacks extract frame data and measure per-stage latency
  */
-#include "gstreamer_player.h"
+#include "video_player.h"
 #include "util_egl.h"
 #include <ctime>
 #include <gst/rtp/rtp.h>
@@ -254,7 +254,7 @@ static void oesBlitOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
     job->success = true;
 }
 
-GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair_(camPair),
+VideoPlayer::VideoPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair_(camPair),
                                                                          ntpTimer_(ntpTimer) {
     guint major, minor, micro, nano;
     gst_version(&major, &minor, &micro, &nano);
@@ -264,32 +264,32 @@ GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair
     EGLContext egl_ctx = egl_get_context();
 
     if (egl_dpy == EGL_NO_DISPLAY) {
-        LOG_ERROR("GstreamerPlayer: EGL display not available");
+        LOG_ERROR("VideoPlayer: EGL display not available");
         return;
     }
     if (egl_ctx == EGL_NO_CONTEXT) {
-        LOG_ERROR("GstreamerPlayer: EGL context not available");
+        LOG_ERROR("VideoPlayer: EGL context not available");
         return;
     }
 
     auto *gst_display = reinterpret_cast<GstGLDisplay *>(gst_gl_display_egl_new_with_egl_display(
             egl_dpy));
     if (!gst_display) {
-        LOG_ERROR("GstreamerPlayer: Failed to create GstGLDisplay from EGL display");
+        LOG_ERROR("VideoPlayer: Failed to create GstGLDisplay from EGL display");
         return;
     }
 
     glContext_ = gst_gl_context_new_wrapped(gst_display, (guintptr) egl_ctx, GST_GL_PLATFORM_EGL,
                                             GST_GL_API_GLES2);
     if (!glContext_) {
-        LOG_ERROR("GstreamerPlayer: Failed to wrap GL context");
+        LOG_ERROR("VideoPlayer: Failed to wrap GL context");
         gst_object_unref(gst_display);
         return;
     }
 
     gContext_ = gst_context_new("gst.gl.app_context", TRUE);
     if (!gContext_) {
-        LOG_ERROR("GstreamerPlayer: Failed to create GStreamer context");
+        LOG_ERROR("VideoPlayer: Failed to create GStreamer context");
         gst_object_unref(gst_display);
         return;
     }
@@ -303,10 +303,10 @@ GstreamerPlayer::GstreamerPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair
     gMainContext_ = g_main_context_new();
     g_main_context_push_thread_default(gMainContext_);
 
-    LOG_INFO("GstreamerPlayer: GL context initialized successfully");
+    LOG_INFO("VideoPlayer: GL context initialized successfully");
 }
 
-GstreamerPlayer::~GstreamerPlayer() {
+VideoPlayer::~VideoPlayer() {
     // Clean up callback object
     if (callbackObj_) {
         delete callbackObj_;
@@ -338,7 +338,7 @@ GstreamerPlayer::~GstreamerPlayer() {
 
 /** Get a named pipeline element; throws if not found. */
 GstElement *
-GstreamerPlayer::getElementRequired(GstElement *pipeline, const char *name, const char *context) {
+VideoPlayer::getElementRequired(GstElement *pipeline, const char *name, const char *context) {
     GstElement *element = gst_bin_get_by_name(GST_BIN(pipeline), name);
     if (!element) {
         LOG_ERROR("Failed to get %s element from %s pipeline", name, context);
@@ -349,12 +349,12 @@ GstreamerPlayer::getElementRequired(GstElement *pipeline, const char *name, cons
 }
 
 /** Get a named pipeline element; returns nullptr if not found. */
-GstElement *GstreamerPlayer::getElementOptional(GstElement *pipeline, const char *name) {
+GstElement *VideoPlayer::getElementOptional(GstElement *pipeline, const char *name) {
     return gst_bin_get_by_name(GST_BIN(pipeline), name);
 }
 
 /** Connect a signal callback to an element, then unref it (if non-null). */
-void GstreamerPlayer::connectAndUnref(GstElement *element, const char *signal, GCallback callback,
+void VideoPlayer::connectAndUnref(GstElement *element, const char *signal, GCallback callback,
                                       gpointer data) {
     if (element) {
         g_signal_connect(G_OBJECT(element), signal, callback, data);
@@ -367,7 +367,7 @@ void GstreamerPlayer::connectAndUnref(GstElement *element, const char *signal, G
  * GL context, bus callbacks, and latency measurement probes.
  */
 void
-GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineName, int port,
+VideoPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineName, int port,
                                          const StreamingConfig &config,
                                          const std::string &xDimString, int payload) {
     // Get optional identity elements
@@ -478,7 +478,7 @@ GstreamerPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipel
  * elements, and starts playback. The GLib main loop runs on the thread pool.
  */
 void
-GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
+VideoPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
                                     const StreamingConfig &config) {
     GError *error = nullptr;
 
@@ -677,7 +677,7 @@ GstreamerPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
  * non-GLMemory (JPEG) copies raw RGB data to the CPU buffer.
  */
 GstFlowReturn
-GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackObj) {
+VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackObj) {
     GstSample *sample = nullptr;
 
     /* Retrieve the buffer from appsink */
@@ -837,7 +837,7 @@ GstreamerPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callba
  * from RTP header extensions (frame ID, camera/vidconv/enc/rtpPay timestamps)
  * and records the UDP arrival timestamp for network latency calculation.
  */
-void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffer, gpointer data) {
+void VideoPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffer, gpointer data) {
     auto *obj = reinterpret_cast<GStreamerCallbackObj *>(data);
     auto *pair = obj->first;
     auto *ntpTimer = obj->second;
@@ -934,7 +934,7 @@ void GstreamerPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffe
  * probe (queue_ident), sums up total pipeline latency and updates the
  * running average history.
  */
-void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpointer data) {
+void VideoPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpointer data) {
     auto *obj = reinterpret_cast<GStreamerCallbackObj *>(data);
     auto *pair = obj->first;
     auto *ntpTimer = obj->second;
@@ -1036,7 +1036,7 @@ void GstreamerPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer,
     }
 }
 
-void GstreamerPlayer::stateChangedCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
+void VideoPlayer::stateChangedCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
     GstState old_state, new_state, pending_state;
     gst_message_parse_state_changed(msg, &old_state, &new_state, &pending_state);
 
@@ -1044,7 +1044,7 @@ void GstreamerPlayer::stateChangedCallback(GstBus *bus, GstMessage *msg, GstElem
              gst_element_state_get_name(new_state));
 }
 
-void GstreamerPlayer::infoCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
+void VideoPlayer::infoCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
     GError *err;
     gchar *debug_info;
 
@@ -1054,7 +1054,7 @@ void GstreamerPlayer::infoCallback(GstBus *bus, GstMessage *msg, GstElement *pip
              err->message);
 }
 
-void GstreamerPlayer::warningCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
+void VideoPlayer::warningCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
     GError *err;
     gchar *debug_info;
 
@@ -1064,7 +1064,7 @@ void GstreamerPlayer::warningCallback(GstBus *bus, GstMessage *msg, GstElement *
              err->message);
 }
 
-void GstreamerPlayer::errorCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
+void VideoPlayer::errorCallback(GstBus *bus, GstMessage *msg, GstElement *pipeline) {
     GError *err;
     gchar *debug_info;
 
@@ -1076,7 +1076,7 @@ void GstreamerPlayer::errorCallback(GstBus *bus, GstMessage *msg, GstElement *pi
 
 /** Pad probe on UDP source to log packet arrival intervals (debug only). */
 GstPadProbeReturn
-GstreamerPlayer::udpPacketProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
+VideoPlayer::udpPacketProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
     static auto last_time = std::chrono::steady_clock::now();
 
     auto now = std::chrono::steady_clock::now();
@@ -1089,7 +1089,7 @@ GstreamerPlayer::udpPacketProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpoi
 }
 
 /** Build GstCaps for the hardware decoder input (H264 or H265 byte-stream). */
-GstCaps *GstreamerPlayer::buildDecoderSrcCaps(Codec codec, int width, int height, int fps) {
+GstCaps *VideoPlayer::buildDecoderSrcCaps(Codec codec, int width, int height, int fps) {
     const char *media_type = codec == Codec::H265 ? "video/x-h265" : "video/x-h264";
 
     GstCaps *caps = gst_caps_new_simple(

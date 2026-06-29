@@ -36,7 +36,7 @@ int RestClient::StartStream() {
     std::string req = j.dump();
 
     auto client = makeClient();
-    auto res = client->Post("/api/v1/stream/start", req, "application/json");
+    auto res = client->Post("/api/v1/video/start", req, "application/json");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send start stream request - connection error");
         return -1;
@@ -51,7 +51,7 @@ int RestClient::StartStream() {
 
 int RestClient::StopStream() {
     auto client = makeClient();
-    auto res = client->Post("/api/v1/stream/stop");
+    auto res = client->Post("/api/v1/video/stop");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send stop stream request - connection error");
         return -1;
@@ -118,7 +118,7 @@ int RestClient::UpdateStreamingConfig(const StreamingConfig &config) {
                            {"resolution",       {{"height", config.resolution.getHeight()}, {"width", config.resolution.getWidth()}}},
                            {"video_mode",       VideoModeToApiString(config.videoMode)}}.dump();
     auto client = makeClient();
-    auto res = client->Put("/api/v1/stream/update", req, "application/json");
+    auto res = client->Put("/api/v1/video/update", req, "application/json");
     if (!res) {
         LOG_ERROR("RestClient: Failed to send update config request - connection error");
         return -1;

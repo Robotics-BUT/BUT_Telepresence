@@ -66,7 +66,7 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 
     ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
-    gstreamerPlayer_ = std::make_unique<GstreamerPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
+    videoPlayer_ = std::make_unique<VideoPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
     audioPlayer_ = std::make_unique<AudioPlayer>();
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();
 
@@ -726,7 +726,7 @@ void TelepresenceProgram::InitializeStreaming() {
     }
 
     // Configure pipelines regardless - they will wait for data
-    gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
+    videoPlayer_->configurePipelines(gstreamerThreadPool_, appState_->streamingConfig);
 
     // Record the baseline so the first Apply can diff against it and avoid an
     // unnecessary rebuild when only bitrate/quality changes.
@@ -894,7 +894,7 @@ void TelepresenceProgram::BuildSettings() {
                     case StreamConfigChange::Structural:
                         LOG_INFO("Apply: structural change -> rebuilding decode pipeline + GL render targets");
                         init_scene(cfg.resolution.getWidth(), cfg.resolution.getHeight(), true);
-                        gstreamerPlayer_->configurePipelines(gstreamerThreadPool_, cfg);
+                        videoPlayer_->configurePipelines(gstreamerThreadPool_, cfg);
                         break;
                     case StreamConfigChange::LiveOnly:
                         LOG_INFO("Apply: live-only change (bitrate/quality) -> no rebuild, keeping pipeline");

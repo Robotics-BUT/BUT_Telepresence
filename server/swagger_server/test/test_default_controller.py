@@ -21,50 +21,50 @@ from swagger_server.test import BaseTestCase
 class TestDefaultController(BaseTestCase):
     """DefaultController integration test stubs"""
 
-    def test_api_v1_stream_start_post(self):
-        """Test case for api_v1_stream_start_post
+    def test_api_v1_video_start_post(self):
+        """Test case for api_v1_video_start_post
 
         Start the video streaming with configuration.
         """
         body = RequiredStreamConfiguration()
         response = self.client.open(
-            '/api/v1/stream/start',
+            '/api/v1/video/start',
             method='POST',
             data=json.dumps(body),
             content_type='application/json')
         self.assert200(response,
                        'Response body is : ' + response.data.decode('utf-8'))
 
-    def test_api_v1_stream_state_get(self):
-        """Test case for api_v1_stream_state_get
+    def test_api_v1_video_state_get(self):
+        """Test case for api_v1_video_state_get
 
         Get the current state of the video streaming.
         """
         response = self.client.open(
-            '/api/v1/stream/state',
+            '/api/v1/video/state',
             method='GET')
         self.assert200(response,
                        'Response body is : ' + response.data.decode('utf-8'))
 
-    def test_api_v1_stream_stop_post(self):
-        """Test case for api_v1_stream_stop_post
+    def test_api_v1_video_stop_post(self):
+        """Test case for api_v1_video_stop_post
 
         Stop the video streaming.
         """
         response = self.client.open(
-            '/api/v1/stream/stop',
+            '/api/v1/video/stop',
             method='POST')
         self.assert200(response,
                        'Response body is : ' + response.data.decode('utf-8'))
 
-    def test_api_v1_stream_update_put(self):
-        """Test case for api_v1_stream_update_put
+    def test_api_v1_video_update_put(self):
+        """Test case for api_v1_video_update_put
 
         Update the stream configuration dynamically.
         """
         body = StreamUpdateBody()
         response = self.client.open(
-            '/api/v1/stream/update',
+            '/api/v1/video/update',
             method='PUT',
             data=json.dumps(body),
             content_type='application/json')
