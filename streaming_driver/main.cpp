@@ -131,16 +131,23 @@ static void ConnectLatencyHandoffs(GstElement *pipeline) {
 // The front-end and udpsink live for the pipeline's whole life; codec changes
 // hot-swap only the enc_tail bin (SwapEncoderTail) and fps changes only retime
 // rate_capsfilter
+// Physical nvarguscamerasrc sensor-id feeding each logical eye (index 0 = left/8554,
+// 1 = right/8556). This decouples the eye->connector mapping from the wiring so a
+// physical move can be handled in software.
+inline constexpr int EYE_SENSOR_ID[2] = {3, 2};
+
 GstElement *BuildCameraPipeline(int sensorId, const StreamingConfig &streamingConfig) {
     SetSensorStaticLatencyForFps(streamingConfig.fps);
 
     const std::string side = sensorId == 0 ? "left" : "right";
     const int port = sensorId == 0 ? streamingConfig.portLeft : streamingConfig.portRight;
+    const int physicalSensor = EYE_SENSOR_ID[sensorId];
 
-    const std::string frontStr = GetCameraFrontEndDescription(streamingConfig, sensorId);
+    const std::string frontStr = GetCameraFrontEndDescription(streamingConfig, physicalSensor);
     const std::string tailStr = GetEncoderTailDescription(streamingConfig);
 
-    std::cout << "=== Building Pipeline for Camera " << sensorId << " (" << side << ") ===\n";
+    std::cout << "=== Building Pipeline for Camera " << sensorId << " (" << side
+              << ", physical sensor-id " << physicalSensor << ") ===\n";
     std::cout << frontStr << "\n  ! [enc_tail] " << tailStr
               << "\n  ! udpsink host=" << streamingConfig.ip << " port=" << port << "\n";
     std::cout << "=== End Pipeline ===\n";

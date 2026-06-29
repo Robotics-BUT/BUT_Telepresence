@@ -43,6 +43,14 @@ inline constexpr const char *CAMERA_EXPOSURE_LOCK = "";
 // PLAYING across codec/fps changes is the whole point of the decouple.
 // Element names (encoder / enc_ident / rtppay / rtppay_ident) are stable across
 // codecs so the swap probe and the latency-instrumentation handoffs find them.
+// Cyclic intra-refresh period in frames (NVENC SliceIntraRefreshInterval). The encoder
+// refreshes the picture over this many frames instead of emitting periodic full keyframes
+// (iframeinterval=0), so the intra cost is spread out: smoother bitrate (no keyframe
+// spikes), lower jitter, and bounded loss recovery without waiting for a big IDR.
+// rtppay config-interval=1 still repeats VPS/SPS/PPS in-band ~1/s for mid-stream join.
+// Lower = faster recovery + more bitrate overhead; higher = smoother + slower full refresh.
+inline constexpr int INTRA_REFRESH_FRAMES = 30;
+
 inline std::string GetEncoderTailDescription(const StreamingConfig &cfg) {
     std::ostringstream oss;
     switch (cfg.codec) {
@@ -52,12 +60,12 @@ inline std::string GetEncoderTailDescription(const StreamingConfig &cfg) {
                 << " ! rtpjpegpay name=rtppay mtu=1300";
             break;
         case Codec::H264:
-            oss << "nvv4l2h264enc name=encoder control-rate=1 insert-sps-pps=1 insert-vui=1 iframeinterval=10 idrinterval=10 bitrate=" << cfg.bitrate << " preset-level=1"
+            oss << "nvv4l2h264enc name=encoder control-rate=1 insert-sps-pps=1 insert-vui=1 iframeinterval=0 SliceIntraRefreshInterval=" << INTRA_REFRESH_FRAMES << " bitrate=" << cfg.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph264pay name=rtppay mtu=1300 config-interval=1 pt=96";
             break;
         case Codec::H265:
-            oss << "nvv4l2h265enc name=encoder control-rate=1 insert-sps-pps=1 iframeinterval=10 idrinterval=10 bitrate=" << cfg.bitrate << " preset-level=1"
+            oss << "nvv4l2h265enc name=encoder control-rate=1 insert-sps-pps=1 iframeinterval=0 SliceIntraRefreshInterval=" << INTRA_REFRESH_FRAMES << " bitrate=" << cfg.bitrate << " preset-level=1"
                 << " ! identity name=enc_ident"
                 << " ! rtph265pay name=rtppay mtu=1300 config-interval=1 pt=96";
             break;
