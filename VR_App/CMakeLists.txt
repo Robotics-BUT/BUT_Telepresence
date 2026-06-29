@@ -28,6 +28,7 @@ find_library(ANDROID_LIBRARY NAMES android)
 find_library(ANDROID_LOG_LIBRARY NAMES log)
 find_library(EGL_LIBRARY NAMES EGL)
 find_library(OpenGLES_V3_LIBRARY NAMES GLESv3)
+find_library(OPENSLES_LIBRARY NAMES OpenSLES)   # Android audio I/O for the opensles plugin
 
 find_path(ANDROID_NATIVE_APP_GLUE android_native_app_glue.h PATHS ${ANDROID_NDK}/sources/android/native_app_glue)
 find_path(OpenGLES_V3_INCLUDE_DIR NAMES GLES3/gl3.h)
@@ -78,6 +79,7 @@ add_library(
         src/render_scene.cpp
         src/gstreamer_android.c
         src/gstreamer_player.cpp
+        src/audio_player.cpp
         src/robot_control_sender.cpp
         src/rest_client.cpp
         src/render_imgui.cpp
@@ -111,6 +113,7 @@ target_link_libraries(
         ${ANDROID_LOG_LIBRARY}
         ${EGL_LIBRARY}
         ${OpenGLES_V3_LIBRARY}
+        ${OPENSLES_LIBRARY}
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstcoreelements.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgsttypefindfunctions.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstvideoconvertscale.a
@@ -138,6 +141,12 @@ target_link_libraries(
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstjpeg.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstjpegformat.a
         ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstandroidmedia.a
+        # --- audio passthrough plugins (Opus over RTP + Android OpenSL ES I/O) ---
+        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstopus.a
+        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstopensles.a
+        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstaudioconvert.a
+        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstaudioresample.a
+        ${GSTREAMER_ROOT}/lib/gstreamer-1.0/libgstvolume.a
 
         #plugin libs
         ${GSTREAMER_ROOT}/lib/liborc-0.4.a

@@ -43,6 +43,12 @@ GST_PLUGIN_STATIC_DECLARE(jpeg);
 GST_PLUGIN_STATIC_DECLARE(jpegformat);
 GST_PLUGIN_STATIC_DECLARE(libav);
 GST_PLUGIN_STATIC_DECLARE(opengl);
+/* audio passthrough */
+GST_PLUGIN_STATIC_DECLARE(opus);
+GST_PLUGIN_STATIC_DECLARE(opensles);
+GST_PLUGIN_STATIC_DECLARE(audioconvert);
+GST_PLUGIN_STATIC_DECLARE(audioresample);
+GST_PLUGIN_STATIC_DECLARE(volume);
 
 /* ---------- Helpers to build & install a DexClassLoader ---------- */
 
@@ -181,6 +187,13 @@ gst_android_register_static_plugins(void) {
     GST_PLUGIN_STATIC_REGISTER(jpeg);
     GST_PLUGIN_STATIC_REGISTER(jpegformat);
     GST_PLUGIN_STATIC_REGISTER(opengl);
+
+    /* audio passthrough */
+    GST_PLUGIN_STATIC_REGISTER(opus);
+    GST_PLUGIN_STATIC_REGISTER(opensles);
+    GST_PLUGIN_STATIC_REGISTER(audioconvert);
+    GST_PLUGIN_STATIC_REGISTER(audioresample);
+    GST_PLUGIN_STATIC_REGISTER(volume);
 }
 
 void

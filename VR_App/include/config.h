@@ -20,5 +20,7 @@ constexpr int SERVO_PORT = 32115;          /* UDP port for head pose / robot con
 constexpr int LEFT_CAMERA_PORT = 8554;     /* RTP video stream (left eye) */
 constexpr int RIGHT_CAMERA_PORT = 8556;    /* RTP video stream (right eye) */
 constexpr int ROS_GATEWAY_PORT = 8502;     /* UDP port for ROS gateway messages */
+constexpr int AUDIO_RX_PORT = 8558;        /* RTP Opus audio FROM robot mic (headset listens) */
+constexpr int AUDIO_TX_PORT = 8560;        /* RTP Opus audio FROM headset mic (robot listens) */
 
 }  // namespace Config

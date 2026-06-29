@@ -15,6 +15,7 @@
 #include "BS_thread_pool.hpp"
 #include "robot_control_sender.h"
 #include "gstreamer_player.h"
+#include "audio_player.h"
 #include "rest_client.h"
 #include "ntp_timer.h"
 #include "state_storage.h"
@@ -67,6 +68,10 @@ private:
     /** Start the camera stream via REST API and configure GStreamer pipelines. */
     void InitializeStreaming();
 
+    /** Reconcile the optional audio bridge (robot + headset pipelines) with the
+     *  current audioRobotEnable / audioMicEnable flags. Safe no-op when both off. */
+    void ApplyAudioState();
+
     /** Process VR controller input for GUI navigation and robot control. */
     void HandleControllers();
 
@@ -98,6 +103,7 @@ private:
 
     /* --- Subsystem modules --- */
     std::unique_ptr<GstreamerPlayer> gstreamerPlayer_;
+    std::unique_ptr<AudioPlayer> audioPlayer_;
     std::unique_ptr<RestClient> restClient_;
     std::unique_ptr<NtpTimer> ntpTimer_;
     std::unique_ptr<RosNetworkGatewayClient> rosNetworkGatewayClient_;

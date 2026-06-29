@@ -27,6 +27,15 @@ public:
     /** POST /api/v1/stream/stop - returns 0 on success, -1 on failure. */
     int StopStream();
 
+    /** POST /api/v1/audio/start - start/reconfigure the optional robot audio bridge.
+     *  robotMicToHeadset: stream the robot mic to the headset (RX leg);
+     *  operatorToSpeaker: play the operator's mic on the robot speaker (TX leg).
+     *  Returns 0 on success, -1 on failure. */
+    int StartAudio(bool robotMicToHeadset, bool operatorToSpeaker, bool aecEnabled);
+
+    /** POST /api/v1/audio/stop - returns 0 on success, -1 on failure. */
+    int StopAudio();
+
     /** Return the current local copy of the streaming configuration. */
     StreamingConfig GetStreamingConfig();
 
