@@ -1,5 +1,5 @@
 [Unit]
-Description="REST API for the stereo camera stream"
+Description="Telepresence media server (REST API for video + audio streaming)"
 After=network.target
 
 [Service]

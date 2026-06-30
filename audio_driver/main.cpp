@@ -46,6 +46,8 @@ struct AudioConfig {
     bool aecEnabled{true};
     bool micEnabled{true};              // TX leg (robot mic -> headset)
     bool speakerEnabled{true};          // RX leg (operator -> robot speaker)
+    double micGain{1.0};                // linear gain on the robot mic (TX), post-AEC (1.0 = unity)
+    double speakerGain{1.0};            // linear gain on the operator voice (RX), pre-echoprobe (1.0 = unity)
 };
 
 static GMainLoop *g_loop = nullptr;
@@ -66,6 +68,8 @@ static AudioConfig ConfigFromJson(const json &c) {
     a.aecEnabled = c.value("aec_enabled", true);
     a.micEnabled = c.value("mic_enabled", true);
     a.speakerEnabled = c.value("speaker_enabled", true);
+    a.micGain = c.value("mic_gain", 1.0);
+    a.speakerGain = c.value("speaker_gain", 1.0);
     return a;
 }
 
@@ -85,6 +89,11 @@ static std::string BuildRxDescription(const AudioConfig &a, bool aec) {
         << " ! rtpjitterbuffer latency=" << a.jitterLatencyMs << " do-lost=true"
         << " ! rtpopusdepay ! opusdec ! audioconvert ! audioresample"
         << " ! audio/x-raw,rate=" << a.sampleRate << ",channels=1";
+    // Apply the operator-voice gain BEFORE the echo probe so the AEC far-end reference
+    // matches what actually plays out the speaker (boosting after the probe would make the
+    // reference too quiet and leak echo back to the headset).
+    if (a.speakerGain != 1.0)
+        oss << " ! volume volume=" << a.speakerGain;
     if (aec)
         oss << " ! webrtcechoprobe ! audioconvert ! audioresample";
     oss << " ! pulsesink name=audio_speaker sync=true";
@@ -105,6 +114,10 @@ static std::string BuildTxDescription(const AudioConfig &a, bool aec) {
     if (aec)
         oss << " ! webrtcdsp echo-cancel=true noise-suppression=true gain-control=true high-pass-filter=true"
             << " ! audioconvert";
+    // Mic gain AFTER webrtcdsp: its built-in AGC would otherwise normalise away a gain
+    // applied before it, so a fixed boost has to sit post-AGC, just ahead of the encoder.
+    if (a.micGain != 1.0)
+        oss << " ! volume volume=" << a.micGain;
     oss << " ! opusenc bitrate=" << a.bitrate << " audio-type=voice"
         << " ! rtpopuspay pt=" << OPUS_PT
         << " ! udpsink name=audio_tx_sink host=" << a.headsetIp
