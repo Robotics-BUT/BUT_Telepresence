@@ -100,6 +100,7 @@ private:
     /* --- Thread pools --- */
     BS::thread_pool<BS::tp::none> gstreamerThreadPool_{1};  /* GStreamer pipeline ops */
     BS::thread_pool<BS::tp::none> threadPool_{3};           /* async network ops */
+    BS::thread_pool<BS::tp::none> audioThreadPool_{1};      /* audio reconfig */
 
     /* --- Subsystem modules --- */
     std::unique_ptr<VideoPlayer> videoPlayer_;

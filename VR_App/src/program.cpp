@@ -750,29 +750,30 @@ void TelepresenceProgram::ApplyAudioState() {
 
     const bool hear = appState_->audioRobotEnable;   // robot mic -> headset speakers (RX)
     const bool talk = appState_->audioMicEnable;      // headset mic -> robot speaker  (TX)
+    const int volume = appState_->audioVolume;
+    const bool startMuted = appState_->micPushToTalk ? true : appState_->micMuted;
+    const std::string robotIp = IpToString(appState_->streamingConfig.jetson_ip);
 
-    if (!hear && !talk) {
-        audioPlayer_->stopSend();
-        audioPlayer_->stopReceive();
-        restClient_->StopAudio();
-        return;
-    }
+    audioThreadPool_.detach_task([this, hear, talk, volume, startMuted, robotIp]() {
+        if (!hear && !talk) {
+            audioPlayer_->stopSend();
+            audioPlayer_->stopReceive();
+            restClient_->StopAudio();
+            return;
+        }
 
-    // Tell the robot bridge which legs to run: it transmits its mic when we want to
-    // hear it, and plays the operator when we transmit. AEC requested on the robot.
-    restClient_->StartAudio(/*robotMicToHeadset=*/hear, /*operatorToSpeaker=*/talk, /*aecEnabled=*/true);
+        // Tell the robot bridge which legs to run: it transmits its mic when we want to
+        // hear it, and plays the operator when we transmit. AEC requested on the robot.
+        restClient_->StartAudio(/*robotMicToHeadset=*/hear, /*operatorToSpeaker=*/talk, /*aecEnabled=*/true);
 
-    if (hear) audioPlayer_->startReceive(Config::AUDIO_RX_PORT, appState_->audioVolume);
-    else      audioPlayer_->stopReceive();
+        if (hear) audioPlayer_->startReceive(Config::AUDIO_RX_PORT, volume);
+        else      audioPlayer_->stopReceive();
 
-    if (talk) {
-        const bool startMuted = appState_->micPushToTalk ? true : appState_->micMuted;
-        audioPlayer_->startSend(IpToString(appState_->streamingConfig.jetson_ip),
-                                Config::AUDIO_TX_PORT, 64000, startMuted);
-    } else {
-        audioPlayer_->stopSend();
-    }
-    audioPlayer_->setVolume(appState_->audioVolume);
+        if (talk) audioPlayer_->startSend(robotIp, Config::AUDIO_TX_PORT, 64000, startMuted);
+        else      audioPlayer_->stopSend();
+
+        audioPlayer_->setVolume(volume);
+    });
 }
 
 void TelepresenceProgram::BuildSettings() {
