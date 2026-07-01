@@ -304,7 +304,11 @@ static std::string BuildRxDescription(const AudioConfig &a, bool aec) {
         oss << " ! volume volume=" << a.speakerGain;
     if (aec)
         oss << " ! webrtcechoprobe ! audioconvert ! audioresample";
-    oss << " ! pulsesink name=audio_speaker sync=true";
+    // Clock recovery: the speaker DAC runs on its own crystal, so without this the
+    // buffer drifts vs the sender and eventually under/overruns. provide-clock=false
+    // frees the sink from being the pipeline master so slave-method=resample can
+    // continuously rate-convert to track the sender (via the jitterbuffer skew).
+    oss << " ! pulsesink name=audio_speaker sync=true provide-clock=false slave-method=resample";
     if (!a.playbackDevice.empty())
         oss << " device=" << a.playbackDevice;
     return oss.str();
