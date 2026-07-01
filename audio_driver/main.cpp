@@ -21,11 +21,19 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
+#include <cstring>
+#include <ctime>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <gst/gst.h>
+#include <gst/rtp/gstrtpbuffer.h>
 #include "json.hpp"
 
 using json = nlohmann::json;
@@ -33,6 +41,17 @@ using json = nlohmann::json;
 // RTP Opus dynamic payload type (must match the headset's caps).
 static constexpr int OPUS_PT = 111;
 static constexpr int OPUS_CLOCK = 48000;
+
+// One-byte RTP header extension (RFC 5285) carrying the NTP-aligned capture
+// wall-clock (uint64 microseconds) of the audio in each packet, mirroring the
+// video latency instrumentation. The receiving end computes source->sink latency
+// as (its NTP-now) - (this capture timestamp). ID 1, field 0.
+static constexpr guint8 AUDIO_RTP_EXT_ID = 1;
+
+// Robot->relay audio-metrics packet (UDP to the relay ingest port), 0x04:
+//   [0x04][tx_bitrate_bps u32][rx_bitrate_bps u32]  (little-endian)
+// tx = robot mic -> headset (leg A) egress; rx = operator -> robot speaker (leg B) ingress.
+static constexpr guint8 MSG_AUDIO_METRICS_ROBOT = 0x04;
 
 struct AudioConfig {
     std::string headsetIp{};            // where to send the robot mic (TX)
@@ -48,12 +67,120 @@ struct AudioConfig {
     bool speakerEnabled{true};          // RX leg (operator -> robot speaker)
     double micGain{1.0};                // linear gain on the robot mic (TX), post-AEC (1.0 = unity)
     double speakerGain{1.0};            // linear gain on the operator voice (RX), pre-echoprobe (1.0 = unity)
+    std::string relayHost{"127.0.0.1"}; // where to send audio-metrics packets (the relay)
+    int relayPort{32115};               // relay ingest UDP port (shares the control port)
 };
 
 static GMainLoop *g_loop = nullptr;
 static GstElement *g_rxPipeline = nullptr;   // operator -> speaker
 static GstElement *g_txPipeline = nullptr;   // mic -> headset
 static std::atomic<bool> g_stop{false};
+
+// --- Instrumentation: bandwidth counters + metrics reporting to the relay ---
+static std::atomic<uint64_t> g_txBytes{0};   // cumulative bytes sent on the TX (mic->headset) leg
+static std::atomic<uint64_t> g_rxBytes{0};   // cumulative bytes received on the RX (operator->speaker) leg
+static int g_metricsSock = -1;
+static struct sockaddr_in g_relayAddr{};
+static std::atomic<bool> g_relayReady{false};
+
+// NTP-aligned wall clock in microseconds. The Jetson is chrony-synced and the
+// headset's NtpTimer syncs to the Jetson, so CLOCK_REALTIME here shares the
+// headset's timebase (same assumption the video rtpPayTimestamp relies on).
+static uint64_t NowNtpUs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000ull + ts.tv_nsec / 1000ull;
+}
+
+// TX leg (mic->headset): stamp each outgoing RTP packet with the audio's capture
+// wall-clock, and count bytes for bandwidth. capture = now - (how long the buffer has
+// been in the pipeline since the live source produced it), recovered from its PTS.
+static GstPadProbeReturn TxStampProbe(GstPad *pad, GstPadProbeInfo *info, gpointer) {
+    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (!buf) return GST_PAD_PROBE_OK;
+
+    g_txBytes.fetch_add(gst_buffer_get_size(buf), std::memory_order_relaxed);
+
+    uint64_t ageUs = 0;
+    if (GstElement *elem = gst_pad_get_parent_element(pad)) {
+        GstClock *clock = gst_element_get_clock(elem);
+        if (clock) {
+            GstClockTime now = gst_clock_get_time(clock);
+            GstClockTime base = gst_element_get_base_time(elem);
+            GstClockTime pts = GST_BUFFER_PTS(buf);
+            if (GST_CLOCK_TIME_IS_VALID(pts) && now > base) {
+                GstClockTime running = now - base;
+                if (running > pts) ageUs = (running - pts) / 1000;
+            }
+            gst_object_unref(clock);
+        }
+        gst_object_unref(elem);
+    }
+    uint64_t captureUs = NowNtpUs();
+    captureUs = (captureUs > ageUs) ? captureUs - ageUs : captureUs;
+
+    buf = gst_buffer_make_writable(buf);
+    GST_PAD_PROBE_INFO_DATA(info) = buf;
+    GstRTPBuffer rtp = GST_RTP_BUFFER_INIT;
+    if (gst_rtp_buffer_map(buf, GST_MAP_READWRITE, &rtp)) {
+        gst_rtp_buffer_add_extension_onebyte_header(&rtp, AUDIO_RTP_EXT_ID, &captureUs, sizeof(captureUs));
+        gst_rtp_buffer_unmap(&rtp);
+    }
+    return GST_PAD_PROBE_OK;
+}
+
+// RX leg (operator->speaker): count received bytes for bandwidth.
+static GstPadProbeReturn RxByteProbe(GstPad *, GstPadProbeInfo *info, gpointer) {
+    if (GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info))
+        g_rxBytes.fetch_add(gst_buffer_get_size(buf), std::memory_order_relaxed);
+    return GST_PAD_PROBE_OK;
+}
+
+static void AttachProbe(GstElement *pipeline, const char *elemName, const char *padName,
+                        GstPadProbeCallback cb) {
+    if (!pipeline) return;
+    if (GstElement *e = gst_bin_get_by_name(GST_BIN(pipeline), elemName)) {
+        if (GstPad *p = gst_element_get_static_pad(e, padName)) {
+            gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, cb, nullptr, nullptr);
+            gst_object_unref(p);
+        }
+        gst_object_unref(e);
+    }
+}
+
+static void SetupMetricsSocket(const AudioConfig &a) {
+    if (g_metricsSock < 0)
+        g_metricsSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (g_metricsSock < 0) { g_relayReady.store(false); return; }
+    memset(&g_relayAddr, 0, sizeof(g_relayAddr));
+    g_relayAddr.sin_family = AF_INET;
+    g_relayAddr.sin_port = htons(static_cast<uint16_t>(a.relayPort));
+    if (inet_pton(AF_INET, a.relayHost.c_str(), &g_relayAddr.sin_addr) == 1)
+        g_relayReady.store(true);
+}
+
+// Periodic: compute per-leg bitrate over the elapsed window and ship a 0x04 packet
+// to the relay, which writes it to InfluxDB (audio_metrics) for Grafana.
+static gboolean ReportMetrics(gpointer) {
+    static uint64_t lastTx = 0, lastRx = 0, lastUs = 0;
+    uint64_t nowUs = NowNtpUs();
+    uint64_t tx = g_txBytes.load(), rx = g_rxBytes.load();
+    if (lastUs != 0 && g_relayReady.load()) {
+        double dt = (nowUs - lastUs) / 1e6;
+        if (dt > 0) {
+            uint32_t txBps = static_cast<uint32_t>((tx - lastTx) * 8 / dt);
+            uint32_t rxBps = static_cast<uint32_t>((rx - lastRx) * 8 / dt);
+            uint8_t pkt[9];
+            pkt[0] = MSG_AUDIO_METRICS_ROBOT;
+            memcpy(pkt + 1, &txBps, 4);
+            memcpy(pkt + 5, &rxBps, 4);
+            sendto(g_metricsSock, pkt, sizeof(pkt), 0,
+                   reinterpret_cast<struct sockaddr *>(&g_relayAddr), sizeof(g_relayAddr));
+        }
+    }
+    lastTx = tx; lastRx = rx; lastUs = nowUs;
+    return G_SOURCE_CONTINUE;
+}
 
 static AudioConfig ConfigFromJson(const json &c) {
     AudioConfig a;
@@ -70,6 +197,8 @@ static AudioConfig ConfigFromJson(const json &c) {
     a.speakerEnabled = c.value("speaker_enabled", true);
     a.micGain = c.value("mic_gain", 1.0);
     a.speakerGain = c.value("speaker_gain", 1.0);
+    a.relayHost = c.value("relay_host", std::string("127.0.0.1"));
+    a.relayPort = c.value("relay_port", 32115);
     return a;
 }
 
@@ -175,6 +304,14 @@ static void ApplyConfig(const AudioConfig &a) {
         else
             g_txPipeline = BuildAndPlay(BuildTxDescription(a, aecPair), "TX mic->headset");
     }
+
+    // Instrumentation: stamp/count on the egress (TX) and ingress (RX) so the relay
+    // can log per-leg bandwidth, and the headset can compute robot->headset latency
+    // from the capture timestamp stamped here.
+    SetupMetricsSocket(a);
+    AttachProbe(g_txPipeline, "audio_tx_sink", "sink", TxStampProbe);
+    AttachProbe(g_rxPipeline, "audio_rx_src", "src", RxByteProbe);
+
     std::cout << "[audio] applied config: aec=" << (aecPair ? "on" : "off")
               << " mic=" << a.micEnabled << " speaker=" << a.speakerEnabled
               << " headset=" << a.headsetIp << "\n";
@@ -234,6 +371,7 @@ int main(int, char **) {
 
     g_loop = g_main_loop_new(nullptr, FALSE);
     g_timeout_add(200, CheckStop, nullptr);
+    g_timeout_add(500, ReportMetrics, nullptr);   // audio bandwidth -> relay -> InfluxDB
 
     std::thread ctrl(ControlLoop);
 
@@ -242,6 +380,7 @@ int main(int, char **) {
 
     g_stop.store(true);
     TeardownPipelines();
+    if (g_metricsSock >= 0) { close(g_metricsSock); g_metricsSock = -1; }
     g_main_loop_unref(g_loop);
     g_loop = nullptr;
     ctrl.detach();  // reader may be parked in getline() on a SIGTERM-only stop

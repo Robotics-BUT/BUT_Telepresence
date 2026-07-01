@@ -23,26 +23,60 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 100000 }, { "color": "red", "value": 150000 } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100000
+              },
+              {
+                "color": "red",
+                "value": 150000
+              }
+            ]
+          },
           "unit": "µs",
           "decimals": 1
         }
       },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT time, total_latency_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, total_latency_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
       ],
       "title": "G2G total",
       "type": "stat"
@@ -51,26 +85,60 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 30000 }, { "color": "red", "value": 60000 } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30000
+              },
+              {
+                "color": "red",
+                "value": 60000
+              }
+            ]
+          },
           "unit": "µs",
           "decimals": 1
         }
       },
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
       "id": 2,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT time, m2m_command_us FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, m2m_command_us FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
       ],
       "title": "M2M command path",
       "type": "stat"
@@ -79,27 +147,61 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "max": 120,
           "min": 0,
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 24 }, { "color": "green", "value": 50 } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 24
+              },
+              {
+                "color": "green",
+                "value": 50
+              }
+            ]
+          },
           "unit": "fps"
         }
       },
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
       "id": 3,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT time, fps FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, fps FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
       ],
       "title": "FPS",
       "type": "stat"
@@ -108,25 +210,52 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
           "unit": "bps"
         }
       },
-      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
       "id": 4,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT time, left_bitrate_bps FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, left_bitrate_bps FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
       ],
       "title": "Bitrate (left)",
       "type": "stat"
@@ -135,25 +264,59 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5000 }, { "color": "red", "value": 20000 } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5000
+              },
+              {
+                "color": "red",
+                "value": 20000
+              }
+            ]
+          },
           "unit": "µs"
         }
       },
-      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
       "id": 5,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value_and_name"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT time, left_jitter_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, left_jitter_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
       ],
       "title": "Jitter (left)",
       "type": "stat"
@@ -162,26 +325,68 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [
-            { "options": { "0": { "color": "red", "text": "NTP: Not Synced" }, "1": { "color": "green", "text": "NTP: Synced" } }, "type": "value" }
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "NTP: Not Synced"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "NTP: Synced"
+                }
+              },
+              "type": "value"
+            }
           ],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
         }
       },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
       "id": 6,
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "value"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT ntp_synced FROM pipeline_metrics ORDER BY time DESC LIMIT 1", "refId": "A", "format": "table" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT ntp_synced FROM pipeline_metrics ORDER BY time DESC LIMIT 1",
+          "refId": "A",
+          "format": "table"
+        }
       ],
       "title": "NTP",
       "type": "stat"
@@ -190,7 +395,9 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -200,30 +407,70 @@
             "drawStyle": "line",
             "fillOpacity": 60,
             "gradientMode": "none",
-            "hideFrom": { "tooltip": false, "viz": false, "legend": false },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
             "lineInterpolation": "smooth",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": true,
-            "stacking": { "group": "A", "mode": "normal" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
           "unit": "µs"
         }
       },
-      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 4 },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 4
+      },
       "id": 7,
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT time, camera_us, \"vidConv_us\", enc_us, \"rtpPay_us\", \"udpStream_us\", \"jbHold_us\", \"rtpDepay_us\", dec_us, appsink_us, presentation_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT time, camera_us, \"vidConv_us\", enc_us, \"rtpPay_us\", \"udpStream_us\", \"jbHold_us\", \"rtpDepay_us\", dec_us, appsink_us, presentation_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+          "refId": "A",
+          "format": "time_series"
+        }
       ],
       "title": "G2G latency stages (stacked)",
       "type": "timeseries"
@@ -232,50 +479,128 @@
       "datasource": null,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "continuous-GrYlRd" },
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
           "unit": "µs",
           "min": 0
         }
       },
-      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 4 },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
       "id": 8,
       "options": {
         "displayMode": "gradient",
         "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "showUnfilled": true,
         "valueMode": "color"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": null, "rawSql": "SELECT camera_us, \"vidConv_us\", enc_us, \"rtpPay_us\", \"udpStream_us\", \"jbHold_us\", \"rtpDepay_us\", dec_us, appsink_us, presentation_us FROM pipeline_metrics ORDER BY time DESC LIMIT 1", "refId": "A", "format": "table" }
+        {
+          "datasource": null,
+          "rawSql": "SELECT camera_us, \"vidConv_us\", enc_us, \"rtpPay_us\", \"udpStream_us\", \"jbHold_us\", \"rtpDepay_us\", dec_us, appsink_us, presentation_us FROM pipeline_metrics ORDER BY time DESC LIMIT 1",
+          "refId": "A",
+          "format": "table"
+        }
       ],
       "title": "Current latency budget (per stage)",
       "type": "bargauge"
     },
     {
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
       "id": 50,
       "panels": [
         {
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "Lost packets (cumulative)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "stepAfter", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "Lost packets (cumulative)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "short"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 14
+          },
           "id": 9,
-          "options": { "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, left_lost, right_lost FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, left_lost, right_lost FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "RTP frame loss per eye (cumulative)",
           "type": "timeseries"
         },
@@ -283,18 +608,65 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "RTX requests (cumulative)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "stepAfter", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "RTX requests (cumulative)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "short"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 14
+          },
           "id": 10,
-          "options": { "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, left_rtx, right_rtx FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, left_rtx, right_rtx FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "RTX (retransmissions) per eye (cumulative)",
           "type": "timeseries"
         },
@@ -302,18 +674,66 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "Jitter (µs)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "Jitter (µs)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "µs"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 22
+          },
           "id": 11,
-          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, left_jitter_us, right_jitter_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, left_jitter_us, right_jitter_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "RTP interarrival jitter per eye",
           "type": "timeseries"
         },
@@ -321,18 +741,66 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "Bitrate (bps)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "Bitrate (bps)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "bps"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 22
+          },
           "id": 12,
-          "options": { "legend": { "calcs": ["mean", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, left_bitrate_bps, right_bitrate_bps, bitrate_cfg FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, left_bitrate_bps, right_bitrate_bps, bitrate_cfg FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "Actual bitrate per eye vs configured",
           "type": "timeseries"
         }
@@ -342,25 +810,86 @@
     },
     {
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
       "id": 51,
       "panels": [
         {
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "M2M command path (µs)", "drawStyle": "line", "fillOpacity": 20, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "M2M command path (µs)",
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 30000 }, { "color": "red", "value": 60000 } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 30000
+                  },
+                  {
+                    "color": "red",
+                    "value": 60000
+                  }
+                ]
+              },
               "unit": "µs"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 15
+          },
           "id": 13,
-          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, m2m_command_us FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, m2m_command_us FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "M2M command-path latency (head pose -> servo command)",
           "type": "timeseries"
         },
@@ -368,18 +897,66 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "fixed", "fixedColor": "purple" },
-              "custom": { "axisLabel": "Prediction horizon (ms)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "stepAfter", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "purple"
+              },
+              "custom": {
+                "axisLabel": "Prediction horizon (ms)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "purple", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "purple",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "ms"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 15
+          },
           "id": 14,
-          "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, prediction_ms FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, prediction_ms FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "Head-pose prediction horizon",
           "type": "timeseries"
         },
@@ -387,18 +964,67 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "Requested angle (deg)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "Requested angle (deg)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "degree"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 23
+          },
           "id": 20,
-          "options": { "legend": { "calcs": ["min", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, req_azimuth_deg, req_elevation_deg FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, req_azimuth_deg, req_elevation_deg FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "Requested head position (azimuth / elevation)",
           "type": "timeseries"
         },
@@ -406,18 +1032,67 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "Requested base velocity", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "Requested base velocity",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "none"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 23
+          },
           "id": 21,
-          "options": { "legend": { "calcs": ["min", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, req_linear_x, req_linear_y, req_angular FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, req_linear_x, req_linear_y, req_angular FROM control_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "Requested robot base speed (linear x/y, angular)",
           "type": "timeseries"
         }
@@ -427,30 +1102,140 @@
     },
     {
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
       "id": 52,
       "panels": [
         {
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "fixed", "fixedColor": "text" },
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "none",
               "decimals": 0
             },
             "overrides": [
-              { "matcher": { "id": "byName", "options": "codec" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "0": { "text": "JPEG" }, "1": { "text": "VP8" }, "2": { "text": "VP9" }, "3": { "text": "H264" }, "4": { "text": "H265" } } } ] } ] },
-              { "matcher": { "id": "byName", "options": "video_mode" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "0": { "text": "Stereo" }, "1": { "text": "Mono" }, "2": { "text": "Panoramic" } } } ] } ] },
-              { "matcher": { "id": "byName", "options": "bitrate_cfg" }, "properties": [ { "id": "unit", "value": "bps" } ] }
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "codec"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "JPEG"
+                          },
+                          "1": {
+                            "text": "VP8"
+                          },
+                          "2": {
+                            "text": "VP9"
+                          },
+                          "3": {
+                            "text": "H264"
+                          },
+                          "4": {
+                            "text": "H265"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "video_mode"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "Stereo"
+                          },
+                          "1": {
+                            "text": "Mono"
+                          },
+                          "2": {
+                            "text": "Panoramic"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bitrate_cfg"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "bps"
+                  }
+                ]
+              }
             ]
           },
-          "gridPos": { "h": 4, "w": 12, "x": 0, "y": 16 },
+          "gridPos": {
+            "h": 4,
+            "w": 12,
+            "x": 0,
+            "y": 16
+          },
           "id": 15,
-          "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT codec, video_mode, resolution_width, resolution_height, fps_config, bitrate_cfg FROM pipeline_metrics ORDER BY time DESC LIMIT 1", "refId": "A", "format": "table" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT codec, video_mode, resolution_width, resolution_height, fps_config, bitrate_cfg FROM pipeline_metrics ORDER BY time DESC LIMIT 1",
+              "refId": "A",
+              "format": "table"
+            }
+          ],
           "title": "Streaming config (codec / mode / res / fps / bitrate)",
           "type": "stat"
         },
@@ -458,17 +1243,52 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "thresholds" },
+              "color": {
+                "mode": "thresholds"
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "µs"
             }
           },
-          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 16
+          },
           "id": 16,
-          "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value"
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT ntp_offset_us FROM pipeline_metrics ORDER BY time DESC LIMIT 1", "refId": "A", "format": "table" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT ntp_offset_us FROM pipeline_metrics ORDER BY time DESC LIMIT 1",
+              "refId": "A",
+              "format": "table"
+            }
+          ],
           "title": "NTP offset",
           "type": "stat"
         },
@@ -476,17 +1296,53 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "fixed", "fixedColor": "blue" },
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "short"
             }
           },
-          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 16
+          },
           "id": 17,
-          "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value"
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT frame_id FROM pipeline_metrics ORDER BY time DESC LIMIT 1", "refId": "A", "format": "table" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT frame_id FROM pipeline_metrics ORDER BY time DESC LIMIT 1",
+              "refId": "A",
+              "format": "table"
+            }
+          ],
           "title": "Current frame ID",
           "type": "stat"
         },
@@ -494,18 +1350,66 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "Latency (μs)", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "Latency (μs)",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "µs"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 20
+          },
           "id": 18,
-          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, total_latency_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, total_latency_us FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "G2G total latency over time",
           "type": "timeseries"
         },
@@ -513,35 +1417,207 @@
           "datasource": null,
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisLabel": "FPS", "drawStyle": "line", "fillOpacity": 20, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" } },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "FPS",
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
               "mappings": [],
               "max": 120,
               "min": 0,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
               "unit": "fps"
             }
           },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 20
+          },
           "id": 19,
-          "options": { "legend": { "calcs": ["mean", "min", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
           "pluginVersion": "10.0.0",
-          "targets": [ { "datasource": null, "rawSql": "SELECT time, fps FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time", "refId": "A", "format": "time_series" } ],
+          "targets": [
+            {
+              "datasource": null,
+              "rawSql": "SELECT time, fps FROM pipeline_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
           "title": "Frame rate over time",
           "type": "timeseries"
         }
       ],
       "title": "Stream config & timing",
       "type": "row"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "title": "Audio (latency + bandwidth)",
+      "id": 60,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Audio latency: robot mic -> headset (source -> sink)",
+          "id": 61,
+          "datasource": null,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 18
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "µs",
+              "custom": {
+                "lineInterpolation": "smooth",
+                "fillOpacity": 15,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT time, robot_to_headset_latency_us FROM audio_metrics WHERE robot_to_headset_latency_us IS NOT NULL AND time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series",
+              "datasource": null
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Audio bandwidth (TX robot->headset / RX operator->robot)",
+          "id": 62,
+          "datasource": null,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 18
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "custom": {
+                "lineInterpolation": "smooth",
+                "fillOpacity": 15,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT time, tx_bitrate_bps, rx_bitrate_bps FROM audio_metrics WHERE tx_bitrate_bps IS NOT NULL AND time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series",
+              "datasource": null
+            }
+          ]
+        }
+      ]
     }
   ],
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["robot", "telemetry", "pipeline"],
-  "templating": { "list": [] },
-  "time": { "from": "now-5m", "to": "now" },
-  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"] },
+  "tags": [
+    "robot",
+    "telemetry",
+    "pipeline"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
   "timezone": "browser",
   "title": "BUT Telepresence Pipeline Metrics (InfluxDB 3.0)",
   "uid": "but_telepresence_telemetry_v3",

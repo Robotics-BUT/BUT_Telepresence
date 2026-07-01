@@ -304,6 +304,12 @@ class UDPRelayService:
         elif message_type == MessageType.DEBUG_INFO:
             self._handle_debug_info(data, client_addr)
 
+        elif message_type == MessageType.AUDIO_METRICS_ROBOT:
+            self._handle_audio_metrics_robot(data, client_addr)
+
+        elif message_type == MessageType.AUDIO_METRICS_HEADSET:
+            self._handle_audio_metrics_headset(data, client_addr)
+
         else:
             self.logger.warning(f"Unknown message type from {client_addr[0]}:{client_addr[1]}, dropping")
 
@@ -528,6 +534,51 @@ class UDPRelayService:
         except Exception as e:
             self.consecutive_errors += 1
             self.logger.error(f"Error forwarding to robot: {e}")
+
+    def _handle_audio_metrics_robot(self, data: bytes, client_addr: Tuple[str, int]):
+        """Audio bandwidth from the robot audio_driver (0x04):
+           [0x04][tx_bitrate_bps u32][rx_bitrate_bps u32]  (little-endian).
+           tx = robot mic -> headset (leg A) egress; rx = operator -> robot speaker (leg B)."""
+        try:
+            if len(data) < 9:
+                return
+            tx_bps, rx_bps = struct.unpack_from("<II", data, 1)
+            if self.influx_client:
+                point = (
+                    Point("audio_metrics")
+                    .tag("source", client_addr[0])
+                    .field("tx_bitrate_bps", int(tx_bps))
+                    .field("rx_bitrate_bps", int(rx_bps))
+                    .time(time.time_ns())
+                )
+                with self.influx_buffer_lock:
+                    self.influx_buffer.append(point)
+            self.consecutive_errors = 0
+        except Exception as e:
+            self.consecutive_errors += 1
+            self.logger.error(f"Error handling audio metrics (robot): {e}")
+
+    def _handle_audio_metrics_headset(self, data: bytes, client_addr: Tuple[str, int]):
+        """Robot->headset audio latency from the headset (0x05):
+           [0x05][robot_to_headset_latency_us u32]  (little-endian).
+           Source capture -> headset playout, the same NTP-aligned method as the video G2G."""
+        try:
+            if len(data) < 5:
+                return
+            (latency_us,) = struct.unpack_from("<I", data, 1)
+            if self.influx_client:
+                point = (
+                    Point("audio_metrics")
+                    .tag("source", client_addr[0])
+                    .field("robot_to_headset_latency_us", int(latency_us))
+                    .time(time.time_ns())
+                )
+                with self.influx_buffer_lock:
+                    self.influx_buffer.append(point)
+            self.consecutive_errors = 0
+        except Exception as e:
+            self.consecutive_errors += 1
+            self.logger.error(f"Error handling audio metrics (headset): {e}")
 
     def _handle_debug_info(self, data: bytes, client_addr: Tuple[str, int]):
         """

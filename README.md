@@ -14,17 +14,20 @@ A low-latency standalone VR telepresence system for remote robot control. This s
 │  ┌───────────┐  │Stereo Video (RTP/UDP)│  │             Robot             │  │
 │  │  VR_App   │  │◄─────────────────────│  │           Controller          │  │
 │  └───────────┘  │                      │  └───────────────────────────────┘  │
-└─────────────────┘                      │         │                │          │
-                                         │         ▼                ▼          │
-                                         │  ┌─────────────┐  ┌──────────────┐  │
+│                 │ Audio (Opus/RTP/UDP) │         │                │          │
+│                 │◄────────────────────►│         ▼                ▼          │
+└─────────────────┘   (bidirectional)    │  ┌─────────────┐  ┌──────────────┐  │
                                          │  │  Robot      │  │  Camera      │  │
                                          │  │  movement   │  │  Pan-Tilt    │  │
                                          │  └─────────────┘  └──────────────┘  │
                                          │                                     │
                                          │  ┌─────────────────────────────┐    │
-                                         │  │ Streaming Driver (GStreamer)│    │
+                                         │  │ Video Driver (GStreamer)    │    │
                                          │  │ Camera(s) → RTP stream      │    │
                                          │  │ Stereo / Mono / Panoramic   │    │
+                                         │  ├─────────────────────────────┤    │
+                                         │  │ Audio Driver (GStreamer)    │    │
+                                         │  │ mic ⇄ speaker (Opus, AEC)   │    │
                                          │  └─────────────────────────────┘    │
                                          └─────────────────────────────────────┘
 ```
@@ -34,9 +37,10 @@ A low-latency standalone VR telepresence system for remote robot control. This s
 ```
 BUT_Telepresence/
 ├── VR_App/              # Android VR application (C++/OpenXR)
-├── robot_controller/    # Head pose & robot control relay (Python)
-├── video_driver/    # Camera streaming pipeline (C++/GStreamer)
-├── server/              # REST API for video stream control (Python/Flask)
+├── robot_controller/    # Head pose & robot control relay + telemetry (Python)
+├── video_driver/        # Camera streaming pipeline (C++/GStreamer)
+├── audio_driver/        # Optional bidirectional audio bridge (C++/GStreamer)
+├── server/              # REST API for video + audio control (Python/Flask)
 ├── services/            # systemd unit files
 └── scripts/             # Telemetry visualization utilities
 ```
@@ -250,6 +254,19 @@ python -m swagger_server
 
 Or set up permanently through the provided service in *services/*
 
+## Audio Bridge (optional)
+
+`audio_driver/` is a standalone, optional bidirectional audio bridge, fully decoupled
+from the video path (a separate process, so an audio fault never disturbs video/control).
+It is managed by the same REST server as the video stream (`/api/v1/audio/{start,stop,state}`)
+and the operator toggles each leg from the in-VR menu ("Robot sound" and "Microphone").
+
+- **Transport:** Opus over RTP/UDP, 48 kHz. Robot mic → headset on port 8558; operator → robot speaker on port 8560.
+- **Echo cancellation:** `webrtcdsp` + `webrtcechoprobe` (the speaker output is the AEC far-end reference). Degrades to passthrough if `gstreamer1.0-plugins-bad` is absent.
+- **Device pinning:** the server auto-detects the USB mic/speaker and pins them, so the bridge ignores the flapping default sink.
+- **Gain:** `mic_gain` / `speaker_gain` config keys (linear, default `1.0` = unity). The speaker gain is applied before the echo probe so AEC stays correct.
+- **Headless audio:** as a system service the bridge needs a PipeWire session at boot — enable it with `sudo loginctl enable-linger <user>`.
+
 ## systemd Services
 
 Install services for automatic startup:
@@ -316,7 +333,15 @@ network:
 
 # Telemetry & Monitoring
 
-The system collects latency metrics at each pipeline stage. See `robot_controller/TELEMETRY_SETUP.md` for InfluxDB + Grafana setup.
+The system collects latency and bandwidth metrics and logs them to InfluxDB for Grafana display. See `robot_controller/TELEMETRY_SETUP.md` for InfluxDB + Grafana setup. Measurements written by the relay (`robot_controller/relay_service.py`):
+
+- **`pipeline_metrics`** — per-stage video glass-to-glass latency (camera → presentation), per-eye bitrate / jitter / loss, and the streaming config. Stages are timed via NTP-aligned timestamps carried in RTP header extensions.
+- **`control_metrics`** — command-path (motion-to-motion) latency and the head-pose prediction horizon.
+- **`audio_metrics`** — audio source-to-sink latency and per-leg bandwidth:
+  - `robot_to_headset_latency_us` — robot mic → headset playout, measured on the headset from the capture timestamp the robot stamps into each Opus packet (same NTP-aligned method as the video G2G).
+  - `tx_bitrate_bps` / `rx_bitrate_bps` — robot→headset and operator→robot leg bandwidth, measured on the robot.
+
+The Grafana dashboard (`robot_controller/grafana_dashboard_influxdb3.json`) shows these alongside the video stages, including an **Audio (latency + bandwidth)** row.
 
 Export and visualize data:
 ```bash

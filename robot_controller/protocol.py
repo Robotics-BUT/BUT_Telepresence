@@ -14,6 +14,8 @@ class MessageType(Enum):
     HEAD_POSE = "head_pose"  # Servo/head control
     ROBOT_CONTROL = "robot_control"  # Robot movement
     DEBUG_INFO = "debug_info"
+    AUDIO_METRICS_ROBOT = "audio_metrics_robot"      # bandwidth from the audio_driver (0x04)
+    AUDIO_METRICS_HEADSET = "audio_metrics_headset"  # robot->headset audio latency from the headset (0x05)
     UNKNOWN = "unknown"
 
 
@@ -31,6 +33,8 @@ class MessageDetector:
     HEAD_POSE_PREFIX = 0x01
     ROBOT_CONTROL_PREFIX = 0x02
     DEBUG_INFO_PREFIX = 0x03
+    AUDIO_METRICS_ROBOT_PREFIX = 0x04
+    AUDIO_METRICS_HEADSET_PREFIX = 0x05
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -61,6 +65,12 @@ class MessageDetector:
 
         elif prefix == self.DEBUG_INFO_PREFIX:
             return MessageType.DEBUG_INFO
+
+        elif prefix == self.AUDIO_METRICS_ROBOT_PREFIX:
+            return MessageType.AUDIO_METRICS_ROBOT
+
+        elif prefix == self.AUDIO_METRICS_HEADSET_PREFIX:
+            return MessageType.AUDIO_METRICS_HEADSET
 
         # Unknown message type
         else:

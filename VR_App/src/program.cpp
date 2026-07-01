@@ -67,7 +67,7 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
     ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
     videoPlayer_ = std::make_unique<VideoPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
-    audioPlayer_ = std::make_unique<AudioPlayer>();
+    audioPlayer_ = std::make_unique<AudioPlayer>(ntpTimer_.get());
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();
 
     appState_->systemInfo.openXrRuntime = openxr_get_runtime_name(&openxr_instance_);
@@ -678,6 +678,16 @@ void TelepresenceProgram::SendControllerDatagram() {
                 rightSnap = appState_->cameraStreamingStates.second.stats->snapshot();
             }
             robotControlSender_->sendDebugInfo(leftSnap, rightSnap, appState_->streamingConfig, threadPool_);
+        }
+
+        // Audio latency telemetry: robot->headset source->sink latency, emitted whenever
+        // the RX pipeline has a fresh sample (read from the capture timestamp the robot
+        // stamps into each Opus packet). Same relay -> InfluxDB path as the video debug info.
+        if (audioPlayer_ && audioPlayer_->receiving()) {
+            uint32_t audioLatencyUs;
+            if (audioPlayer_->takeRxLatencyUs(audioLatencyUs)) {
+                robotControlSender_->sendAudioMetrics(audioLatencyUs, threadPool_);
+            }
         }
 
         // Update connection status based on health

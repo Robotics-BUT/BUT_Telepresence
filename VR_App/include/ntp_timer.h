@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <tuple>
 #include <atomic>
+#include <optional>
+#include <thread>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 
