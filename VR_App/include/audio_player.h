@@ -15,12 +15,20 @@
 #pragma once
 
 #include <gst/gst.h>
+#include <atomic>
 #include <cstdint>
+#include <map>
+#include <mutex>
 #include <string>
+
+class NtpTimer;
 
 class AudioPlayer {
 public:
-    AudioPlayer() = default;
+    /** `ntp` (optional) supplies the NTP-aligned clock used to measure the
+     *  robot->headset audio latency from the capture timestamp the robot stamps
+     *  into each RTP packet. */
+    explicit AudioPlayer(NtpTimer *ntp = nullptr);
     ~AudioPlayer();
 
     AudioPlayer(const AudioPlayer &) = delete;
@@ -44,9 +52,30 @@ public:
     bool receiving() const { return rxPipeline_ != nullptr; }
     bool sending() const { return txPipeline_ != nullptr; }
 
+    /** Latest robot->headset audio latency sample: full source capture -> playout at
+     *  openslessink, in microseconds. Returns true and consumes the sample if a fresh
+     *  one is available since the last call; false otherwise. */
+    bool takeRxLatencyUs(uint32_t &outUs);
+
 private:
+    /** RTP-buffer probe on the RX depayloader sink: reads the robot's capture timestamp
+     *  from the header extension (the last point the extension exists) and stashes it
+     *  keyed by the buffer PTS. */
+    static GstPadProbeReturn RxCaptureProbe(GstPad *pad, GstPadProbeInfo *info, gpointer self);
+    /** Buffer probe on the openslessink sink (the latest point before playout): matches
+     *  the playout buffer's PTS back to the stashed capture timestamp (floor lookup, since
+     *  audioresample re-chunks buffers) and records the full source->sink latency. */
+    static GstPadProbeReturn RxPlayoutProbe(GstPad *pad, GstPadProbeInfo *info, gpointer self);
+
+    NtpTimer *ntp_ = nullptr;
     GstElement *rxPipeline_ = nullptr;
     GstElement *txPipeline_ = nullptr;
     GstElement *micGate_ = nullptr;    // volume element in TX (mute gate)
     GstElement *spkVolume_ = nullptr;  // volume element in RX (playback volume)
+    std::atomic<uint32_t> rxLatencyUs_{0};
+    std::atomic<bool> rxLatencyFresh_{false};
+    // Capture wall-clock (µs) keyed by buffer PTS (ns), populated at the depay and
+    // consumed at the sink. Ordered so the sink can floor-match a re-chunked PTS.
+    std::mutex rxTsMutex_;
+    std::map<uint64_t, uint64_t> rxTsByPts_;
 };

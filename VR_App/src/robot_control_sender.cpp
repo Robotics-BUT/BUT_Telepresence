@@ -91,6 +91,32 @@ void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &left,
     });
 }
 
+void RobotControlSender::sendAudioMetrics(uint32_t robotToHeadsetLatencyUs,
+                                          BS::thread_pool<BS::tp::none> &threadPool) {
+    if (!isInitialized_) {
+        return;
+    }
+    threadPool.detach_task([this, robotToHeadsetLatencyUs]() {
+        sendAudioMetricsPacket(robotToHeadsetLatencyUs);
+    });
+}
+
+void RobotControlSender::sendAudioMetricsPacket(uint32_t robotToHeadsetLatencyUs) {
+    std::vector<uint8_t> packet;
+    packet.reserve(5);
+    packet.push_back(MSG_AUDIO_METRICS_HEADSET);
+    serializeLittleEndian(packet, robotToHeadsetLatencyUs);
+
+    ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
+                          (sockaddr *) &destAddr_, sizeof(destAddr_));
+    if (sent < 0) {
+        ++consecutiveFailures_;
+    } else {
+        consecutiveFailures_ = 0;
+        ++successfulSends_;
+    }
+}
+
 void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed,
                                             uint64_t timestamp, uint32_t predictionMs) {
     std::vector<uint8_t> packet;
