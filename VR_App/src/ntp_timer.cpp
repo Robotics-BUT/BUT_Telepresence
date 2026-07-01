@@ -1,15 +1,21 @@
 /**
- * ntp_timer.cpp - NTP synchronization implementation
+ * ntp_timer.cpp - NTP synchronization with a clock filter, Huff-n'-Puff
+ *                 asymmetry rejection, and skew (frequency) compensation.
  *
- * Each sync cycle takes 3 NTP samples, selects the one with the lowest RTT,
- * and applies exponential moving average smoothing (alpha=0.1) to the offset.
- * Samples with RTT > 20ms are rejected. Falls back to pool.ntp.org after
- * FALLBACK_THRESHOLD consecutive failures on the primary server.
+ * Each cycle bursts BURST_N samples and keeps the lowest-delay one. A rolling
+ * HUFF_WINDOW keeps the minimum-delay sample over ~60 s (the least path-asymmetry
+ * offset = the anchor). Skew is regressed from the low-delay samples and used to
+ * extrapolate the offset between syncs, so there is no EMA lag. Quality metrics
+ * (RTT, jitter, dispersion, offset error bound, skew, loss) are exposed for
+ * telemetry so the residual clock error is measured, not assumed.
  */
 #include <boost/asio.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <array>
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <vector>
 #include <sys/socket.h>
 #include "pch.h"
 #include "log.h"
@@ -21,7 +27,7 @@ NtpTimer::NtpTimer(const std::string &ntpServerAddress, const std::string &fallb
         : ntpServerAddress_(ntpServerAddress), fallbackServerAddress_(fallbackServerAddress) {
     LOG_INFO("NtpTimer: Initializing with NTP server '%s' (fallback: '%s')",
              ntpServerAddress_.c_str(), fallbackServerAddress_.c_str());
-};
+}
 
 NtpTimer::~NtpTimer() {
     boost::system::error_code ec;
@@ -42,8 +48,6 @@ void NtpTimer::StartAutoSync() {
         } catch (...) {
             LOG_ERROR("NtpTimer: SyncWithServer threw unknown exception");
         }
-
-        // Always re-arm — a broken sync attempt must not stop the loop.
         try {
             timer_->expires_after(std::chrono::seconds(2));
             timer_->async_wait([syncLoop](const boost::system::error_code &ec) {
@@ -53,12 +57,8 @@ void NtpTimer::StartAutoSync() {
             LOG_ERROR("NtpTimer: timer re-arm failed: %s. Loop will end.", e.what());
         }
     };
-    // Post the first sync to io_context so StartAutoSync() returns immediately.
     boost::asio::post(io_, [syncLoop]() { (*syncLoop)(); });
 
-    // Run the io_context in a background thread. Use a work_guard so run() does
-    // not return between async waits, and wrap in a try-loop so a single bad
-    // handler can't kill the sync thread.
     ioThread_ = std::thread([this]() {
         auto work_guard = boost::asio::make_work_guard(io_);
         while (!io_.stopped()) {
@@ -75,198 +75,196 @@ void NtpTimer::StartAutoSync() {
     });
 }
 
-/**
- * Take 3 NTP samples, pick the best (lowest RTT), and update the smoothed offset.
- * Switches to the fallback server after FALLBACK_THRESHOLD consecutive failures.
- */
 void NtpTimer::SyncWithServer(boost::asio::io_context &io) {
-    // Heartbeat: one line per cycle so the loop's liveness is visible without
-    // needing DEBUG-level logs to be enabled.
     LOG_INFO("NtpTimer: cycle start (server='%s', stale_for=%lu ms)",
              ntpServerAddress_.c_str(),
              (unsigned long)(GetTimeSinceLastSyncUs() / 1000));
 
-    std::vector<Sample> goodSamples;
-    int rttRejected = 0;
-    int failed = 0;
+    // Resolve once per cycle (not per sample) to keep sampling variance low.
+    udp::resolver resolver(io);
+    boost::system::error_code ec;
+    auto results = resolver.resolve(udp::v4(), ntpServerAddress_, "123", ec);
+    if (ec || results.empty()) {
+        int failures = ++consecutiveSyncFailures_;
+        if (failures == 1)
+            LOG_ERROR("NtpTimer: Failed to resolve NTP server '%s': %s.",
+                      ntpServerAddress_.c_str(), ec.message().c_str());
+        syncHealthy_ = false;
+        sampleLoss_ = 1.0f;
+    }
+    udp::endpoint server;
+    if (!ec && !results.empty()) {
+        server = *results.begin();
 
-    for (int i = 0; i < 3; ++i) {
-        SampleOutcome outcome;
-        auto result = GetOneNtpSample(io, outcome);
-        if (result.has_value()) {
-            goodSamples.push_back(result.value());
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        } else if (outcome == SampleOutcome::RttRejected) {
-            ++rttRejected;
-        } else {
-            ++failed;
+        std::vector<Sample> good;
+        int rttRejected = 0, failed = 0;
+        for (int i = 0; i < BURST_N; ++i) {
+            SampleOutcome outcome;
+            auto r = GetOneNtpSample(server, io, outcome);
+            if (r.has_value())                       good.push_back(*r);
+            else if (outcome == SampleOutcome::RttRejected) ++rttRejected;
+            else                                     ++failed;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+        sampleLoss_ = (float)(rttRejected + failed) / (float)BURST_N;
+
+        if (!good.empty()) {
+            // Best of the burst = lowest delay.
+            Sample cyc = good.front();
+            for (const auto &s : good) if (s.delay < cyc.delay) cyc = s;
+
+            window_.push_back(cyc);
+            uint64_t nowLocal = GetCurrentTimeUsNonAdjusted();
+            while (!window_.empty() && nowLocal - window_.front().localTime > HUFF_WINDOW_US)
+                window_.pop_front();
+            while (window_.size() > MAX_WINDOW) window_.pop_front();
+
+            hasInitialOffset_ = true;
+            UpdateDiscipline();
+            lastSyncedTimestampLocal_ = GetCurrentTimeUsNonAdjusted();
+            if (consecutiveSyncFailures_ > 0)
+                LOG_INFO("NtpTimer: Sync recovered after %d failed cycles", consecutiveSyncFailures_.load());
+            consecutiveSyncFailures_ = 0;
+            syncHealthy_ = true;
+            LOG_DEBUG("NtpTimer: offset=%ld us rttMin=%u us jitter=%u us disp=%u us err=%u us skew=%.1f ppm loss=%.2f",
+                      (long)GetSmoothedOffsetUs(), rttMinUs_.load(), jitterUs_.load(),
+                      offsetDispersionUs_.load(), offsetErrorBoundUs_.load(), skewPpm_.load(), sampleLoss_.load());
+            return;
+        }
+
+        LOG_WARN("NtpTimer: cycle yielded no good samples (rttRejected=%d, failed=%d, server='%s')",
+                 rttRejected, failed, ntpServerAddress_.c_str());
+        ++consecutiveSyncFailures_;
+        syncHealthy_ = false;
     }
 
-    // Per-cycle diagnostic: surface the rejection breakdown so silent-freeze
-    // failure modes (all samples RTT-rejected, no failures incremented, no
-    // fallback engaged) are visible in logcat.
-    if (goodSamples.empty()) {
-        LOG_WARN("NtpTimer: sync cycle yielded no good samples "
-                 "(rttRejected=%d, failed=%d, server='%s', stale_for=%lu ms)",
-                 rttRejected, failed, ntpServerAddress_.c_str(),
-                 (unsigned long)(GetTimeSinceLastSyncUs() / 1000));
-    }
-
-    // Fall back to public NTP server if primary is unreachable
-    if (goodSamples.empty() && !usingFallback_ &&
-        consecutiveSyncFailures_ >= FALLBACK_THRESHOLD && !fallbackServerAddress_.empty()) {
-        LOG_INFO("NtpTimer: Primary NTP server '%s' unreachable after %d attempts, "
-                 "falling back to '%s'",
-                 ntpServerAddress_.c_str(), consecutiveSyncFailures_.load(),
-                 fallbackServerAddress_.c_str());
+    // Fall back to a public server after repeated primary failures.
+    if (!usingFallback_ && consecutiveSyncFailures_ >= FALLBACK_THRESHOLD && !fallbackServerAddress_.empty()) {
+        LOG_INFO("NtpTimer: Primary '%s' unreachable after %d cycles, falling back to '%s'",
+                 ntpServerAddress_.c_str(), consecutiveSyncFailures_.load(), fallbackServerAddress_.c_str());
         ntpServerAddress_ = fallbackServerAddress_;
         usingFallback_ = true;
         consecutiveSyncFailures_ = 0;
-        return;
     }
-
-    if (goodSamples.empty()) return;
-
-    uint64_t bestRtt = std::numeric_limits<uint64_t>::max();
-    uint64_t bestIndex = 0;
-    for (int i = 0; i < goodSamples.size(); i++) {
-        if (goodSamples[i].rtt < bestRtt) {
-            bestRtt = goodSamples[i].rtt;
-            bestIndex = i;
-        }
-    }
-
-    const auto& best = goodSamples[bestIndex];
-
-    if (!hasInitialOffset_) {
-        smoothedOffsetUs_ = best.offset;
-        hasInitialOffset_ = true;
-    } else {
-        smoothedOffsetUs_ = alpha * best.offset +
-                            (1.0 - alpha) * smoothedOffsetUs_;
-    }
-
-    lastSyncedTimestampLocal_ = GetCurrentTimeUsNonAdjusted();
-
-    LOG_DEBUG("NtpTimer: Selected sample Offset=%ld ms | RTT=%lu us | Diff=%ld us",
-              best.offset / 1000, (unsigned long)best.rtt, best.diff);
-    LOG_DEBUG("NtpTimer: Current smoothed offset=%ld ms", smoothedOffsetUs_ / 1000);
 }
 
-/**
- * Perform a single NTP request/response exchange.
- * Returns a Sample with offset and RTT, or nullopt on failure.
- * Rejects samples with RTT > 20ms as unreliable.
- */
-std::optional<Sample> NtpTimer::GetOneNtpSample(boost::asio::io_context &io, SampleOutcome &outcome) {
+// Recompute the disciplined clock model + quality metrics from the current window.
+void NtpTimer::UpdateDiscipline() {
+    if (window_.empty()) return;
+
+    // Huff-n'-Puff: the minimum-delay sample = least path-asymmetry = base anchor.
+    const Sample *base = &window_.front();
+    for (const auto &s : window_) if (s.delay < base->delay) base = &s;
+    const uint64_t minDelay = base->delay;
+
+    // Skew: least-squares slope of offset vs local time over the low-delay samples
+    // (delay < 2*minDelay), the least asymmetry-biased ones. Origin-shifted for conditioning.
+    const uint64_t thresh = minDelay * 2 + 1000;  // + a small floor so near-min samples count
+    const int64_t t0 = (int64_t)base->localTime;
+    double n = 0, st = 0, so = 0, stt = 0, sto = 0;
+    for (const auto &s : window_) {
+        if (s.delay > thresh) continue;
+        double t = (double)((int64_t)s.localTime - t0);
+        double o = (double)s.offset;
+        n += 1; st += t; so += o; stt += t * t; sto += t * o;
+    }
+    double skew = 0.0, denom = n * stt - st * st;
+    if (n >= 3 && denom > 1.0) {
+        skew = (n * sto - st * so) / denom;
+        if (skew >  MAX_SKEW) skew =  MAX_SKEW;
+        if (skew < -MAX_SKEW) skew = -MAX_SKEW;
+    }
+
+    baseOffsetUs_.store(base->offset, std::memory_order_relaxed);
+    baseLocalUs_.store((int64_t)base->localTime, std::memory_order_relaxed);
+    skew_.store(skew, std::memory_order_relaxed);
+
+    // Metrics.
+    double jsum = 0; int jn = 0;
+    for (size_t i = 1; i < window_.size(); ++i) {
+        double d = (double)((int64_t)window_[i].delay - (int64_t)window_[i - 1].delay);
+        jsum += d * d; ++jn;
+    }
+    uint32_t jitter = jn ? (uint32_t)std::sqrt(jsum / jn) : 0;
+
+    double om = 0; for (const auto &s : window_) om += (double)s.offset; om /= (double)window_.size();
+    double ov = 0; for (const auto &s : window_) { double d = (double)s.offset - om; ov += d * d; }
+    ov /= (double)window_.size();
+    uint32_t disp = (uint32_t)std::sqrt(ov);
+
+    rttMinUs_.store((uint32_t)minDelay);
+    jitterUs_.store(jitter);
+    offsetDispersionUs_.store(disp);
+    offsetErrorBoundUs_.store((uint32_t)(minDelay / 2) + disp);
+    skewPpm_.store(skew * 1e6);
+}
+
+std::optional<Sample> NtpTimer::GetOneNtpSample(const udp::endpoint &server,
+                                                boost::asio::io_context &io, SampleOutcome &outcome) {
     outcome = SampleOutcome::Failed;
     try {
-        udp::resolver resolver(io);
-        boost::system::error_code ec;
-        auto results = resolver.resolve(udp::v4(), ntpServerAddress_, "123", ec);
-
-        if (ec || results.empty()) {
-            int failures = ++consecutiveSyncFailures_;
-            if (failures == 1) {
-                LOG_ERROR("NtpTimer: Failed to resolve NTP server '%s': %s. "
-                          "Time sync unavailable - latency measurements may be inaccurate.",
-                          ntpServerAddress_.c_str(), ec.message().c_str());
-            }
-            syncHealthy_ = false;
-            return std::nullopt;
-        }
-
-        udp::endpoint serverEndpoint = *results.begin();
         udp::socket socket(io);
         socket.open(udp::v4());
-
-        // Set receive timeout to prevent blocking indefinitely
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        struct timeval tv{}; tv.tv_sec = 1; tv.tv_usec = 0;
         setsockopt(socket.native_handle(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         std::array<uint8_t, 48> request{};
-        request[0] = 0b11100011;  // LI = 3 (unsynchronized), Version = 4, Mode = 3 (client)
+        request[0] = 0b11100011;  // LI=3, VN=4, Mode=3 (client)
 
-        // --- T1: client send time ---
-        auto T1 = GetCurrentTimeUsNonAdjusted();
-        // Convert to NTP timestamp (seconds since 1900)
+        uint64_t T1 = GetCurrentTimeUsNonAdjusted();
         uint64_t ntpSeconds = (T1 / 1'000'000) + NTP_TIMESTAMP_DELTA;
         uint64_t ntpFraction = (uint64_t)((T1 % 1'000'000) * ((1LL << 32) / 1e6));
+        *reinterpret_cast<uint32_t *>(&request[40]) = htonl((uint32_t)ntpSeconds);
+        *reinterpret_cast<uint32_t *>(&request[44]) = htonl((uint32_t)ntpFraction);
 
-        *reinterpret_cast<uint32_t*>(&request[40]) = htonl((uint32_t)ntpSeconds);
-        *reinterpret_cast<uint32_t*>(&request[44]) = htonl((uint32_t)ntpFraction);
-
-        socket.send_to(boost::asio::buffer(request), serverEndpoint);
+        socket.send_to(boost::asio::buffer(request), server);
 
         std::array<uint8_t, 48> response{};
         udp::endpoint senderEndpoint;
         boost::system::error_code recv_ec;
-
         size_t len = socket.receive_from(boost::asio::buffer(response), senderEndpoint, 0, recv_ec);
-        auto T4 = GetCurrentTimeUsNonAdjusted();
-        LOG_DEBUG("NtpTimer: Received response from NTP server");
+        uint64_t T4 = GetCurrentTimeUsNonAdjusted();
 
-        if (recv_ec || len < 48) {
-            int failures = ++consecutiveSyncFailures_;
-            if (failures == 1) {
-                LOG_ERROR("NtpTimer: Failed to receive NTP response from '%s': %s. "
-                          "Using local time only.",
-                          ntpServerAddress_.c_str(), recv_ec ? recv_ec.message().c_str() : "incomplete response");
-            }
-            syncHealthy_ = false;
-            return std::nullopt;
-        }
+        if (recv_ec || len < 48) { outcome = SampleOutcome::Failed; return std::nullopt; }
 
-        // --- Extract T1, T2, T3 from response ---
-        auto parseTimestamp = [](const uint8_t* data) {
-            uint32_t secs = ntohl(*reinterpret_cast<const uint32_t*>(data));
-            uint32_t frac = ntohl(*reinterpret_cast<const uint32_t*>(data + 4));
+        auto parseTimestamp = [](const uint8_t *data) {
+            uint32_t secs = ntohl(*reinterpret_cast<const uint32_t *>(data));
+            uint32_t frac = ntohl(*reinterpret_cast<const uint32_t *>(data + 4));
             double fracSec = (double)frac / (double)(1ULL << 32);
             uint64_t micros = (uint64_t)(fracSec * 1e6);
             return (uint64_t)(secs - NTP_TIMESTAMP_DELTA) * 1'000'000 + micros;
         };
+        uint64_t T2 = parseTimestamp(&response[32]);  // server receive
+        uint64_t T3 = parseTimestamp(&response[40]);  // server transmit
 
-        uint64_t T1srv = parseTimestamp(&response[24]); // originate (echo of client T1)
-        uint64_t T2    = parseTimestamp(&response[32]); // server receive
-        uint64_t T3    = parseTimestamp(&response[40]); // server transmit
-
-        // --- Compute offset & delay ---
         int64_t offset = ((int64_t)(T2 - T1) + (int64_t)(T3 - T4)) / 2;
-        uint64_t delay = ((T4 - T1) - (T3 - T2));
+        int64_t delay = (int64_t)(T4 - T1) - (int64_t)(T3 - T2);
+        if (delay < 0) { outcome = SampleOutcome::RttRejected; return std::nullopt; }
+        if ((uint64_t)delay > RTT_REJECT_US) { outcome = SampleOutcome::RttRejected; return std::nullopt; }
 
-        LOG_DEBUG("NtpTimer: Sample offset=%ld us | RTT=%lu us", offset, (unsigned long)delay);
-
-        if (delay > 20000) {
-            outcome = SampleOutcome::RttRejected;
-            LOG_INFO("NtpTimer: sample rejected for high RTT=%lu us (offset=%ld us)",
-                     (unsigned long)delay, offset);
-            return std::nullopt;
-        }
-
-        // Successful sync
-        if (consecutiveSyncFailures_ > 0) {
-            LOG_INFO("NtpTimer: Sync recovered after %d failures", consecutiveSyncFailures_.load());
-        }
-        consecutiveSyncFailures_ = 0;
-        syncHealthy_ = true;
         outcome = SampleOutcome::Accepted;
-
-        return Sample{offset, delay, GetCurrentTimeUs() - T3};
+        return Sample{offset, (uint64_t)delay, T1};
     } catch (const std::exception &e) {
-        int failures = ++consecutiveSyncFailures_;
-        if (failures == 1) {
-            LOG_ERROR("NtpTimer: Sync exception: %s. Using local time.", e.what());
-        }
-        syncHealthy_ = false;
+        outcome = SampleOutcome::Failed;
         return std::nullopt;
     }
 }
 
 uint64_t NtpTimer::GetCurrentTimeUs() const {
-    return GetCurrentTimeUsNonAdjusted() + smoothedOffsetUs_;
+    uint64_t localNow = GetCurrentTimeUsNonAdjusted();
+    int64_t base = baseOffsetUs_.load(std::memory_order_relaxed);
+    int64_t baseT = baseLocalUs_.load(std::memory_order_relaxed);
+    double sk = skew_.load(std::memory_order_relaxed);
+    int64_t off = base + (int64_t)(sk * (double)((int64_t)localNow - baseT));
+    return (uint64_t)((int64_t)localNow + off);
+}
+
+int64_t NtpTimer::GetSmoothedOffsetUs() const {
+    uint64_t localNow = GetCurrentTimeUsNonAdjusted();
+    int64_t base = baseOffsetUs_.load(std::memory_order_relaxed);
+    int64_t baseT = baseLocalUs_.load(std::memory_order_relaxed);
+    double sk = skew_.load(std::memory_order_relaxed);
+    return base + (int64_t)(sk * (double)((int64_t)localNow - baseT));
 }
 
 uint64_t NtpTimer::GetCurrentTimeUsNonAdjusted() {

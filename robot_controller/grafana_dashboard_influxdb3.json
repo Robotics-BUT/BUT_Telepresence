@@ -1592,6 +1592,158 @@
           ]
         }
       ]
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "title": "NTP clock quality",
+      "id": 70,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "NTP offset (headset vs robot clock)",
+          "id": 71,
+          "datasource": null,
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 20
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "µs",
+              "custom": {
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT time, offset_us FROM ntp_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series",
+              "datasource": null
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "NTP error bound / RTT / jitter / dispersion",
+          "id": 72,
+          "datasource": null,
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 20
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "µs",
+              "custom": {
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT time, offset_error_bound_us, rtt_min_us, jitter_us, offset_dispersion_us FROM ntp_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series",
+              "datasource": null
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "NTP clock skew",
+          "id": 73,
+          "datasource": null,
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 20
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ppm",
+              "custom": {
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT time, skew_ppm FROM ntp_metrics WHERE time >= now() - interval '5 minutes' ORDER BY time",
+              "refId": "A",
+              "format": "time_series",
+              "datasource": null
+            }
+          ]
+        }
+      ]
     }
   ],
   "refresh": "5s",

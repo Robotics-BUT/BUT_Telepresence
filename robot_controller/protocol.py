@@ -16,6 +16,7 @@ class MessageType(Enum):
     DEBUG_INFO = "debug_info"
     AUDIO_METRICS_ROBOT = "audio_metrics_robot"      # bandwidth from the audio_driver (0x04)
     AUDIO_METRICS_HEADSET = "audio_metrics_headset"  # robot->headset audio latency from the headset (0x05)
+    NTP_METRICS = "ntp_metrics"                      # NTP quality / network metrics from the headset (0x06)
     UNKNOWN = "unknown"
 
 
@@ -35,6 +36,7 @@ class MessageDetector:
     DEBUG_INFO_PREFIX = 0x03
     AUDIO_METRICS_ROBOT_PREFIX = 0x04
     AUDIO_METRICS_HEADSET_PREFIX = 0x05
+    NTP_METRICS_PREFIX = 0x06
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -71,6 +73,9 @@ class MessageDetector:
 
         elif prefix == self.AUDIO_METRICS_HEADSET_PREFIX:
             return MessageType.AUDIO_METRICS_HEADSET
+
+        elif prefix == self.NTP_METRICS_PREFIX:
+            return MessageType.NTP_METRICS
 
         # Unknown message type
         else:
