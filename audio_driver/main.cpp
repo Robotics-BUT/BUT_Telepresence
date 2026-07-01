@@ -25,6 +25,8 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -49,8 +51,9 @@ static constexpr int OPUS_CLOCK = 48000;
 static constexpr guint8 AUDIO_RTP_EXT_ID = 1;
 
 // Robot->relay audio-metrics packet (UDP to the relay ingest port), 0x04:
-//   [0x04][tx_bitrate_bps u32][rx_bitrate_bps u32]  (little-endian)
-// tx = robot mic -> headset (leg A) egress; rx = operator -> robot speaker (leg B) ingress.
+//   [0x04][tx_bitrate_bps u32][rx_bitrate_bps u32][headset_to_robot_latency_us u32]  (LE)
+// tx = robot mic -> headset (leg A) egress; rx = operator -> robot speaker (leg B) ingress;
+// headset_to_robot_latency = operator->robot-speaker source->sink (0 = no fresh sample).
 static constexpr guint8 MSG_AUDIO_METRICS_ROBOT = 0x04;
 
 struct AudioConfig {
@@ -82,6 +85,22 @@ static std::atomic<uint64_t> g_rxBytes{0};   // cumulative bytes received on the
 static int g_metricsSock = -1;
 static struct sockaddr_in g_relayAddr{};
 static std::atomic<bool> g_relayReady{false};
+
+// RX (operator->speaker) source->sink latency: capture wall-clock (from the headset's RTP
+// ext) stashed by PTS at the depay, matched at the speaker sink (full source->playout).
+static std::mutex g_rxTsMutex;
+static std::map<uint64_t, uint64_t> g_rxTsByPts;
+static std::atomic<uint32_t> g_h2rLatencyUs{0};   // headset->robot latency, µs
+static std::atomic<bool> g_h2rFresh{false};
+
+// TX-leg retry: the USB mic (pulsesrc) can be briefly unavailable right after boot, so a
+// first BuildAndPlay of the TX leg fails ("check audio device"). Instead of giving up
+// until the next reconfigure, retry on the main loop until the device appears.
+static std::atomic<bool> g_txRetryActive{false};
+// Last-built pipeline descriptions; a leg is only torn down/rebuilt when ITS description
+// changes, so toggling one leg never disturbs the other (the RX/TX legs are decoupled).
+static std::string g_rxDesc;
+static std::string g_txDesc;
 
 // NTP-aligned wall clock in microseconds. The Jetson is chrony-synced and the
 // headset's NtpTimer syncs to the Jetson, so CLOCK_REALTIME here shares the
@@ -136,6 +155,61 @@ static GstPadProbeReturn RxByteProbe(GstPad *, GstPadProbeInfo *info, gpointer) 
     return GST_PAD_PROBE_OK;
 }
 
+static constexpr size_t RX_TS_MAP_CAP = 512;
+
+// RX depay sink: read the headset's capture wall-clock from the RTP ext (last point it
+// exists) and stash it keyed by buffer PTS. Latency is taken later at the speaker sink.
+static GstPadProbeReturn RxCaptureProbe(GstPad *, GstPadProbeInfo *info, gpointer) {
+    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (!buf) return GST_PAD_PROBE_OK;
+    uint64_t pts = GST_BUFFER_PTS(buf);
+    if (!GST_CLOCK_TIME_IS_VALID(pts)) return GST_PAD_PROBE_OK;
+
+    GstRTPBuffer rtp = GST_RTP_BUFFER_INIT;
+    if (gst_rtp_buffer_map(buf, GST_MAP_READ, &rtp)) {
+        gpointer data = nullptr; guint size = 0;
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp, AUDIO_RTP_EXT_ID, 0, &data, &size)
+            && data && size >= sizeof(uint64_t)) {
+            uint64_t captureUs = 0;
+            std::memcpy(&captureUs, data, sizeof(captureUs));
+            std::lock_guard<std::mutex> lk(g_rxTsMutex);
+            g_rxTsByPts[pts] = captureUs;
+            while (g_rxTsByPts.size() > RX_TS_MAP_CAP) g_rxTsByPts.erase(g_rxTsByPts.begin());
+        }
+        gst_rtp_buffer_unmap(&rtp);
+    }
+    return GST_PAD_PROBE_OK;
+}
+
+// Speaker sink (latest point before playout): floor-match this buffer's PTS to a stashed
+// capture time (audioresample re-chunks) -> full headset->robot source->sink latency.
+static GstPadProbeReturn RxPlayoutProbe(GstPad *, GstPadProbeInfo *info, gpointer) {
+    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (!buf) return GST_PAD_PROBE_OK;
+    uint64_t pts = GST_BUFFER_PTS(buf);
+    if (!GST_CLOCK_TIME_IS_VALID(pts)) return GST_PAD_PROBE_OK;
+
+    uint64_t captureUs = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_rxTsMutex);
+        if (g_rxTsByPts.empty()) return GST_PAD_PROBE_OK;
+        auto it = g_rxTsByPts.upper_bound(pts);
+        if (it == g_rxTsByPts.begin()) return GST_PAD_PROBE_OK;
+        --it;
+        captureUs = it->second;
+        g_rxTsByPts.erase(g_rxTsByPts.begin(), it);
+    }
+    uint64_t now = NowNtpUs();
+    if (now > captureUs) {
+        uint64_t latency = now - captureUs;
+        if (latency < 5'000'000ull) {
+            g_h2rLatencyUs.store(static_cast<uint32_t>(latency), std::memory_order_relaxed);
+            g_h2rFresh.store(true, std::memory_order_relaxed);
+        }
+    }
+    return GST_PAD_PROBE_OK;
+}
+
 static void AttachProbe(GstElement *pipeline, const char *elemName, const char *padName,
                         GstPadProbeCallback cb) {
     if (!pipeline) return;
@@ -170,10 +244,15 @@ static gboolean ReportMetrics(gpointer) {
         if (dt > 0) {
             uint32_t txBps = static_cast<uint32_t>((tx - lastTx) * 8 / dt);
             uint32_t rxBps = static_cast<uint32_t>((rx - lastRx) * 8 / dt);
-            uint8_t pkt[9];
+            // Only report a headset->robot latency if a fresh sample arrived this window
+            // (0 = none, so the relay/graph isn't polluted with stale/zero values).
+            uint32_t h2rUs = g_h2rFresh.exchange(false, std::memory_order_relaxed)
+                                 ? g_h2rLatencyUs.load(std::memory_order_relaxed) : 0;
+            uint8_t pkt[13];
             pkt[0] = MSG_AUDIO_METRICS_ROBOT;
             memcpy(pkt + 1, &txBps, 4);
             memcpy(pkt + 5, &rxBps, 4);
+            memcpy(pkt + 9, &h2rUs, 4);
             sendto(g_metricsSock, pkt, sizeof(pkt), 0,
                    reinterpret_cast<struct sockaddr *>(&g_relayAddr), sizeof(g_relayAddr));
         }
@@ -216,7 +295,7 @@ static std::string BuildRxDescription(const AudioConfig &a, bool aec) {
         << " caps=\"application/x-rtp,media=(string)audio,clock-rate=(int)" << OPUS_CLOCK
         << ",encoding-name=(string)OPUS,payload=(int)" << OPUS_PT << "\""
         << " ! rtpjitterbuffer latency=" << a.jitterLatencyMs << " do-lost=true"
-        << " ! rtpopusdepay ! opusdec ! audioconvert ! audioresample"
+        << " ! rtpopusdepay name=rx_depay ! opusdec ! audioconvert ! audioresample"
         << " ! audio/x-raw,rate=" << a.sampleRate << ",channels=1";
     // Apply the operator-voice gain BEFORE the echo probe so the AEC far-end reference
     // matches what actually plays out the speaker (boosting after the probe would make the
@@ -273,46 +352,90 @@ static GstElement *BuildAndPlay(const std::string &desc, const char *label) {
     return p;
 }
 
-static void TeardownPipelines() {
-    for (GstElement **p : {&g_txPipeline, &g_rxPipeline}) {
-        if (*p) {
-            gst_element_send_event(*p, gst_event_new_eos());
-            gst_element_set_state(*p, GST_STATE_NULL);
-            gst_object_unref(*p);
-            *p = nullptr;
-        }
+static void TeardownOne(GstElement **p) {
+    if (*p) {
+        gst_element_send_event(*p, gst_event_new_eos());
+        gst_element_set_state(*p, GST_STATE_NULL);
+        gst_object_unref(*p);
+        *p = nullptr;
     }
 }
 
-static void ApplyConfig(const AudioConfig &a) {
-    TeardownPipelines();
+static void TeardownPipelines() {
+    TeardownOne(&g_txPipeline);
+    TeardownOne(&g_rxPipeline);
+    g_rxDesc.clear();
+    g_txDesc.clear();
+}
 
+// Runs on the main loop; self-corrects against the latest desired TX description. Retries
+// INDEFINITELY (every 1 s) while the mic leg is wanted but down, so the TX leg always heals
+// once the USB mic becomes available — no budget to exhaust and strand the operator.
+// Stops when the leg comes up or is no longer wanted.
+static gboolean RetryTx(gpointer) {
+    if (g_txDesc.empty() || g_txPipeline) {
+        g_txRetryActive.store(false);
+        return G_SOURCE_REMOVE;
+    }
+    std::cerr << "[audio] retrying TX mic->headset (mic not ready)\n";
+    g_txPipeline = BuildAndPlay(g_txDesc, "TX mic->headset (retry)");
+    if (g_txPipeline) {
+        AttachProbe(g_txPipeline, "audio_tx_sink", "sink", TxStampProbe);
+        g_txRetryActive.store(false);
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;   // keep trying until the mic opens
+}
+
+// Incremental + decoupled reconfigure: each leg's pipeline is a pure function of `aec`
+// plus its OWN parameters (never the other leg's enable state), and a leg is rebuilt ONLY
+// when its description changes. So toggling "Microphone" (RX/speaker) never tears down the
+// robot-mic->headset (TX) leg the operator is listening to, and vice versa. AEC still works
+// when both legs run (webrtcdsp pairs with webrtcechoprobe); with a single leg its own AEC
+// element runs harmlessly with no partner.
+static void ApplyConfig(const AudioConfig &a) {
     bool aec = a.aecEnabled;
     if (aec && !(HasElement("webrtcdsp") && HasElement("webrtcechoprobe"))) {
         std::cerr << "[audio] webrtcdsp/webrtcechoprobe unavailable "
                      "(install gstreamer1.0-plugins-bad) — running WITHOUT echo cancellation\n";
         aec = false;
     }
-    // The AEC pair must both exist for the probe<->dsp link to work; require both legs.
-    bool aecPair = aec && a.micEnabled && a.speakerEnabled;
+    SetupMetricsSocket(a);
 
-    if (a.speakerEnabled)
-        g_rxPipeline = BuildAndPlay(BuildRxDescription(a, aecPair), "RX operator->speaker");
-    if (a.micEnabled) {
-        if (a.headsetIp.empty())
-            std::cerr << "[audio] no headset_ip — mic->headset (TX) disabled\n";
-        else
-            g_txPipeline = BuildAndPlay(BuildTxDescription(a, aecPair), "TX mic->headset");
+    // --- RX: operator -> robot speaker ---
+    std::string rxDesc = a.speakerEnabled ? BuildRxDescription(a, aec) : std::string();
+    if (rxDesc != g_rxDesc || (!rxDesc.empty() && !g_rxPipeline)) {
+        TeardownOne(&g_rxPipeline);
+        { std::lock_guard<std::mutex> lk(g_rxTsMutex); g_rxTsByPts.clear(); }
+        g_rxDesc = rxDesc;
+        if (!rxDesc.empty()) {
+            g_rxPipeline = BuildAndPlay(rxDesc, "RX operator->speaker");
+            AttachProbe(g_rxPipeline, "audio_rx_src", "src", RxByteProbe);
+            AttachProbe(g_rxPipeline, "rx_depay", "sink", RxCaptureProbe);
+            AttachProbe(g_rxPipeline, "audio_speaker", "sink", RxPlayoutProbe);
+        }
     }
 
-    // Instrumentation: stamp/count on the egress (TX) and ingress (RX) so the relay
-    // can log per-leg bandwidth, and the headset can compute robot->headset latency
-    // from the capture timestamp stamped here.
-    SetupMetricsSocket(a);
-    AttachProbe(g_txPipeline, "audio_tx_sink", "sink", TxStampProbe);
-    AttachProbe(g_rxPipeline, "audio_rx_src", "src", RxByteProbe);
+    // --- TX: robot mic -> headset ---
+    if (a.micEnabled && a.headsetIp.empty())
+        std::cerr << "[audio] no headset_ip — mic->headset (TX) disabled\n";
+    std::string txDesc = (a.micEnabled && !a.headsetIp.empty()) ? BuildTxDescription(a, aec) : std::string();
+    if (txDesc != g_txDesc || (!txDesc.empty() && !g_txPipeline)) {
+        TeardownOne(&g_txPipeline);
+        g_txDesc = txDesc;
+        if (!txDesc.empty()) {
+            g_txPipeline = BuildAndPlay(txDesc, "TX mic->headset");
+            if (g_txPipeline)
+                AttachProbe(g_txPipeline, "audio_tx_sink", "sink", TxStampProbe);
+        }
+    }
+    // Mic leg wanted but not up (USB mic not ready — common right after boot): retry on the
+    // main loop instead of leaving it dead until the next reconfigure.
+    if (!g_txDesc.empty() && !g_txPipeline && !g_txRetryActive.exchange(true)) {
+        g_timeout_add_seconds(1, RetryTx, nullptr);
+    }
 
-    std::cout << "[audio] applied config: aec=" << (aecPair ? "on" : "off")
+    std::cout << "[audio] applied config: aec=" << (aec ? "on" : "off")
               << " mic=" << a.micEnabled << " speaker=" << a.speakerEnabled
               << " headset=" << a.headsetIp << "\n";
 }

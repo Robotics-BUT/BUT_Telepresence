@@ -536,21 +536,27 @@ class UDPRelayService:
             self.logger.error(f"Error forwarding to robot: {e}")
 
     def _handle_audio_metrics_robot(self, data: bytes, client_addr: Tuple[str, int]):
-        """Audio bandwidth from the robot audio_driver (0x04):
-           [0x04][tx_bitrate_bps u32][rx_bitrate_bps u32]  (little-endian).
-           tx = robot mic -> headset (leg A) egress; rx = operator -> robot speaker (leg B)."""
+        """Audio metrics from the robot audio_driver (0x04):
+           [0x04][tx_bitrate_bps u32][rx_bitrate_bps u32][headset_to_robot_latency_us u32] (LE).
+           tx = robot mic -> headset (leg A) egress; rx = operator -> robot speaker (leg B);
+           headset_to_robot_latency = operator->robot-speaker source->sink (0 = no fresh sample)."""
         try:
             if len(data) < 9:
                 return
             tx_bps, rx_bps = struct.unpack_from("<II", data, 1)
+            h2r_us = struct.unpack_from("<I", data, 9)[0] if len(data) >= 13 else 0
             if self.influx_client:
                 point = (
                     Point("audio_metrics")
                     .tag("source", client_addr[0])
                     .field("tx_bitrate_bps", int(tx_bps))
                     .field("rx_bitrate_bps", int(rx_bps))
-                    .time(time.time_ns())
                 )
+                # Only record the latency when a fresh sample was included (non-zero),
+                # so the graph isn't polluted with zeros when no operator audio is flowing.
+                if h2r_us > 0:
+                    point = point.field("headset_to_robot_latency_us", int(h2r_us))
+                point = point.time(time.time_ns())
                 with self.influx_buffer_lock:
                     self.influx_buffer.append(point)
             self.consecutive_errors = 0

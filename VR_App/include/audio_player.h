@@ -66,6 +66,10 @@ private:
      *  the playout buffer's PTS back to the stashed capture timestamp (floor lookup, since
      *  audioresample re-chunks buffers) and records the full source->sink latency. */
     static GstPadProbeReturn RxPlayoutProbe(GstPad *pad, GstPadProbeInfo *info, gpointer self);
+    /** TX udpsink probe: stamp each outgoing Opus packet with the mic capture wall-clock
+     *  (NTP-aligned, recovered from the buffer age) in an RTP header extension, so the
+     *  robot can measure the headset->robot (operator->speaker) source->sink latency. */
+    static GstPadProbeReturn TxStampProbe(GstPad *pad, GstPadProbeInfo *info, gpointer self);
 
     NtpTimer *ntp_ = nullptr;
     GstElement *rxPipeline_ = nullptr;

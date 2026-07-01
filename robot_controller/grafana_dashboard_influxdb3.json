@@ -1501,7 +1501,7 @@
       "panels": [
         {
           "type": "timeseries",
-          "title": "Audio latency: robot mic -> headset (source -> sink)",
+          "title": "Audio latency source->sink (robot->headset & headset->robot)",
           "id": 61,
           "datasource": null,
           "gridPos": {
@@ -1538,7 +1538,7 @@
           },
           "targets": [
             {
-              "rawSql": "SELECT time, robot_to_headset_latency_us FROM audio_metrics WHERE robot_to_headset_latency_us IS NOT NULL AND time >= now() - interval '5 minutes' ORDER BY time",
+              "rawSql": "SELECT time, robot_to_headset_latency_us, headset_to_robot_latency_us FROM audio_metrics WHERE (robot_to_headset_latency_us IS NOT NULL OR headset_to_robot_latency_us IS NOT NULL) AND time >= now() - interval '5 minutes' ORDER BY time",
               "refId": "A",
               "format": "time_series",
               "datasource": null
