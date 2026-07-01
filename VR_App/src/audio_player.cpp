@@ -157,6 +157,41 @@ void AudioPlayer::stopReceive() {
     { std::lock_guard<std::mutex> lk(rxTsMutex_); rxTsByPts_.clear(); }
 }
 
+// TX udpsink probe: stamp the outgoing RTP packet with the mic capture wall-clock so the
+// robot can measure headset->robot source->sink latency. Mirrors the robot's TX stamp.
+GstPadProbeReturn AudioPlayer::TxStampProbe(GstPad *pad, GstPadProbeInfo *info, gpointer self) {
+    auto *ap = static_cast<AudioPlayer *>(self);
+    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (!buf || !ap->ntp_) return GST_PAD_PROBE_OK;
+
+    uint64_t ageUs = 0;
+    if (GstElement *elem = gst_pad_get_parent_element(pad)) {
+        GstClock *clock = gst_element_get_clock(elem);
+        if (clock) {
+            GstClockTime now = gst_clock_get_time(clock);
+            GstClockTime base = gst_element_get_base_time(elem);
+            GstClockTime pts = GST_BUFFER_PTS(buf);
+            if (GST_CLOCK_TIME_IS_VALID(pts) && now > base) {
+                GstClockTime running = now - base;
+                if (running > pts) ageUs = (running - pts) / 1000;
+            }
+            gst_object_unref(clock);
+        }
+        gst_object_unref(elem);
+    }
+    uint64_t captureUs = ap->ntp_->GetCurrentTimeUs();
+    captureUs = (captureUs > ageUs) ? captureUs - ageUs : captureUs;
+
+    buf = gst_buffer_make_writable(buf);
+    GST_PAD_PROBE_INFO_DATA(info) = buf;
+    GstRTPBuffer rtp = GST_RTP_BUFFER_INIT;
+    if (gst_rtp_buffer_map(buf, GST_MAP_READWRITE, &rtp)) {
+        gst_rtp_buffer_add_extension_onebyte_header(&rtp, AUDIO_RTP_EXT_ID, &captureUs, sizeof(captureUs));
+        gst_rtp_buffer_unmap(&rtp);
+    }
+    return GST_PAD_PROBE_OK;
+}
+
 void AudioPlayer::startSend(const std::string &robotIp, uint16_t port, int bitrate, bool startMuted) {
     if (txPipeline_) return;
     std::string desc =
@@ -170,6 +205,15 @@ void AudioPlayer::startSend(const std::string &robotIp, uint16_t port, int bitra
     if (txPipeline_) {
         micGate_ = gst_bin_get_by_name(GST_BIN(txPipeline_), "mic_gate");
         setMuted(startMuted);
+        if (ntp_) {
+            if (GstElement *tx = gst_bin_get_by_name(GST_BIN(txPipeline_), "audio_tx")) {
+                if (GstPad *sink = gst_element_get_static_pad(tx, "sink")) {
+                    gst_pad_add_probe(sink, GST_PAD_PROBE_TYPE_BUFFER, TxStampProbe, this, nullptr);
+                    gst_object_unref(sink);
+                }
+                gst_object_unref(tx);
+            }
+        }
     }
 }
 
