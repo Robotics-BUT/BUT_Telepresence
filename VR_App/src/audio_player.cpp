@@ -123,7 +123,12 @@ void AudioPlayer::startReceive(uint16_t port, int volumePercent) {
         " ! rtpjitterbuffer latency=40 do-lost=true"
         " ! rtpopusdepay name=rx_depay ! opusdec ! audioconvert ! audioresample"
         " ! volume name=spk_volume"
-        " ! openslessink name=rx_sink";
+        // Clock recovery: the Quest DAC runs on its own crystal, so without this the
+        // receive buffer drifts vs the robot sender and slowly drains (the gradual
+        // latency drop) until it underruns. provide-clock=false frees the sink from
+        // being the pipeline master so slave-method=resample continuously rate-converts
+        // to track the sender (via the jitterbuffer skew) — constant buffer, no drift.
+        " ! openslessink name=rx_sink sync=true provide-clock=false slave-method=resample";
     { std::lock_guard<std::mutex> lk(rxTsMutex_); rxTsByPts_.clear(); }
     rxPipeline_ = BuildAndPlay(desc, "RX robot->speakers");
     if (rxPipeline_) {
