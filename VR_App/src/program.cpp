@@ -680,6 +680,12 @@ void TelepresenceProgram::SendControllerDatagram() {
             robotControlSender_->sendDebugInfo(leftSnap, rightSnap, appState_->streamingConfig, threadPool_);
         }
 
+        // NTP quality / network telemetry, throttled to ~1 Hz (it only updates per
+        // sync cycle). Lets the dashboard show the clock's error bound, not just its value.
+        if (ntpTimer_ && (++ntpMetricsThrottle_ % 72 == 0)) {
+            robotControlSender_->sendNtpMetrics(threadPool_);
+        }
+
         // Audio latency telemetry: robot->headset source->sink latency, emitted whenever
         // the RX pipeline has a fresh sample (read from the capture timestamp the robot
         // stamps into each Opus packet). Same relay -> InfluxDB path as the video debug info.

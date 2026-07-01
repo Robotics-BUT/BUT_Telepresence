@@ -310,6 +310,9 @@ class UDPRelayService:
         elif message_type == MessageType.AUDIO_METRICS_HEADSET:
             self._handle_audio_metrics_headset(data, client_addr)
 
+        elif message_type == MessageType.NTP_METRICS:
+            self._handle_ntp_metrics(data, client_addr)
+
         else:
             self.logger.warning(f"Unknown message type from {client_addr[0]}:{client_addr[1]}, dropping")
 
@@ -585,6 +588,39 @@ class UDPRelayService:
         except Exception as e:
             self.consecutive_errors += 1
             self.logger.error(f"Error handling audio metrics (headset): {e}")
+
+    def _handle_ntp_metrics(self, data: bytes, client_addr: Tuple[str, int]):
+        """NTP quality / network metrics from the headset (0x06):
+           [0x06][offset_us i64][rtt_min_us u32][jitter_us u32][dispersion_us u32]
+           [err_bound_us u32][skew_ppm f32][sample_loss f32][since_sync_us u32][synced u8] (LE).
+           offset_error_bound_us is the estimated one-way clock uncertainty — the
+           systematic error bar to attach to any NTP-based cross-device latency."""
+        try:
+            if len(data) < 38:
+                return
+            (offset_us, rtt_min_us, jitter_us, disp_us, err_us,
+             skew_ppm, loss, since_us, synced) = struct.unpack_from("<qIIIIffIB", data, 1)
+            if self.influx_client:
+                point = (
+                    Point("ntp_metrics")
+                    .tag("source", client_addr[0])
+                    .field("offset_us", int(offset_us))
+                    .field("rtt_min_us", int(rtt_min_us))
+                    .field("jitter_us", int(jitter_us))
+                    .field("offset_dispersion_us", int(disp_us))
+                    .field("offset_error_bound_us", int(err_us))
+                    .field("skew_ppm", float(skew_ppm))
+                    .field("sample_loss", float(loss))
+                    .field("time_since_sync_us", int(since_us))
+                    .field("synced", int(synced))
+                    .time(time.time_ns())
+                )
+                with self.influx_buffer_lock:
+                    self.influx_buffer.append(point)
+            self.consecutive_errors = 0
+        except Exception as e:
+            self.consecutive_errors += 1
+            self.logger.error(f"Error handling NTP metrics: {e}")
 
     def _handle_debug_info(self, data: bytes, client_addr: Tuple[str, int]):
         """

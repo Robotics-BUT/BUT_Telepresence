@@ -78,6 +78,10 @@ public:
      *  to the relay for InfluxDB/Grafana. 0x05: [0x05][latency_us (uint32)]. */
     void sendAudioMetrics(uint32_t robotToHeadsetLatencyUs, BS::thread_pool<BS::tp::none> &threadPool);
 
+    /** Send NTP quality / network metrics (offset, RTT, jitter, dispersion, offset
+     *  error bound, skew, sample loss, staleness) to the relay for InfluxDB/Grafana. */
+    void sendNtpMetrics(BS::thread_pool<BS::tp::none> &threadPool);
+
 private:
     struct AzimuthElevation {
         float azimuth;    // radians, -π to π
@@ -99,6 +103,7 @@ private:
     void sendDebugInfoPacket(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
                              const StreamingConfig &config, uint64_t timestamp);
     void sendAudioMetricsPacket(uint32_t robotToHeadsetLatencyUs);
+    void sendNtpMetricsPacket();
 
     int socket_{-1};
     struct sockaddr_in destAddr_{};
@@ -116,4 +121,5 @@ private:
     static constexpr uint8_t MSG_ROBOT_CONTROL = 0x02;
     static constexpr uint8_t MSG_DEBUG_INFO = 0x03;
     static constexpr uint8_t MSG_AUDIO_METRICS_HEADSET = 0x05;  // robot->headset audio latency
+    static constexpr uint8_t MSG_NTP_METRICS = 0x06;            // NTP quality / network metrics
 };

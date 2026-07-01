@@ -114,6 +114,9 @@ private:
     /* --- Frame timing --- */
     std::chrono::time_point<std::chrono::high_resolution_clock> prevFrameStart_, frameStart_;
 
+    /* Throttle for the low-rate NTP-metrics telemetry packet (~1 Hz). */
+    uint32_t ntpMetricsThrottle_ = 0;
+
     /* --- Shared application state --- */
     std::shared_ptr<AppState> appState_{};
 

@@ -117,6 +117,35 @@ void RobotControlSender::sendAudioMetricsPacket(uint32_t robotToHeadsetLatencyUs
     }
 }
 
+void RobotControlSender::sendNtpMetrics(BS::thread_pool<BS::tp::none> &threadPool) {
+    if (!isInitialized_) {
+        return;
+    }
+    threadPool.detach_task([this]() { sendNtpMetricsPacket(); });
+}
+
+// 0x06: [0x06][offset_us i64][rtt_min_us u32][jitter_us u32][dispersion_us u32]
+//        [err_bound_us u32][skew_ppm f32][sample_loss f32][since_sync_us u32][synced u8]
+void RobotControlSender::sendNtpMetricsPacket() {
+    if (!ntpTimer_) return;
+    std::vector<uint8_t> packet;
+    packet.reserve(42);
+    packet.push_back(MSG_NTP_METRICS);
+    serializeLittleEndian(packet, (int64_t)ntpTimer_->GetSmoothedOffsetUs());
+    serializeLittleEndian(packet, (uint32_t)ntpTimer_->GetRoundTripMinUs());
+    serializeLittleEndian(packet, (uint32_t)ntpTimer_->GetJitterUs());
+    serializeLittleEndian(packet, (uint32_t)ntpTimer_->GetOffsetDispersionUs());
+    serializeLittleEndian(packet, (uint32_t)ntpTimer_->GetOffsetErrorBoundUs());
+    serializeLittleEndian(packet, (float)ntpTimer_->GetSkewPpm());
+    serializeLittleEndian(packet, (float)ntpTimer_->GetSampleLoss());
+    serializeLittleEndian(packet, (uint32_t)ntpTimer_->GetTimeSinceLastSyncUs());
+    packet.push_back((ntpTimer_->HasInitialOffset() && ntpTimer_->IsSyncHealthy()) ? 1 : 0);
+
+    ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
+                          (sockaddr *) &destAddr_, sizeof(destAddr_));
+    if (sent < 0) { ++consecutiveFailures_; } else { consecutiveFailures_ = 0; ++successfulSends_; }
+}
+
 void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed,
                                             uint64_t timestamp, uint32_t predictionMs) {
     std::vector<uint8_t> packet;
