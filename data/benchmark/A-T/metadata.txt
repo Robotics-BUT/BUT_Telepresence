@@ -1,0 +1,170 @@
+========================================================================
+RUN A-T
+========================================================================
+Condition:                 quiet 6 GHz. No contention applied. TWO RADIO HOPS (corrected 2026-07-31; earlier revisions of this file wrongly said "single hop, robot wired"). Jetson --wired--> MikroTik Chateau 5G R17 ax carried on the robot --5 GHz IEEE 802.11ax, SSID asgard_robots--> lab base station in an adjacent room --wired--> TP-Link Archer AXE5400 in AP/bridge mode in the operator room --6 GHz Wi-Fi 6E, 6375 MHz, WPA3-SAE, RSSI -35..-44 dBm, 2401 Mbit/s--> Meta Quest 3. The AXE5400 is bridged, not routing: in router mode the headset would sit behind NAT and the robot could not address it, since the video path is a UDP flow initiated robot->headset.
+Topology caveat:           NOTE ON ATTRIBUTION: the robot-side 5 GHz hop carried no other meaningful traffic during the campaign, but it was NOT instrumented -- robot-side tcpdump was taken at the Jetson's wired eth0, ahead of the on-board MikroTik, so it proves the sender emits cleanly but cannot see loss on that first radio hop. Headset-reported loss is localized to the operator-side hop by argument, not by measurement.
+Window start (UTC):        2026-07-31T10:32:00Z
+Window end (UTC):          2026-07-31T10:46:00Z
+Metadata generated:        2026-07-31T12:19:39Z (UTC)
+Operator note:             Markers derived Apply-first (PUT log drives the event, telemetry supplies the resulting config sampled 4 s after settle).
+
+-- CONFIG OBSERVED IN WINDOW (from telemetry -- AUTHORITATIVE) ---------
+distinct config rows:      81  <-- CONFIG CHANGED MID-RUN; split this run per cell
+                           {"codec":3,"fps_config":42,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":44,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":53,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":55,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":62,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":9000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":7000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":49,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":30,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":34,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":35,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":38,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":46,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":5000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":6000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":41,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":40,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":3000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":40,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":41,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":61,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":3000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":6000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":55,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":53,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":44,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":42,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":36,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":47,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":54,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":57,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":4000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":10000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":58,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":56,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":51,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":43,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":39,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":39,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":43,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":51,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":56,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":58,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":8000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":48,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":45,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":33,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":10000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":31,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":32,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":37,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":50,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":52,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":59,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":0,"fps_config":60,"bitrate_cfg":10000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":4000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":57,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":54,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":47,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":36,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":30,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":33,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":45,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":48,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":8000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":5000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":60,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":46,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":38,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":35,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":34,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":49,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":7000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":3,"fps_config":60,"bitrate_cfg":9000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":59,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":52,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":50,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":37,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":32,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           {"codec":4,"fps_config":31,"bitrate_cfg":2000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           codec map: JPEG=0 VP8=1 VP9=2 H264=3 H265=4; video_mode: STEREO=0
+
+-- STREAM CONFIG (robot REST, sampled AFTER run -- may have drifted) ---
+{
+  "bitrate": 10000000,
+  "codec": "H265",
+  "encoding_quality": 20,
+  "fps": 60,
+  "ip_address": "10.0.20.55",
+  "is_streaming": true,
+  "port_left": 8554,
+  "port_right": 8556,
+  "resolution": {
+    "height": 1080,
+    "width": 1920
+  },
+  "video_mode": "stereo"
+}
+
+-- ROBOT SOFTWARE ------------------------------------------------------
+git HEAD:                  c10d66d Unify the module naming - streaming_driver -> video_driver to be consistent with the new audio module
+uncommitted files:         7
+                           M audio_driver/CMakeLists.txt
+                            M audio_driver/main.cpp
+                            M robot_controller/config.yaml
+                            M robot_controller/grafana_dashboard_influxdb3.json
+                            M robot_controller/protocol.py
+                            M robot_controller/relay_service.py
+                            M video_driver/include/pipelines.h
+video_driver built:        2026-07-31T09:19:29
+
+-- PIPELINE CONSTANTS (pipelines.h) ------------------------------------
+CAMERA_CAPTURE_WIDTH:      1920
+CAMERA_CAPTURE_HEIGHT:     1080
+KEYFRAME_INTERVAL_FRAMES:  60
+INTRA_REFRESH_FRAMES:      (not present)
+exposure:                  AUTO (lock empty)
+sensor capture rate:       80 Hz
+rtp mtu:                   1300
+
+-- ROBOT MACHINE STATE -------------------------------------------------
+nvpmodel:                  NV Power Mode: 25W 3
+clocks:                    cpu0:  Online=1 Governor=schedutil MinFreq=1497600 MaxFreq=1497600 CurrentFreq=1497600 IdleStates: WFI=0 c7=0  GPU MinFreq=408000000 MaxFreq=408000000 CurrentFreq=408000000
+grafana-server:            inactive
+services:                  active active active  (telepresence/robot-controller/influxdb3)
+robot uptime:              up 3 hours, 57 minutes
+robot NTP synced:          yes
+robot clock (UTC):         2026-07-31T12:19:44Z
+
+-- HEADSET -------------------------------------------------------------
+adb device:                10.0.20.55:5555
+  SSID:                    Telepresence_6G
+  BSSID:                   <redacted-mac>
+  frequency:               6375
+  RSSI:                    -30
+  link speed:              2401Mbps
+  wifi standard:           6
+  saved networks:          14 distinct
+  in-range saved alts:     none
+  wifi scan interval:      mean 395 s over last 6 scans  (backed off, good)
+  battery:                 AC powered: true   level: 46   temperature: 430
+  app version:             versionName=1.0
+  (prefs are sampled AFTER the run; on any disagreement the
+   CONFIG OBSERVED IN WINDOW section above wins)
+  pref codec:              4
+  pref fps:                60
+  pref bitrate:            10000000
+  pref resolution:         FHD
+  pref video_mode:         0
+  pref encoding_quality:   20
+  pref head_movement_prediction_ms: 80
+  pref stereo_convergence: 30
+  pref headset_ip:         10.0.20.55
+  pref jetson_ip:          10.0.31.42
+  NOTE codec map: JPEG=0 VP8=1 VP9=2 H264=3 H265=4
+  prox state NOW:          OFF-HEAD  (sampled after the run; see next line)
+  doffed DURING window:    no  (worn for the whole capture window)

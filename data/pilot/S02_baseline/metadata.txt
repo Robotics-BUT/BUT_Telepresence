@@ -1,0 +1,88 @@
+========================================================================
+RUN S02_run1_QUIET
+========================================================================
+Condition:                 BASELINE 6 GHz (layout A)
+Window start (UTC):        2026-08-18T07:17:45.669998Z
+Window end (UTC):          2026-08-18T07:20:40.681553Z
+Metadata generated:        2026-08-18T07:20:40Z (UTC)
+
+-- CONFIG OBSERVED IN WINDOW (from telemetry -- AUTHORITATIVE) ---------
+distinct config rows:      1  (uniform - good)
+                           {"codec":4,"fps_config":60,"bitrate_cfg":10000000,"resolution_width":1920,"resolution_height":1080,"video_mode":0}
+                           codec map: JPEG=0 VP8=1 VP9=2 H264=3 H265=4; video_mode: STEREO=0
+
+-- STREAM CONFIG (robot REST, sampled AFTER run -- may have drifted) ---
+{
+  "bitrate": 10000000,
+  "codec": "H265",
+  "encoding_quality": 20,
+  "fps": 60,
+  "ip_address": "10.0.20.55",
+  "is_streaming": true,
+  "port_left": 8554,
+  "port_right": 8556,
+  "resolution": {
+    "height": 1080,
+    "width": 1920
+  },
+  "video_mode": "stereo"
+}
+
+-- ROBOT SOFTWARE ------------------------------------------------------
+git HEAD:                  c10d66d Unify the module naming - streaming_driver -> video_driver to be consistent with the new audio module
+uncommitted files:         7
+                           M audio_driver/CMakeLists.txt
+                            M audio_driver/main.cpp
+                            M robot_controller/config.yaml
+                            M robot_controller/grafana_dashboard_influxdb3.json
+                            M robot_controller/protocol.py
+                            M robot_controller/relay_service.py
+                            M video_driver/include/pipelines.h
+video_driver built:        2026-07-31T09:19:29
+
+-- PIPELINE CONSTANTS (pipelines.h) ------------------------------------
+CAMERA_CAPTURE_WIDTH:      1920
+CAMERA_CAPTURE_HEIGHT:     1080
+KEYFRAME_INTERVAL_FRAMES:  60
+INTRA_REFRESH_FRAMES:      (not present)
+exposure:                  AUTO (lock empty)
+sensor capture rate:       80 Hz
+rtp mtu:                   1300
+
+-- ROBOT MACHINE STATE -------------------------------------------------
+nvpmodel:                  NV Power Mode: 25W 3
+clocks:                    cpu0:  Online=1 Governor=schedutil MinFreq=1497600 MaxFreq=1497600 CurrentFreq=1497600 IdleStates: WFI=0 c7=0  GPU MinFreq=408000000 MaxFreq=408000000 CurrentFreq=408000000
+grafana-server:            inactive
+services:                  active active active  (telepresence/robot-controller/influxdb3)
+robot uptime:              up 1 hour, 52 minutes
+robot NTP synced:          yes
+robot clock (UTC):         2026-08-18T07:20:45Z
+
+-- HEADSET -------------------------------------------------------------
+adb device:                10.0.20.55:5555
+  SSID:                    Telepresence_6G
+  BSSID:                   <redacted-mac>
+  frequency:               6375
+  RSSI:                    -34
+  link speed:              2401Mbps
+  wifi standard:           6
+  saved networks:          1 distinct
+  in-range saved alts:     none
+  wifi scan interval:      mean 664 s over last 7 scans  (backed off, good)
+  battery:                 AC powered: true   level: 100   temperature: 420
+  app version:             versionName=1.0
+  (prefs are sampled AFTER the run; on any disagreement the
+   CONFIG OBSERVED IN WINDOW section above wins)
+  pref codec:              4
+  pref fps:                60
+  pref bitrate:            10000000
+  pref resolution:         FHD
+  pref video_mode:         0
+  pref encoding_quality:   20
+  pref head_movement_prediction_ms: 80
+  pref stereo_convergence: 0
+  pref headset_ip:         10.0.20.55
+  pref jetson_ip:          10.0.31.42
+  NOTE codec map: JPEG=0 VP8=1 VP9=2 H264=3 H265=4
+  prox state NOW:          WORN  (sampled after the run; see next line)
+  doffed DURING window:    no  (worn for the whole capture window)

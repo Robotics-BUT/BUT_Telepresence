@@ -1,0 +1,28 @@
+{
+  "pid": "S07",
+  "run": 1,
+  "condition": "DELAYED",
+  "layout": "B",
+  "start_utc": "2026-08-21T09:00:04.903649Z",
+  "forced": false,
+  "note": "",
+  "iperf_offered_mbps": null,
+  "iperf_achieved_mbps": null,
+  "prestart_profile": {
+    "n": 4832,
+    "fps": 48.633064736931324,
+    "p50": 315,
+    "p25": 303,
+    "p75": 323,
+    "p95": 368,
+    "dec": 20.67454014900662,
+    "udp": 2.063455918874172,
+    "jb": 202.37456519039736,
+    "l_lost": 210,
+    "r_lost": 113,
+    "iqr": 20
+  },
+  "end_utc": "2026-08-21T09:03:28.540698Z",
+  "run_profile": null,
+  "run_looks_like": "UNKNOWN"
+}

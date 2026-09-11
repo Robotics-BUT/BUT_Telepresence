@@ -1,0 +1,41 @@
+{
+  "pid": "S02",
+  "run": 1,
+  "condition": "BASELINE",
+  "layout": "A",
+  "start_utc": "2026-08-18T07:17:45.669998Z",
+  "forced": false,
+  "note": "",
+  "iperf_offered_mbps": null,
+  "iperf_achieved_mbps": null,
+  "prestart_profile": {
+    "n": 5190,
+    "fps": 59.887477224294265,
+    "p50": 73,
+    "p25": 70,
+    "p75": 76,
+    "p95": 79,
+    "dec": 4.428787475915222,
+    "udp": 3.778099036608863,
+    "jb": 0.16292042389210018,
+    "l_lost": 1,
+    "r_lost": 0,
+    "iqr": 6
+  },
+  "end_utc": "2026-08-18T07:20:40.681553Z",
+  "run_profile": {
+    "n": 15448,
+    "fps": 59.957942086069124,
+    "p50": 73,
+    "p25": 70,
+    "p75": 76,
+    "p95": 79,
+    "dec": 4.493718604350078,
+    "udp": 4.000451644225789,
+    "jb": 0.1359722941481098,
+    "l_lost": 15,
+    "r_lost": 0,
+    "iqr": 6
+  },
+  "run_looks_like": "BASELINE"
+}
