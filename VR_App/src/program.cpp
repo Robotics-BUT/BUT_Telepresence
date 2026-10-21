@@ -949,6 +949,19 @@ void TelepresenceProgram::BuildSettings() {
                     ? classifyStreamConfigChange(*lastAppliedConfig_, cfg)
                     : StreamConfigChange::Structural;  // no baseline yet -> rebuild
 
+                // A codec change stops the decoder before the robot switches and builds the new one
+                // after, so a fresh decoder is never fed the previous codec's stream: fed H.264, a new
+                // H.265 decoder never configured and the video stalled (2026-10-14 and 10-20). Other
+                // structural changes keep the faster overlapped rebuild.
+                const bool ordered = change == StreamConfigChange::Structural && lastAppliedConfig_ &&
+                                     lastAppliedConfig_->codec != cfg.codec;
+                int updateResult = 0;
+                if (ordered) {
+                    videoPlayer_->stopPipelines();
+                    updateResult = restClient_->UpdateStreamingConfig(cfg);
+                    LOG_INFO("Apply: codec change, decoder stopped and config sent before the rebuild");
+                }
+
                 switch (change) {
                     case StreamConfigChange::Structural:
                         LOG_INFO("Apply: structural change -> rebuilding decode pipeline + GL render targets");
@@ -956,7 +969,8 @@ void TelepresenceProgram::BuildSettings() {
                         videoPlayer_->configurePipelines(gstreamerThreadPool_, cfg);
                         break;
                     case StreamConfigChange::LiveOnly:
-                        LOG_INFO("Apply: live-only change (bitrate/quality) -> no rebuild, keeping pipeline");
+                        LOG_INFO("Apply: live-only change (bitrate/quality/fps) -> no rebuild, keeping pipeline");
+                        videoPlayer_->setStreamFps(cfg.fps);
                         break;
                     case StreamConfigChange::None:
                         LOG_INFO("Apply: no streaming-config change -> nothing to rebuild");
@@ -967,7 +981,7 @@ void TelepresenceProgram::BuildSettings() {
                 // it updates the encoder in place; for a structural change it
                 // rebuilds its pipeline and emits a fresh keyframe so the
                 // freshly-rebuilt headset decoder re-syncs cleanly.
-                int updateResult = restClient_->UpdateStreamingConfig(cfg);
+                if (!ordered) updateResult = restClient_->UpdateStreamingConfig(cfg);
                 if (updateResult != 0) {
                     appState_->connectionState.cameraServer = ConnectionStatus::Failed;
                     appState_->cameraServerStatus = "Update Failed";

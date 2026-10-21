@@ -519,6 +519,8 @@ VideoPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineN
 
         GstElement *dec_capsfilter = getElementOptional(pipeline, "dec_capsfilter");
         if (dec_capsfilter) {
+            // The frame rate stays in the caps even though a later frame-rate change keeps this
+            // decoder (fps_live): without it the H.265 decoder never configures (2026-10-20).
             GstCaps *decCaps = buildDecoderSrcCaps(config.codec,
                                                    config.resolution.getWidth(),
                                                    config.resolution.getHeight(),
@@ -588,6 +590,16 @@ VideoPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineN
  * CameraFrame buffers and stats, parses new pipeline strings, configures
  * elements, and starts playback. The GLib main loop runs on the thread pool.
  */
+void VideoPlayer::stopPipelines() {
+    for (GstElement *p : {pipelineLeft_, pipelineRight_}) {
+        if (p) {
+            gst_element_set_state(p, GST_STATE_NULL);
+            gst_element_get_state(p, nullptr, nullptr, 5 * GST_SECOND);
+        }
+    }
+    LOG_INFO("Decode pipelines stopped");
+}
+
 void
 VideoPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
                                     const StreamingConfig &config) {
