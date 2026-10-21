@@ -254,8 +254,9 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
         layerViews[i].fov = views[i].fov;
         layerViews[i].subImage = subImg;
 
-        CameraFrame *imageHandle = i == 0 ? &appState_->cameraStreamingStates.second
-                                          : &appState_->cameraStreamingStates.first;
+        // View 0 is the left lens: it shows the left stream (port 8554), view 1 the right one.
+        CameraFrame *imageHandle = i == 0 ? &appState_->cameraStreamingStates.first
+                                          : &appState_->cameraStreamingStates.second;
 
         HandleControllers();
 
