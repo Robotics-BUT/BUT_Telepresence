@@ -26,11 +26,14 @@
 
 // ---------------------------------------------------------------------------
 // HW decoder selection
-// 1 = Quest dedicated low-latency AVC/HEVC components (emit frames as soon as
-//     decoded, no output-reorder queue; best for a single live stream).
+// 1 = Quest dedicated low-latency AVC/HEVC components.
 // 0 = stock decoders.
+// Stock is the default: against the photon-to-photon rig (2026-09-21) the
+// low-latency variants gave no measurable latency benefit on either codec, and
+// on HEVC at 30 FPS under packet loss they broke the per-frame keying of the
+// decode stage (decode term read 0-220 ms while the frames were on time).
 // ---------------------------------------------------------------------------
-#define BUT_USE_LOW_LATENCY_DECODER 1
+#define BUT_USE_LOW_LATENCY_DECODER 0
 
 #if BUT_USE_LOW_LATENCY_DECODER
 #define BUT_H264_DECODER "amcviddec-omxqcomvideodecoderavclowlatency"

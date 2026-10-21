@@ -27,7 +27,9 @@ def export_to_csv(
     host: str,
     database: str,
     output_path: Path,
-    time_filter: str = None
+    time_filter: str = None,
+    start: str = None,
+    end: str = None
 ):
     """Export telemetry data to CSV."""
     print(f"Connecting to InfluxDB at {host}...")
@@ -37,29 +39,61 @@ def export_to_csv(
         database=database,
     )
 
-    # Select specific columns: time, all latency stages, and fps
-    # Mixed-case names need double quotes in SQL
+    # Full chain, in pipeline order, plus the per-eye transport counters and the
+    # config columns that identify which cell a row belongs to.
+    # Mixed-case names need double quotes in SQL or DataFusion lowercases them
+    # and silently returns NULL.
     columns = [
         "time",
         "frame_id",
         "fps",
+        # --- latency chain, in order ---
         "camera_us",
         '"vidConv_us"',
         "enc_us",
         '"rtpPay_us"',
         '"udpStream_us"',
+        '"jbHold_us"',
         '"rtpDepay_us"',
         "dec_us",
+        "appsink_us",
         "presentation_us",
         "total_latency_us",
+        # --- per-eye transport health: loss is what distinguishes a real
+        # latency excursion from a packet-loss recovery stall ---
+        "left_lost",
+        "right_lost",
+        "left_jitter_us",
+        "right_jitter_us",
+        "left_bitrate_bps",
+        "right_bitrate_bps",
+        "left_rtx",
+        "right_rtx",
+        # --- config provenance: which cell this row belongs to ---
+        "codec",
+        "fps_config",
+        "bitrate_cfg",
+        "resolution_width",
+        "resolution_height",
+        "video_mode",
+        # --- clock trust ---
+        "ntp_offset_us",
+        "ntp_synced",
+        "time_since_ntp_sync_us",
     ]
 
     select_clause = ", ".join(columns)
 
+    where = []
     if time_filter:
-        query = f"SELECT {select_clause} FROM pipeline_metrics WHERE time > now() - INTERVAL '{time_filter}' ORDER BY time"
-    else:
-        query = f"SELECT {select_clause} FROM pipeline_metrics ORDER BY time"
+        where.append(f"time > now() - INTERVAL '{time_filter}'")
+    if start:
+        where.append(f"time >= '{start}'")
+    if end:
+        where.append(f"time <= '{end}'")
+
+    where_clause = (" WHERE " + " AND ".join(where)) if where else ""
+    query = f"SELECT {select_clause} FROM pipeline_metrics{where_clause} ORDER BY time"
 
     print(f"Executing query...")
 
@@ -99,6 +133,30 @@ def export_to_csv(
         print(f"  Min:    {df['fps'].min():.2f}")
         print(f"  Max:    {df['fps'].max():.2f}")
 
+    # Run sanity check. The relay re-logs the last row while waiting for a new
+    # frame, so raw row count is NOT frame count -- dedupe by frame_id before
+    # computing any statistic. A frozen frame_id means the headset stopped
+    # delivering (app suspended, e.g. taken off the head), not a slow pipeline.
+    if 'frame_id' in df.columns:
+        uniq = df['frame_id'].nunique()
+        span = int(df['frame_id'].max() - df['frame_id'].min())
+        print(f"\nRun sanity:")
+        print(f"  Rows:              {len(df)}")
+        print(f"  Distinct frame_id: {uniq}  ({len(df)/max(uniq,1):.1f}x re-logged per frame)")
+        print(f"  frame_id span:     {span}")
+        if span:
+            print(f"  Logged coverage:   {100*uniq/span:.1f}% of delivered frames")
+        if uniq <= 1:
+            print("  !! frame_id is FROZEN -- headset stopped delivering. Discard this run.")
+
+    # Packet loss drives 'dec_us' excursions; report it so a contaminated run is
+    # obvious at capture time rather than during analysis.
+    for eye in ("left", "right"):
+        col = f"{eye}_lost"
+        if col in df.columns and len(df[col].dropna()):
+            lost = int(df[col].max() - df[col].min())
+            print(f"  {eye+' RTP lost:':<18} {lost}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -115,6 +173,20 @@ def main():
         type=str,
         default=None,
         help="Export only last N time (e.g., '1 hour', '30 minutes', '1 day')"
+    )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default=None,
+        help="Window start, ISO 8601 UTC (e.g. '2026-07-31T09:29:00Z'). "
+             "Prefer this over --last when several runs happened in one session. "
+             "NOTE: the robot clock is UTC, the PC is local."
+    )
+    parser.add_argument(
+        "--end",
+        type=str,
+        default=None,
+        help="Window end, ISO 8601 UTC (e.g. '2026-07-31T09:32:00Z')"
     )
     parser.add_argument(
         "--host",
@@ -140,7 +212,9 @@ def main():
         host=args.host,
         database=args.database,
         output_path=args.output,
-        time_filter=args.last
+        time_filter=args.last,
+        start=args.start,
+        end=args.end
     )
 
 

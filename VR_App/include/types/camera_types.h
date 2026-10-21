@@ -151,6 +151,49 @@ private:
     std::unordered_map<uint64_t, uint64_t> map_;
 };
 
+/**
+ * Robot-side and network terms of ONE frame, gathered while its packets arrive.
+ * Keyed by RTP timestamp at the UDP source, so a frame's terms are never
+ * overwritten by the next frame's packets before the frame reaches the queue probe.
+ */
+struct UpstreamTerms {
+    uint64_t frameId{0};
+    uint64_t camera{0};
+    uint64_t vidConv{0};
+    uint64_t enc{0};
+    uint64_t rtpPay{0};
+    uint64_t rtpPayTs{0};
+    uint64_t udpStream{0};   // arrival of the frame's latest packet minus robot pay time
+    uint64_t jbHold{0};      // set at the post-jitterbuffer probe
+};
+
+class UpstreamTermsMap {
+public:
+    static constexpr size_t MAX_SIZE = 64;
+
+    // Read-modify-write the record for `key` under the lock.
+    template <typename F>
+    void update(uint64_t key, F &&fn) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (map_.size() >= MAX_SIZE && map_.find(key) == map_.end()) map_.clear();
+        fn(map_[key]);
+    }
+
+    // Moves the record for `key` into `out`; false if there is none.
+    bool consume(uint64_t key, UpstreamTerms &out) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = map_.find(key);
+        if (it == map_.end()) return false;
+        out = it->second;
+        map_.erase(it);
+        return true;
+    }
+
+private:
+    mutable std::mutex mtx_;
+    std::unordered_map<uint64_t, UpstreamTerms> map_;
+};
+
 // =============================================================================
 // Camera Statistics
 // =============================================================================
@@ -247,6 +290,17 @@ struct CameraStats {
     PtsTimestampMap depayPtsMap;      // rtpdepay emit per pts            (rtpdepay -> dec)
     PtsTimestampMap decPtsMap;        // amcviddec emit per pts           (dec -> queue)
     PtsTimestampMap queuePtsMap;      // post-decoder queue emit per pts  (queue -> appsink)
+
+    // Every stage value of a frame is carried to the queue probe and summed
+    // there, so one telemetry record describes one frame. Before this, the robot-side,
+    // network, jitter-buffer and depayloader terms were latest-value fields that the
+    // next frame could overwrite while this one was still in the decoder.
+    UpstreamTermsMap upstreamByRtpTs;   // robot-side + network + jbHold per RTP ts
+    PtsTimestampMap ptsToRtpTs;         // pts -> (RTP ts + 1), set at the post-jitterbuffer probe
+    PtsTimestampMap depayValByPts;      // rtpDepay duration per pts
+    PtsTimestampMap decValByPts;        // dec duration per pts
+    std::atomic<uint32_t> keyedFrames{0};    // frames whose record was fully keyed
+    std::atomic<uint32_t> unkeyedFrames{0};  // frames with a missing term (record not updated)
 
     // Per-packet dedup: every RTP packet of one frame carries the same RTP
     // timestamp; rtpTsArrivalMap should record only the first packet's arrival.

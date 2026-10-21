@@ -16,6 +16,41 @@
 #include <GLES3/gl3.h>
 #include <gst/gl/gstglmemory.h>
 #include <gst/gl/gstglcontext.h>
+#include <gst/gl/gstglsyncmeta.h>
+
+// ----------------------------------------------------------------------------
+// Frame identity across the hardware decoder (SW-12)
+// ----------------------------------------------------------------------------
+// Downstream of the decoder the buffer PTS cannot serve as the per-frame key.
+// When the vendor low-latency decoder discards a damaged input, amcviddec keeps
+// that frame pending until it is 100 frames stale and then drops it ("Too old
+// frames"); the drop sets GstVideoDecoder's reordered-output state, after which
+// the base class relabels every output with the oldest pending PTS, two to four
+// frames older than the picture. Each buffer entering the decoder therefore
+// carries its own PTS in a reference-timestamp meta, which the base class copies
+// from the input frame to its output; the probes below the decoder key by that.
+static GstCaps *frameKeyCaps() {
+    static GstCaps *caps = gst_caps_new_empty_simple("timestamp/x-but-frame-pts");
+    return caps;
+}
+
+static GstPadProbeReturn tagFramePtsProbe(GstPad *, GstPadProbeInfo *info, gpointer) {
+    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (!buf || !GST_BUFFER_PTS_IS_VALID(buf)) return GST_PAD_PROBE_OK;
+    buf = gst_buffer_make_writable(buf);
+    gst_buffer_add_reference_timestamp_meta(buf, frameKeyCaps(), GST_BUFFER_PTS(buf), GST_CLOCK_TIME_NONE);
+    GST_PAD_PROBE_INFO_DATA(info) = buf;
+    return GST_PAD_PROBE_OK;
+}
+
+// The frame's own PTS: the tag if the buffer has passed the decoder, else the buffer PTS.
+static uint64_t frameKey(GstBuffer *buffer) {
+    if (GstReferenceTimestampMeta *m = gst_buffer_get_reference_timestamp_meta(buffer, frameKeyCaps())) {
+        return static_cast<uint64_t>(m->timestamp);
+    }
+    const GstClockTime pts = GST_BUFFER_PTS(buffer);
+    return pts != GST_CLOCK_TIME_NONE ? static_cast<uint64_t>(pts) : 0;
+}
 #include <GLES2/gl2ext.h>
 
 /** GL sink capabilities for hardware-decoded frames (RGBA, 2D or external-oes). */
@@ -405,6 +440,10 @@ VideoPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineN
 
     if (config.codec != Codec::JPEG) {
         dec = getElementRequired(pipeline, "dec", pipelineName);
+        if (GstPad *decSink = gst_element_get_static_pad(dec, "sink")) {
+            gst_pad_add_probe(decSink, GST_PAD_PROBE_TYPE_BUFFER, tagFramePtsProbe, nullptr, nullptr);
+            gst_object_unref(decSink);
+        }
 
         GstElement *dec_capsfilter = getElementOptional(pipeline, "dec_capsfilter");
         if (dec_capsfilter) {
@@ -807,6 +846,17 @@ VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackOb
             return GST_FLOW_ERROR;
         }
 
+        // Wait on the decoder's GL sync meta before the blit. amcviddec only
+        // latches a frame into the SurfaceTexture (updateTexImage) when a
+        // consumer waits on its sync meta, or when the previous frame's buffer
+        // is freed. Without the wait the blit copies the previous decoded
+        // frame: one output frame of latency that no in-band probe sees
+        // (measured 2026-09-21: 15 ms off photon-to-photon at 60 FPS, 32 ms at
+        // 30 FPS; the wait itself costs about 1 ms).
+        if (GstGLSyncMeta *syncMeta = gst_buffer_get_gl_sync_meta(buffer)) {
+            gst_gl_sync_meta_wait(syncMeta, gl_ctx);
+        }
+
         OesBlitJob job{&frame, tex_id, newW, newH, false};
         {
             std::lock_guard<std::mutex> lk(frame.frameMutex);
@@ -844,42 +894,41 @@ void VideoPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffer, g
 
     bool isLeftCamera = std::string(identity->object.parent->name) == "pipeline_left";
     auto stats = isLeftCamera ? pair->first.stats : pair->second.stats;
-    stats->totalLatency = 0;
+    // totalLatency is not zeroed per packet: it is set once per frame at
+    // the queue probe, and zeroing it here let a snapshot read 0 between frames.
 
     GstRTPBuffer rtp_buf = GST_RTP_BUFFER_INIT;
     gst_rtp_buffer_map(buffer, GST_MAP_READ, &rtp_buf);
-    gpointer myInfoBuf = nullptr;
-    guint size_64 = 8;
-
-    if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 0, &myInfoBuf, &size_64) != 0) {
-        stats->frameId = *(static_cast<uint64_t *>(myInfoBuf));
-        LOG_DEBUG("GStreamer: New frameid from %s, packets in prev frame: %u",
-                  identity->object.parent->name, stats->packetsPerFrame.load());
-        stats->packetsPerFrame = 0;
-    }
-    if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 1, &myInfoBuf, &size_64) != 0) {
-        stats->camera = *(static_cast<uint64_t *>(myInfoBuf));
-    }
-    if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 2, &myInfoBuf, &size_64) != 0) {
-        stats->vidConv = *(static_cast<uint64_t *>(myInfoBuf));
-    }
-    if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 3, &myInfoBuf, &size_64) != 0) {
-        stats->enc = *(static_cast<uint64_t *>(myInfoBuf));
-    }
-    if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 4, &myInfoBuf, &size_64) != 0) {
-        stats->rtpPay = *(static_cast<uint64_t *>(myInfoBuf));
-    }
-    if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 5, &myInfoBuf, &size_64) != 0) {
-        stats->rtpPayTimestamp = *(static_cast<uint64_t *>(myInfoBuf));
-    }
     uint32_t rtpTs = gst_rtp_buffer_get_timestamp(&rtp_buf);
-    gst_rtp_buffer_unmap(&rtp_buf);
-
-    LOG_DEBUG("GStreamer: RTP header from %s, frame %lu",
-              identity->object.parent->name, (unsigned long)stats->frameId.load());
-
     uint64_t now = ntpTimer->GetCurrentTimeUs();
-    stats->udpStream = now - stats->rtpPayTimestamp;
+
+    // The robot-side and network terms go into THIS frame's record, keyed by its
+    // RTP timestamp, and are read back at the queue probe for the same frame. Writing
+    // them into latest-value fields let the next frame's packets overwrite them while
+    // this frame was still in the decoder.
+    stats->upstreamByRtpTs.update(rtpTs, [&](UpstreamTerms &t) {
+        gpointer ext = nullptr;
+        guint size_64 = 8;
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 0, &ext, &size_64) != 0) {
+            t.frameId = *(static_cast<uint64_t *>(ext));
+            LOG_DEBUG("GStreamer: New frameid from %s, packets in prev frame: %u",
+                      identity->object.parent->name, stats->packetsPerFrame.load());
+            stats->packetsPerFrame = 0;
+        }
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 1, &ext, &size_64) != 0)
+            t.camera = *(static_cast<uint64_t *>(ext));
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 2, &ext, &size_64) != 0)
+            t.vidConv = *(static_cast<uint64_t *>(ext));
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 3, &ext, &size_64) != 0)
+            t.enc = *(static_cast<uint64_t *>(ext));
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 4, &ext, &size_64) != 0)
+            t.rtpPay = *(static_cast<uint64_t *>(ext));
+        if (gst_rtp_buffer_get_extension_onebyte_header(&rtp_buf, 1, 5, &ext, &size_64) != 0)
+            t.rtpPayTs = *(static_cast<uint64_t *>(ext));
+        // Network term: this frame's latest packet so far, so it spans the packet train.
+        if (t.rtpPayTs != 0 && now > t.rtpPayTs) t.udpStream = now - t.rtpPayTs;
+    });
+    gst_rtp_buffer_unmap(&rtp_buf);
 
     // Anchor the jitter-buffer-hold timer at first-packet-of-frame arrival.
     // Key by the RTP timestamp — the canonical per-frame identifier in RTP,
@@ -943,8 +992,7 @@ void VideoPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpo
     auto *stats = isLeftCamera ? pair->first.stats : pair->second.stats;
 
     uint64_t now = ntpTimer->GetCurrentTimeUs();
-    GstClockTime pts = GST_BUFFER_PTS(buffer);
-    uint64_t ptsKey = (pts != GST_CLOCK_TIME_NONE) ? static_cast<uint64_t>(pts) : 0;
+    const uint64_t ptsKey = frameKey(buffer);
 
     if (std::string(identity->object.name) == "postjb_ident") {
         // Per-frame: jbHold = (post-jitterbuffer release time) - (first-packet arrival time)
@@ -957,8 +1005,12 @@ void VideoPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpo
             gst_rtp_buffer_unmap(&rtp_buf);
             uint64_t arrived = stats->rtpTsArrivalMap.consume(static_cast<uint64_t>(rtpTs));
             if (arrived != 0 && now > arrived) {
-                stats->jbHold = now - arrived;
+                const uint64_t hold = now - arrived;
+                stats->upstreamByRtpTs.update(rtpTs, [&](UpstreamTerms &t) { t.jbHold = hold; });
             }
+            // Later probes key by PTS; remember which RTP ts this PTS belongs to
+            // (+1 so a timestamp of 0 is not mistaken for "absent").
+            if (ptsKey != 0) stats->ptsToRtpTs.store(ptsKey, static_cast<uint64_t>(rtpTs) + 1);
         }
         // Read this stream's rtpjitterbuffer loss/rtx counters (cumulative). The
         // identity's parent is the pipeline; the jitterbuffer is named per pipeline.
@@ -990,7 +1042,7 @@ void VideoPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpo
         if (ptsKey != 0) {
             uint64_t postjbEnter = stats->postjbPtsMap.consume(ptsKey);
             if (postjbEnter != 0 && now > postjbEnter) {
-                stats->rtpDepay = now - postjbEnter;
+                stats->depayValByPts.store(ptsKey, now - postjbEnter);
             }
             stats->depayPtsMap.store(ptsKey, now);
         }
@@ -1002,7 +1054,7 @@ void VideoPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpo
         if (ptsKey != 0) {
             uint64_t depayEnter = stats->depayPtsMap.consume(ptsKey);
             if (depayEnter != 0 && now > depayEnter) {
-                stats->dec = now - depayEnter;
+                stats->decValByPts.store(ptsKey, now - depayEnter);
             }
             stats->decPtsMap.store(ptsKey, now);
         }
@@ -1010,14 +1062,37 @@ void VideoPlayer::onIdentityHandoff(GstElement *identity, GstBuffer *buffer, gpo
         // Per-frame: queue = (queue emit time) - (this frame's dec emit time).
         if (ptsKey != 0) {
             uint64_t decEnter = stats->decPtsMap.consume(ptsKey);
-            if (decEnter != 0 && now > decEnter) {
-                stats->queue = now - decEnter;
+            const uint64_t q = (decEnter != 0 && now > decEnter) ? now - decEnter : 0;
+            const GstClockTime bufPts = GST_BUFFER_PTS(buffer);
+            if (bufPts != GST_CLOCK_TIME_NONE) stats->queuePtsMap.store(static_cast<uint64_t>(bufPts), now);
+
+            // Assemble this frame's record from its own terms only.
+            const uint64_t rtpTsP1 = stats->ptsToRtpTs.consume(ptsKey);
+            UpstreamTerms t{};
+            const bool haveUp = rtpTsP1 != 0 && stats->upstreamByRtpTs.consume(rtpTsP1 - 1, t);
+            const uint64_t dep = stats->depayValByPts.consume(ptsKey);
+            const uint64_t dec = stats->decValByPts.consume(ptsKey);
+            if (haveUp && dep != 0 && dec != 0 && q != 0) {
+                stats->frameId = t.frameId;
+                stats->camera = t.camera;
+                stats->vidConv = t.vidConv;
+                stats->enc = t.enc;
+                stats->rtpPay = t.rtpPay;
+                stats->rtpPayTimestamp = t.rtpPayTs;
+                stats->udpStream = t.udpStream;
+                stats->jbHold = t.jbHold;
+                stats->rtpDepay = dep;
+                stats->dec = dec;
+                stats->queue = q;
+                stats->totalLatency = t.camera + t.vidConv + t.enc + t.rtpPay + t.udpStream +
+                                      t.jbHold + dep + dec + q;
+                stats->keyedFrames += 1;
+            } else {
+                // A term is missing for this frame (e.g. a map was cleared on overflow):
+                // leave the previous record in place rather than publish a mixed one.
+                stats->unkeyedFrames += 1;
             }
-            stats->queuePtsMap.store(ptsKey, now);
         }
-        stats->totalLatency =
-                stats->camera + stats->vidConv + stats->enc + stats->rtpPay + stats->udpStream +
-                stats->jbHold + stats->rtpDepay + stats->dec + stats->queue;
 
         // Update running average history after all stats are computed.
         // Window size = configured stream FPS, so the rolling average always

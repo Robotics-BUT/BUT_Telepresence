@@ -30,15 +30,24 @@ namespace IdentityNames {
 // value is reported alongside the dynamic per-stage measurements to keep the
 // latency budget complete.
 //
-// 2026-05-18: model revised to a fixed wall-clock latency of 37.5 ms,
-// corresponding to 3 sensor frames at the fixed 80 Hz nvarguscamerasrc capture
-// rate, consistent with NVIDIA's documented Argus capture-to-output pipeline
-// depth of ~3-4 sensor frames (see paper §VI.B). The prior 1 x output-frame
-// model under-counted at 60 FPS because the sensor's capture cadence is
-// independent of the output FPS, so the real camera contribution does not
-// shrink at higher output rates. SetSensorStaticLatencyForFps() is retained
-// as a no-op to preserve the main.cpp call site.
-inline uint64_t SENSOR_STATIC_LATENCY_US = 37500;  // 3 sensor frames at 80 Hz
+// The value is a fixed wall-clock latency, independent of the output FPS (the
+// sensor's capture cadence does not follow the output rate).
+//
+// 2026-09-21: calibrated against the photon-to-photon rig, replacing the
+// earlier 37.5 ms (3 sensor frames at 80 Hz), which rested on an unverified
+// forum figure. Over eight cells at the fixed 80 Hz capture rate (JPEG, H.264,
+// H.265; 15-60 FPS output), p2p - total - event-to-frame sampling wait, taken
+// by means, was -14.5 ms, with no systematic dependence on codec or output
+// rate; hence 37.5 - 14.5 = 23.0 ms (~1.8 sensor frames). The sampling wait is
+// E[I^2] / (2 E[I]) over the capture intervals of the frames videorate forwards
+// from the 80 Hz sensor (9.4 / 17.2 / 33.6 ms at 60 / 30 / 15 FPS), not half an
+// output interval (2026-09-22 correction; the 09-21 value was 23.5 ms). At a
+// 60 Hz capture rate the camera stage is about 4 ms longer. Being a
+// calibration, it also absorbs any other codec-independent term the chain
+// misses.
+// SetSensorStaticLatencyForFps() is retained as a no-op to preserve the
+// main.cpp call site.
+inline uint64_t SENSOR_STATIC_LATENCY_US = 23000;  // calibrated, 80 Hz capture
 
 inline void SetSensorStaticLatencyForFps(uint32_t /*fps*/) {
     // Intentionally a no-op: the camera/ISP latency is wall-clock-fixed and
