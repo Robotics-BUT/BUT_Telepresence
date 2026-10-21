@@ -1,4 +1,6 @@
+#include <array>
 #include <atomic>
+#include <cstring>
 #include <iostream>
 #include <csignal>
 #include <chrono>
@@ -8,6 +10,7 @@
 #include <mutex>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include "json.hpp"
 #include "logging.h"
@@ -45,6 +48,45 @@ std::vector<GstPad *> selector_pads;
 int window_sensors[PANORAMIC_WINDOW_SIZE] = {5, 0, 1};  // sensor-id per slot
 int active_slot = 1;  // slot index currently selected (initially sensor 0 = forward)
 std::atomic<bool> swap_in_progress{false};
+
+// ---------------------------------------------------------------------------
+// Headset feedback channel (UDP FEEDBACK_PORT): key-frame requests and NACK-based
+// retransmission. Messages, multi-byte fields in network byte order:
+//   0x10 KEYFRAME_REQ  [0x10][eye]
+//   0x11 NACK          [0x11][eye][n][seq u16] x n
+//   0x12 RTX_MODE      [0x12][enabled]            heartbeat, ~1 Hz while the headset runs
+// eye: 0 = left (also mono), 1 = right. Sent packets are copied into the per-eye ring
+// only while the headset has reported RTX_MODE enabled within RTX_MODE_HOLD_NS, so
+// with retransmission off the send path costs one timestamp store per packet.
+// ---------------------------------------------------------------------------
+constexpr int FEEDBACK_PORT = 9101;
+constexpr size_t RTX_RING_SIZE = 1024;                     // ~1 s of packets at 10 Mbit/s
+constexpr int64_t RTX_MODE_HOLD_NS = 3'000'000'000LL;
+constexpr int64_t KEYFRAME_MIN_INTERVAL_NS = 100'000'000LL;
+
+struct RtxSlot {
+    uint16_t seq{};
+    bool valid{false};
+    std::vector<uint8_t> data;
+};
+
+struct EyeSendState {
+    std::mutex ringMutex;
+    std::array<RtxSlot, RTX_RING_SIZE> ring{};
+    std::atomic<uint64_t> packets{0};
+    std::atomic<int64_t> lastPacketNs{0};
+    std::atomic<int64_t> swapDoneNs{0};    // set when the swap ran, cleared by the first packet after it
+    std::atomic<int64_t> lastKeyframeReqNs{0};
+};
+EyeSendState eye_send[2];
+std::atomic<int64_t> rtx_mode_until_ns{0};
+
+int64_t MonotonicNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+GstPadProbeReturn UdpSinkProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 
 void StopPipeline(GstElement *pipeline) {
     if (pipeline == nullptr) { return; };
@@ -170,6 +212,11 @@ GstElement *BuildCameraPipeline(int sensorId, const StreamingConfig &streamingCo
         throw std::runtime_error("Failed to create udpsink");
     }
     g_object_set(udpsink, "host", streamingConfig.ip.c_str(), "port", port, "sync", FALSE, nullptr);
+    if (GstPad *sinkPad = gst_element_get_static_pad(udpsink, "sink")) {
+        gst_pad_add_probe(sinkPad, (GstPadProbeType) (GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST),
+                          UdpSinkProbe, GINT_TO_POINTER(sensorId), nullptr);
+        gst_object_unref(sinkPad);
+    }
 
     // 3. Swappable encoder tail as a named bin with ghost pads.
     err = nullptr;
@@ -242,6 +289,7 @@ void ForceKeyFrame(GstElement *pipeline);
 struct EncSwapContext {
     GstElement *pipeline;
     StreamingConfig cfg;
+    int eye;
 };
 
 // Pad-probe (BLOCK_DOWNSTREAM on rate_capsfilter:src) that hot-swaps the encoder
@@ -337,6 +385,7 @@ GstPadProbeReturn SwapEncoderProbe(GstPad *pad, GstPadProbeInfo *info, gpointer 
             if (ctx->cfg.codec == Codec::H264 || ctx->cfg.codec == Codec::H265) {
                 ForceKeyFrame(ctx->pipeline);
             }
+            eye_send[ctx->eye].swapDoneNs.store(MonotonicNs());
             std::cout << "Encoder tail swapped (codec " << ctx->cfg.codec << ", camera kept alive"
                       << (haveRtpState ? ", RTP state carried over" : ", fresh RTP state") << ")\n";
         }
@@ -355,7 +404,7 @@ GstPadProbeReturn SwapEncoderProbe(GstPad *pad, GstPadProbeInfo *info, gpointer 
 // Arm the encoder-tail swap probe on rate_capsfilter's src pad. Returns true once
 // the probe is installed (the swap itself runs on the next buffer). On failure the
 // caller falls back to a full rebuild.
-bool SwapEncoderTail(GstElement *pipeline, const StreamingConfig &newCfg) {
+bool SwapEncoderTail(GstElement *pipeline, const StreamingConfig &newCfg, int eye) {
     GstElement *rateCaps = gst_bin_get_by_name(GST_BIN(pipeline), "rate_capsfilter");
     if (!rateCaps) {
         std::cerr << "SwapEncoderTail: rate_capsfilter not found\n";
@@ -368,7 +417,7 @@ bool SwapEncoderTail(GstElement *pipeline, const StreamingConfig &newCfg) {
         return false;
     }
 
-    auto *ctx = new EncSwapContext{pipeline, newCfg};
+    auto *ctx = new EncSwapContext{pipeline, newCfg, eye};
     gst_pad_add_probe(srcPad, GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM, SwapEncoderProbe, ctx, nullptr);
     gst_object_unref(srcPad);
     std::cout << "Encoder-tail swap armed (codec " << newCfg.codec << ")\n";
@@ -395,7 +444,7 @@ bool UpdatePipelineProperties(GstElement *pipeline, const StreamingConfig &oldCf
         std::cout << "Swapping encoder tail (codec " << oldCfg.codec << "->" << newCfg.codec
                   << ", res " << oldCfg.horizontalResolution << "x" << oldCfg.verticalResolution
                   << "->" << newCfg.horizontalResolution << "x" << newCfg.verticalResolution << ")\n";
-        if (!SwapEncoderTail(pipeline, newCfg)) {
+        if (!SwapEncoderTail(pipeline, newCfg, sensorId)) {
             std::cerr << "Encoder-tail swap could not be armed\n";
             return false;  // caller falls back to a full rebuild
         }
@@ -621,6 +670,157 @@ void ForceKeyFrame(GstElement *pipeline) {
         GST_CLOCK_TIME_NONE, TRUE, 0);
     gst_element_send_event(encoder, event);
     gst_object_unref(encoder);
+}
+
+static void StoreForRetransmission(EyeSendState &s, GstBuffer *buf) {
+    GstMapInfo map;
+    if (!gst_buffer_map(buf, &map, GST_MAP_READ)) return;
+    if (map.size >= 12) {
+        const uint16_t seq = (uint16_t) ((map.data[2] << 8) | map.data[3]);
+        std::lock_guard<std::mutex> lk(s.ringMutex);
+        RtxSlot &slot = s.ring[seq % RTX_RING_SIZE];
+        slot.seq = seq;
+        slot.valid = true;
+        slot.data.assign(map.data, map.data + map.size);
+    }
+    gst_buffer_unmap(buf, &map);
+}
+
+// udpsink sink-pad probe (one per eye, lives as long as the pipeline): counts packets,
+// reports the first packet after an encoder swap, and keeps the retransmission ring.
+GstPadProbeReturn UdpSinkProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
+    (void) pad;
+    EyeSendState &s = eye_send[GPOINTER_TO_INT(user_data)];
+    const int64_t now = MonotonicNs();
+    const bool keep = now < rtx_mode_until_ns.load(std::memory_order_relaxed);
+    guint n = 1;
+    if (info->type & GST_PAD_PROBE_TYPE_BUFFER_LIST) {
+        GstBufferList *list = GST_PAD_PROBE_INFO_BUFFER_LIST(info);
+        n = gst_buffer_list_length(list);
+        if (keep) {
+            for (guint i = 0; i < n; i++) StoreForRetransmission(s, gst_buffer_list_get(list, i));
+        }
+    } else if (keep) {
+        StoreForRetransmission(s, GST_PAD_PROBE_INFO_BUFFER(info));
+    }
+    s.packets.fetch_add(n, std::memory_order_relaxed);
+    s.lastPacketNs.store(now, std::memory_order_relaxed);
+    if (s.swapDoneNs.load(std::memory_order_relaxed) != 0) {
+        const int64_t done = s.swapDoneNs.exchange(0);
+        if (done != 0) {
+            std::cout << "Camera " << GPOINTER_TO_INT(user_data) << ": first packet "
+                      << (now - done) / 1000000.0 << " ms after encoder swap\n";
+        }
+    }
+    return GST_PAD_PROBE_OK;
+}
+
+// Receives the headset's feedback messages (see FEEDBACK_PORT above).
+void FeedbackListener() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int txSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0 || txSock < 0) {
+        std::cerr << "Failed to create feedback sockets\n";
+        if (sock >= 0) close(sock);
+        if (txSock >= 0) close(txSock);
+        return;
+    }
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(FEEDBACK_PORT);
+    if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+        std::cerr << "Failed to bind feedback socket on port " << FEEDBACK_PORT << "\n";
+        close(sock);
+        close(txSock);
+        return;
+    }
+    struct timeval tv{};
+    tv.tv_sec = 1;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    std::cout << "Feedback listener started on port " << FEEDBACK_PORT << "\n";
+
+    uint8_t buf[1500];
+    uint64_t resent[2] = {0, 0}, missed[2] = {0, 0}, keyframes[2] = {0, 0};
+    int64_t lastReport = MonotonicNs();
+    bool rtxOn = false;
+
+    while (!stop_requested.load()) {
+        ssize_t n = recvfrom(sock, buf, sizeof(buf), 0, nullptr, nullptr);
+        const int64_t now = MonotonicNs();
+
+        if (n >= 2) {
+            const int eye = buf[1];
+            switch (buf[0]) {
+                case 0x10: {  // KEYFRAME_REQ
+                    if (eye > 1) break;
+                    if (now - eye_send[eye].lastKeyframeReqNs.load() < KEYFRAME_MIN_INTERVAL_NS) break;
+                    eye_send[eye].lastKeyframeReqNs.store(now);
+                    Codec codec;
+                    { std::lock_guard<std::mutex> ck(cfg_mutex); codec = desired_cfg.codec; }
+                    if (codec != Codec::H264 && codec != Codec::H265) break;
+                    std::lock_guard<std::mutex> plk(pipelines_mutex);
+                    if (pipelines[eye]) {
+                        ForceKeyFrame(pipelines[eye]);
+                        keyframes[eye]++;
+                    }
+                    break;
+                }
+                case 0x11: {  // NACK
+                    if (eye > 1 || n < 3) break;
+                    const int count = buf[2];
+                    if (n < 3 + 2 * count) break;
+                    struct sockaddr_in dst{};
+                    {
+                        std::lock_guard<std::mutex> ck(cfg_mutex);
+                        dst.sin_family = AF_INET;
+                        dst.sin_port = htons(eye == 0 ? desired_cfg.portLeft : desired_cfg.portRight);
+                        if (inet_pton(AF_INET, desired_cfg.ip.c_str(), &dst.sin_addr) != 1) break;
+                    }
+                    EyeSendState &s = eye_send[eye];
+                    for (int i = 0; i < count; i++) {
+                        const uint16_t seq = (uint16_t) ((buf[3 + 2 * i] << 8) | buf[4 + 2 * i]);
+                        std::lock_guard<std::mutex> lk(s.ringMutex);
+                        const RtxSlot &slot = s.ring[seq % RTX_RING_SIZE];
+                        if (slot.valid && slot.seq == seq) {
+                            sendto(txSock, slot.data.data(), slot.data.size(), 0, (struct sockaddr *) &dst, sizeof(dst));
+                            resent[eye]++;
+                        } else {
+                            missed[eye]++;
+                        }
+                    }
+                    break;
+                }
+                case 0x12: {  // RTX_MODE heartbeat
+                    const bool on = buf[1] != 0;
+                    rtx_mode_until_ns.store(on ? now + RTX_MODE_HOLD_NS : 0);
+                    if (on != rtxOn) {
+                        std::cout << "Retransmission buffering " << (on ? "enabled" : "disabled") << " by headset\n";
+                        rtxOn = on;
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        if (rtxOn && now > rtx_mode_until_ns.load()) {
+            std::cout << "Retransmission buffering disabled (no heartbeat)\n";
+            rtxOn = false;
+        }
+        if (now - lastReport >= 1'000'000'000LL) {
+            if (resent[0] + resent[1] + missed[0] + missed[1] + keyframes[0] + keyframes[1] > 0) {
+                std::cout << "Feedback: resent L/R " << resent[0] << "/" << resent[1]
+                          << ", not in ring " << missed[0] << "/" << missed[1]
+                          << ", key frames " << keyframes[0] << "/" << keyframes[1] << "\n";
+            }
+            resent[0] = resent[1] = missed[0] = missed[1] = keyframes[0] = keyframes[1] = 0;
+            lastReport = now;
+        }
+    }
+    close(sock);
+    close(txSock);
+    std::cout << "Feedback listener stopped\n";
 }
 
 int CircularDistance(int a, int b) {
@@ -993,6 +1193,7 @@ int RunCameraStreaming() {
         initial_cfg = desired_cfg;
     }
 
+    std::thread feedbackThread(FeedbackListener);
     if (initial_cfg.videoMode == VideoMode::PANORAMIC) {
         std::thread camSelectThread(CameraSelectListener);
         RunPanoramicPipeline();
@@ -1003,6 +1204,7 @@ int RunCameraStreaming() {
         t0.join();
         t1.join();
     }
+    feedbackThread.join();
 
     return 0;
 }

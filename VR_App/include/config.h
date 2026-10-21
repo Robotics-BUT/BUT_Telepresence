@@ -22,5 +22,6 @@ constexpr int RIGHT_CAMERA_PORT = 8556;    /* RTP video stream (right eye) */
 constexpr int ROS_GATEWAY_PORT = 8502;     /* UDP port for ROS gateway messages */
 constexpr int AUDIO_RX_PORT = 8558;        /* RTP Opus audio FROM robot mic (headset listens) */
 constexpr int AUDIO_TX_PORT = 8560;        /* RTP Opus audio FROM headset mic (robot listens) */
+constexpr int FEEDBACK_PORT = 9101;        /* UDP key-frame requests / NACKs to the video driver */
 
 }  // namespace Config

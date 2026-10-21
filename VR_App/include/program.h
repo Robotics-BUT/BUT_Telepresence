@@ -14,6 +14,7 @@
 #include "util_egl.h"
 #include "BS_thread_pool.hpp"
 #include "robot_control_sender.h"
+#include "stream_feedback.h"
 #include "video_player.h"
 #include "audio_player.h"
 #include "rest_client.h"
@@ -65,6 +66,9 @@ private:
     /** Send head pose and robot control data over UDP. */
     void SendControllerDatagram();
 
+    /** Re-send the last applied config when the reconfiguration watchdog asks for it. */
+    void ServiceStreamFeedback();
+
     /** Start the camera stream via REST API and configure GStreamer pipelines. */
     void InitializeStreaming();
 
@@ -110,6 +114,7 @@ private:
     std::unique_ptr<NtpTimer> ntpTimer_;
     std::unique_ptr<RosNetworkGatewayClient> rosNetworkGatewayClient_;
     std::unique_ptr<RobotControlSender> robotControlSender_;
+    std::unique_ptr<StreamFeedback> streamFeedback_;
     std::unique_ptr<StateStorage> stateStorage_;
 
     /* --- Frame timing --- */

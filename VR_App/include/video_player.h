@@ -21,6 +21,7 @@
 #include "types/camera_types.h"
 #include "BS_thread_pool.hpp"
 #include "ntp_timer.h"
+#include "stream_feedback.h"
 #include <gst/gl/gstglcontext.h>
 #include <gst/gl/egl/gstgldisplay_egl.h>
 
@@ -60,6 +61,9 @@ public:
     /** Stop both decode pipelines (state NULL) without releasing them; configurePipelines() rebuilds. */
     void stopPipelines();
 
+    /** Feedback channel to the robot (key-frame requests, NACKs); set before configurePipelines(). */
+    void setFeedback(StreamFeedback *feedback) { feedback_ = feedback; }
+
     /** A frame-rate change applied without a rebuild: update the stats window. */
     void setStreamFps(int fps) { windowFrames_.store(fps > 0 ? fps : 60); }
 
@@ -72,9 +76,22 @@ private:
         CamPair *first;                    // kept .first/.second to minimise diff
         NtpTimer *second;
         std::atomic<int> *windowFrames;
-        GStreamerCallbackObj(CamPair *cp, NtpTimer *nt, std::atomic<int> *wf)
-            : first(cp), second(nt), windowFrames(wf) {}
+        StreamFeedback *feedback;
+        GStreamerCallbackObj(CamPair *cp, NtpTimer *nt, std::atomic<int> *wf, StreamFeedback *fb)
+            : first(cp), second(nt), windowFrames(wf), feedback(fb) {}
     };
+
+    /** Per-eye context for the jitter-buffer probes that feed StreamFeedback. */
+    struct FeedbackProbeCtx {
+        StreamFeedback *feedback;
+        int eye;
+    };
+
+    /** Jitter-buffer sink pad, upstream events: retransmission requests -> NACK. */
+    static GstPadProbeReturn rtxRequestProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
+
+    /** Jitter-buffer src pad, downstream events: packet declared lost -> key-frame request. */
+    static GstPadProbeReturn packetLostProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 
     /** Called when appsink has a new decoded frame (GL texture or CPU buffer). */
     static GstFlowReturn newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackObj);
@@ -120,6 +137,9 @@ private:
     std::atomic<int> windowFrames_{60};
 
     NtpTimer *ntpTimer_;
+
+    StreamFeedback *feedback_{};
+    FeedbackProbeCtx feedbackCtx_[2]{};
 
     /*
      * GStreamer pipeline definition strings.

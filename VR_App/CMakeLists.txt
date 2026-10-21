@@ -81,6 +81,7 @@ add_library(
         src/video_player.cpp
         src/audio_player.cpp
         src/robot_control_sender.cpp
+        src/stream_feedback.cpp
         src/rest_client.cpp
         src/render_imgui.cpp
         src/util_openxr.cpp

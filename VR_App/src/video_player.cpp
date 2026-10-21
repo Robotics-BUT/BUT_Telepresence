@@ -493,6 +493,25 @@ VideoPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineN
     }
     g_object_set(udpsrc, "port", port, NULL);
 
+    // Feedback to the robot: the jitter buffer's retransmission requests (upstream
+    // events, dropped by udpsrc unless someone answers them) and its lost-packet
+    // events. StreamFeedback decides from its runtime switches whether to act.
+    if (feedback_) {
+        const int eye = (strcmp(pipelineName, "right") == 0) ? 1 : 0;
+        feedbackCtx_[eye] = {feedback_, eye};
+        if (GstElement *jb = getElementOptional(pipeline, "jitterbuffer")) {
+            if (GstPad *jbSink = gst_element_get_static_pad(jb, "sink")) {
+                gst_pad_add_probe(jbSink, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, rtxRequestProbe, &feedbackCtx_[eye], nullptr);
+                gst_object_unref(jbSink);
+            }
+            if (GstPad *jbSrc = gst_element_get_static_pad(jb, "src")) {
+                gst_pad_add_probe(jbSrc, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, packetLostProbe, &feedbackCtx_[eye], nullptr);
+                gst_object_unref(jbSrc);
+            }
+            gst_object_unref(jb);
+        }
+    }
+
     // Configure RTP capsfilter
     GstElement *rtp_capsfilter = getElementRequired(pipeline, "rtp_capsfilter", pipelineName);
     GstCaps *new_caps = gst_caps_new_simple("application/x-rtp",
@@ -678,7 +697,7 @@ VideoPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
     delete camPair_->second.stats;
 
     // Allocate new objects
-    callbackObj_ = new GStreamerCallbackObj(camPair_, ntpTimer_, &windowFrames_);
+    callbackObj_ = new GStreamerCallbackObj(camPair_, ntpTimer_, &windowFrames_, feedback_);
     camPair_->first.stats = new CameraStats();
     camPair_->second.stats = new CameraStats();
 
@@ -784,6 +803,7 @@ VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackOb
     const bool isRightCamera = (pipelineName == "pipeline_right");
 
     CameraFrame &frame = isLeftCamera ? pair->first : pair->second;
+    if (callbackObj->feedback) callbackObj->feedback->onFrame(isLeftCamera ? 0 : 1);
 
     // Update frame timestamps.
     double currentTime = callbackObj->second->GetCurrentTimeUs();
@@ -1169,6 +1189,34 @@ void VideoPlayer::errorCallback(GstBus *bus, GstMessage *msg, GstElement *pipeli
 
     LOG_ERROR("GSTREAMER error received from element: %s, %s", GST_OBJECT_NAME(msg->src),
               err->message);
+}
+
+GstPadProbeReturn
+VideoPlayer::rtxRequestProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
+    GstEvent *event = GST_PAD_PROBE_INFO_EVENT(info);
+    if (GST_EVENT_TYPE(event) == GST_EVENT_CUSTOM_UPSTREAM) {
+        const GstStructure *st = gst_event_get_structure(event);
+        guint seqnum = 0;
+        if (st && gst_structure_has_name(st, "GstRTPRetransmissionRequest") &&
+            gst_structure_get_uint(st, "seqnum", &seqnum)) {
+            auto *ctx = static_cast<FeedbackProbeCtx *>(user_data);
+            ctx->feedback->onRetransmissionRequest(ctx->eye, static_cast<uint16_t>(seqnum));
+        }
+    }
+    return GST_PAD_PROBE_OK;
+}
+
+GstPadProbeReturn
+VideoPlayer::packetLostProbe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
+    GstEvent *event = GST_PAD_PROBE_INFO_EVENT(info);
+    if (GST_EVENT_TYPE(event) == GST_EVENT_CUSTOM_DOWNSTREAM) {
+        const GstStructure *st = gst_event_get_structure(event);
+        if (st && gst_structure_has_name(st, "GstRTPPacketLost")) {
+            auto *ctx = static_cast<FeedbackProbeCtx *>(user_data);
+            ctx->feedback->onPacketLost(ctx->eye);
+        }
+    }
+    return GST_PAD_PROBE_OK;
 }
 
 /** Pad probe on UDP source to log packet arrival intervals (debug only). */

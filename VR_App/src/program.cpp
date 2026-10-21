@@ -68,6 +68,8 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
     ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
     videoPlayer_ = std::make_unique<VideoPlayer>(&appState_->cameraStreamingStates, ntpTimer_.get());
+    streamFeedback_ = std::make_unique<StreamFeedback>(appState_->streamingConfig);
+    videoPlayer_->setFeedback(streamFeedback_.get());
     audioPlayer_ = std::make_unique<AudioPlayer>(ntpTimer_.get());
     rosNetworkGatewayClient_ = std::make_unique<RosNetworkGatewayClient>();
 
@@ -134,6 +136,7 @@ void TelepresenceProgram::UpdateFrame() {
         audioPlayer_->setMuted(muted);
     }
     SendControllerDatagram();
+    ServiceStreamFeedback();
 
     RenderFrame();
 }
@@ -676,6 +679,13 @@ void TelepresenceProgram::PollActions() {
  * connection health via consecutive send failures and updates the
  * AppState connection status accordingly.
  */
+void TelepresenceProgram::ServiceStreamFeedback() {
+    if (streamFeedback_ && streamFeedback_->takeConfigResend() && lastAppliedConfig_ && restClient_) {
+        const int result = restClient_->UpdateStreamingConfig(*lastAppliedConfig_);
+        LOG_INFO("Reconfigure: config re-sent to the robot (result %d)", result);
+    }
+}
+
 void TelepresenceProgram::SendControllerDatagram() {
     if (!appState_->headsetMounted) {
         return;
@@ -936,6 +946,7 @@ void TelepresenceProgram::BuildSettings() {
             "Apply", GuiSettingType::Button, "",
             nullptr, noop, noop,
             [this]() {
+                streamFeedback_->markApply();
                 stateStorage_->SaveAppState(*appState_);
                 const StreamingConfig &cfg = appState_->streamingConfig;
 
@@ -990,6 +1001,10 @@ void TelepresenceProgram::BuildSettings() {
                     appState_->connectionState.cameraServer = ConnectionStatus::Connected;
                     appState_->cameraServerStatus = "Connected";
                     lastAppliedConfig_ = cfg;  // remember only what the robot acknowledged
+                    if (change != StreamConfigChange::None) {
+                        streamFeedback_->armReconfigure(change == StreamConfigChange::Structural,
+                                                        cfg.videoMode == VideoMode::Stereo);
+                    }
                 }
             }
         },
