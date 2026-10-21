@@ -39,7 +39,10 @@ class RelayConfig:
     tg_elevation_max: int = 90000
     tg_speed_max: int = 1000000
     tg_speed_multiplier: float = 0.0
-    tg_filter_alpha: float = 0.15
+    tg_filter_min_cutoff: float = 1.0
+    tg_filter_beta: float = 20.0
+    tg_filter_d_cutoff: float = 5.0
+    tg_position_readback_hz: float = 200.0
     tg_swap_axes: bool = False
     tg_invert_azimuth: bool = False
     tg_invert_elevation: bool = False
@@ -192,7 +195,10 @@ class RelayConfig:
                 config_dict['tg_elevation_max'] = data['tg_drives'].get('elevation_max', cls.tg_elevation_max)
                 config_dict['tg_speed_max'] = data['tg_drives'].get('speed_max', cls.tg_speed_max)
                 config_dict['tg_speed_multiplier'] = data['tg_drives'].get('speed_multiplier', cls.tg_speed_multiplier)
-                config_dict['tg_filter_alpha'] = data['tg_drives'].get('filter_alpha', cls.tg_filter_alpha)
+                config_dict['tg_filter_min_cutoff'] = data['tg_drives'].get('filter_min_cutoff', cls.tg_filter_min_cutoff)
+                config_dict['tg_filter_beta'] = data['tg_drives'].get('filter_beta', cls.tg_filter_beta)
+                config_dict['tg_filter_d_cutoff'] = data['tg_drives'].get('filter_d_cutoff', cls.tg_filter_d_cutoff)
+                config_dict['tg_position_readback_hz'] = data['tg_drives'].get('position_readback_hz', cls.tg_position_readback_hz)
                 config_dict['tg_swap_axes'] = data['tg_drives'].get('swap_axes', cls.tg_swap_axes)
                 config_dict['tg_invert_azimuth'] = data['tg_drives'].get('invert_azimuth', cls.tg_invert_azimuth)
                 config_dict['tg_invert_elevation'] = data['tg_drives'].get('invert_elevation', cls.tg_invert_elevation)

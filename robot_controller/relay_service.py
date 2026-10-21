@@ -169,7 +169,9 @@ class UDPRelayService:
                 elevation_max=self.config.tg_elevation_max,
                 speed_max=self.config.tg_speed_max,
                 speed_multiplier=self.config.tg_speed_multiplier,
-                filter_alpha=self.config.tg_filter_alpha,
+                filter_min_cutoff=self.config.tg_filter_min_cutoff,
+                filter_beta=self.config.tg_filter_beta,
+                filter_d_cutoff=self.config.tg_filter_d_cutoff,
                 swap_axes=self.config.tg_swap_axes,
                 invert_azimuth=self.config.tg_invert_azimuth,
                 invert_elevation=self.config.tg_invert_elevation
@@ -220,6 +222,9 @@ class UDPRelayService:
             if not self.servo_translator.initialize():
                 self.logger.error("Failed to initialize servo translator")
                 return False
+            if hasattr(self.servo_translator, "start_position_readback"):
+                self.servo_translator.start_position_readback(self.config.tg_position_readback_hz,
+                                                              self._record_servo_state)
 
             # Initialize robot translator
             self.robot_translator = self._create_robot_translator()
@@ -376,8 +381,9 @@ class UDPRelayService:
         Record M2M command-path latency + prediction horizon + the requested head
         position (azimuth/elevation) to InfluxDB.
 
-        Head pose packet (25 bytes):
+        Head pose packet (41 bytes; layout in servo_translators/tg_drives.py):
             [0x01][azimuth f][elevation f][speed f][timestamp u64][prediction_ms u32]
+            [measured azimuth f][measured elevation f][measured sample time u64]
 
         timestamp is the headset's NTP-corrected (robot-clock-aligned) send time, so
         m2m_command_us = relay_ingest_now - timestamp is the headset-pose-sample ->
@@ -421,6 +427,41 @@ class UDPRelayService:
             self.logger.debug(f"control metrics parse error: {e}")
         except Exception as e:
             self.logger.debug(f"control metrics error: {e}")
+
+    def _record_servo_command(self, client_addr: Tuple[str, int]):
+        """
+        Record, for every head-pose packet that reached the servo, the measured head pose with its sample time, the
+        forecast, the filtered command and the motor-unit values actually written ('servo_command', full rate).
+        With 'servo_state' this gives head -> command -> position-generator -> measured position on one clock.
+        """
+        cmd = getattr(self.servo_translator, "last_command", None)
+        if not self.influx_client or not cmd:
+            return
+        try:
+            point = Point("servo_command").tag("source", client_addr[0])
+            for k, v in cmd.items():
+                point = point.field(k, int(v) if isinstance(v, int) else float(v))
+            point = point.time(time.time_ns())
+            with self.influx_buffer_lock:
+                self.influx_buffer.append(point)
+        except Exception as e:
+            self.logger.debug(f"servo command metrics error: {e}")
+
+    def _record_servo_state(self, sample: dict):
+        """Record one position read-back sample ('servo_state'); called from the translator's read-back thread."""
+        if not self.influx_client:
+            return
+        try:
+            point = Point("servo_state").field("timeout", bool(sample["timeout"]))
+            point = point.field("t_send_ns", int(sample["t_send_ns"])).field("t_recv_ns", int(sample["t_recv_ns"]))
+            for k in ("act_az", "act_el", "pg_az", "pg_el"):
+                if k in sample:
+                    point = point.field(k, int(sample[k]))
+            point = point.time((sample["t_send_ns"] + sample["t_recv_ns"]) // 2)
+            with self.influx_buffer_lock:
+                self.influx_buffer.append(point)
+        except Exception as e:
+            self.logger.debug(f"servo state metrics error: {e}")
 
     def _record_robot_command(self, data: bytes, client_addr: Tuple[str, int]):
         """
@@ -484,6 +525,7 @@ class UDPRelayService:
         try:
             # Translator handles protocol conversion, sending, and receiving
             response = self.servo_translator.translate_and_forward(data, client_addr)
+            self._record_servo_command(client_addr)
 
             # Send response back to client if we got one
             if response and self.ingest_socket:

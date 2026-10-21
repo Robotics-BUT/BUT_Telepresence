@@ -38,21 +38,25 @@ RobotControlSender::~RobotControlSender() {
     }
 }
 
-void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, float speed, uint32_t predictionMs,
+void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, XrQuaternionf quatPoseNow, uint64_t poseNowTimeUs,
+                                      float speed, uint32_t predictionMs,
                                       BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
 
-    threadPool.detach_task([this, quatPose, speed, predictionMs]() {
-        // Convert quaternion to azimuth/elevation
+    threadPool.detach_task([this, quatPose, quatPoseNow, poseNowTimeUs, speed, predictionMs]() {
+        // Convert quaternions to azimuth/elevation: the forecast commanded to the camera head, and the head
+        // pose measured at the present instant
         auto azElev = quaternionToAzimuthElevation(quatPose);
+        auto azElevNow = quaternionToAzimuthElevation(quatPoseNow);
 
         // Get current timestamp (NTP-corrected, robot-clock-aligned)
         uint64_t timestamp = ntpTimer_->GetCurrentTimeUs();
 
         // Send the packet
-        sendHeadPosePacket(azElev.azimuth, azElev.elevation, speed, timestamp, predictionMs);
+        sendHeadPosePacket(azElev.azimuth, azElev.elevation, speed, timestamp, predictionMs,
+                           azElevNow.azimuth, azElevNow.elevation, poseNowTimeUs);
     });
 }
 
@@ -147,9 +151,10 @@ void RobotControlSender::sendNtpMetricsPacket() {
 }
 
 void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, float speed,
-                                            uint64_t timestamp, uint32_t predictionMs) {
+                                            uint64_t timestamp, uint32_t predictionMs,
+                                            float azimuthNow, float elevationNow, uint64_t poseNowTimeUs) {
     std::vector<uint8_t> packet;
-    packet.reserve(25);
+    packet.reserve(41);
 
     // Message type
     packet.push_back(MSG_HEAD_POSE);
@@ -169,6 +174,13 @@ void RobotControlSender::sendHeadPosePacket(float azimuth, float elevation, floa
     // Head-pose prediction horizon in ms (uint32, 4 bytes). The camera-head
     // forecast interval; the relay logs it alongside the M2M command-path latency.
     serializeLittleEndian(packet, predictionMs);
+
+    // Head pose measured at the present instant (azimuth, elevation in rad) and its sample time on the
+    // NTP-corrected robot clock (us): the reference for the head -> camera-head lag. 41 bytes in total;
+    // deploy together with the relay (robot_controller/servo_translators/tg_drives.py checks the length).
+    serializeLittleEndian(packet, azimuthNow);
+    serializeLittleEndian(packet, elevationNow);
+    serializeLittleEndian(packet, poseNowTimeUs);
 
     // Send UDP packet
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,

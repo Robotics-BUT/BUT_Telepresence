@@ -30,8 +30,13 @@ namespace Side {
  * All arrays are indexed by Side::LEFT / Side::RIGHT.
  */
 struct UserState {
-    // Head-mounted display pose
+    // Head-mounted display pose: the forecast for the robot's camera head (display time + lead)
     XrPosef hmdPose{};
+
+    // Head pose measured at the present instant (no forecast), and when it was sampled on the
+    // NTP-corrected robot clock (us). Sent with every head-pose packet for the head -> camera-head lag.
+    XrPosef hmdPoseNow{};
+    uint64_t hmdPoseNowTimeUs = 0;
 
     // Controller poses (left/right)
     XrPosef controllerPose[Side::COUNT]{};

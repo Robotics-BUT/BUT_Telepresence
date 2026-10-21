@@ -28,10 +28,14 @@
  *
  * Protocol formats (little-endian):
  *
- * Message Type 0x01 - Head Pose (25 bytes):
+ * Message Type 0x01 - Head Pose (41 bytes):
  *   [0x01] [azimuth (float)] [elevation (float)] [speed (float)] [timestamp (uint64)] [prediction_ms (uint32)]
- *   timestamp is NTP-corrected (robot-clock-aligned); prediction_ms is the
- *   head-pose forecast horizon applied to the camera-head command (M2M telemetry).
+ *   [azimuth_now (float)] [elevation_now (float)] [pose_now_time (uint64)]
+ *   azimuth/elevation are the forecast commanded to the camera head; timestamp is NTP-corrected
+ *   (robot-clock-aligned) send time; prediction_ms is the forecast lead (M2M telemetry). azimuth_now/
+ *   elevation_now are the head pose at the present instant and pose_now_time their sample time on the
+ *   same clock (us): the reference for the head -> camera-head lag. prediction_ms = PREDICTION_NOW
+ *   (0xFFFFFFFF) marks the measurement mode in which the command is the present-instant pose.
  *
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
@@ -55,6 +59,9 @@
  */
 class RobotControlSender {
 public:
+    // prediction_ms value sent when the command is the present-instant pose (debug.but.lead_now = 1)
+    static constexpr uint32_t PREDICTION_NOW = 0xFFFFFFFFu;
+
     explicit RobotControlSender(StreamingConfig &config, NtpTimer *ntpTimer);
     ~RobotControlSender();
 
@@ -64,7 +71,8 @@ public:
     [[nodiscard]] bool hasEverSucceeded() const { return successfulSends_ > 0; }
 
     /** Send head pose (quaternion is converted to azimuth/elevation internally). */
-    void sendHeadPose(XrQuaternionf quatPose, float speed, uint32_t predictionMs, BS::thread_pool<BS::tp::none> &threadPool);
+    void sendHeadPose(XrQuaternionf quatPose, XrQuaternionf quatPoseNow, uint64_t poseNowTimeUs, float speed,
+                      uint32_t predictionMs, BS::thread_pool<BS::tp::none> &threadPool);
 
     /** Send robot mobile base velocity commands. */
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);
@@ -98,7 +106,8 @@ private:
         }
     }
 
-    void sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp, uint32_t predictionMs);
+    void sendHeadPosePacket(float azimuth, float elevation, float speed, uint64_t timestamp, uint32_t predictionMs,
+                            float azimuthNow, float elevationNow, uint64_t poseNowTimeUs);
     void sendRobotControlPacket(float linearX, float linearY, float angular, uint64_t timestamp);
     void sendDebugInfoPacket(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
                              const StreamingConfig &config, uint64_t timestamp);

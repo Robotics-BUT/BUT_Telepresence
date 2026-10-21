@@ -36,7 +36,10 @@ tg_drives:
   azimuth_max: 1100000000    # Maximum azimuth in motor units
   speed_max: 1000000         # Maximum servo speed
   speed_multiplier: 1.5      # Speed multiplier for accelerated movement
-  filter_alpha: 0.15         # Low-pass filter (0-1, higher = less filtering)
+  filter_min_cutoff: 1.0     # One Euro head-pose filter: cutoff at rest, Hz (lower = smoother when still)
+  filter_beta: 20.0          # cutoff increase per rad/s of head speed (higher = less lag when turning)
+  filter_d_cutoff: 5.0       # cutoff of the speed estimate, Hz
+  position_readback_hz: 200  # poll the drive's measured position (servo_state telemetry); 0 = off
   swap_axes: true            # Swap azimuth and elevation axes (true/false)
   invert_azimuth: true       # Invert azimuth direction (true/false)
   invert_elevation: true     # Invert elevation direction (true/false)

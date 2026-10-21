@@ -15,6 +15,7 @@
 #include <utility>
 #include <algorithm>
 #include <ctime>
+#include <sys/system_properties.h>
 #include <GLES3/gl32.h>
 
 #include "program.h"
@@ -191,7 +192,35 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
     // This is intentionally ahead of the OpenXR predicted display time to compensate for
     // the uplink and servo delay on the robot. The rendered view matrices above use the
     // unmodified predictedDisplayTime so OpenXR time warp behaves canonically.
-    XrTime robotTargetTime = displayTime + (XrTime) (appState_->headMovementPredictionMs * 1e6);
+    // The head pose at the present instant, with no forecast: the reference for measuring how far the camera
+    // head lags the operator's head. On Quest XrTime is CLOCK_MONOTONIC (ns), so 'now' needs no time
+    // conversion; the sample time is taken on the NTP-corrected robot clock the packet already uses.
+    timespec tsNow{};
+    clock_gettime(CLOCK_MONOTONIC, &tsNow);
+    const XrTime nowTime = (XrTime) tsNow.tv_sec * 1000000000LL + tsNow.tv_nsec;
+    {
+        XrSpaceLocation nowLocation{XR_TYPE_SPACE_LOCATION};
+        const uint64_t nowNtpUs = ntpTimer_->GetCurrentTimeUs();
+        if (XR_UNQUALIFIED_SUCCESS(xrLocateSpace(reference_spaces_[1], app_reference_space_, nowTime, &nowLocation)) &&
+            (nowLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+            userState_.hmdPoseNow = nowLocation.pose;
+            userState_.hmdPoseNowTimeUs = nowNtpUs;
+        }
+    }
+
+    // Measurement mode for the Chapter 8 reference with no forward prediction: with
+    // `adb shell setprop debug.but.lead_now 1` (checked every 90 frames) the camera-head command is the pose at
+    // the present instant instead of display time + lead, and the packet reports the lead as PREDICTION_NOW.
+    {
+        static int leadNowCheck = 0;
+        if ((leadNowCheck++ % 90) == 0) {
+            char v[PROP_VALUE_MAX] = {0};
+            __system_property_get("debug.but.lead_now", v);
+            leadNow_ = (v[0] == '1');
+        }
+    }
+    XrTime robotTargetTime = leadNow_ ? nowTime
+                                      : displayTime + (XrTime) (appState_->headMovementPredictionMs * 1e6);
     auto res = xrLocateSpace(reference_spaces_[1], app_reference_space_, robotTargetTime,
                              &spaceLocation);
     CHECK_XRRESULT(res, "xrLocateSpace")
@@ -658,7 +687,11 @@ void TelepresenceProgram::SendControllerDatagram() {
 
     if (robotControlSender_->isInitialized()) {
         // Always send head pose
-        robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, appState_->headMovementMaxSpeed, appState_->headMovementPredictionMs, threadPool_);
+        robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, userState_.hmdPoseNow.orientation,
+                                          userState_.hmdPoseNowTimeUs, appState_->headMovementMaxSpeed,
+                                          leadNow_ ? RobotControlSender::PREDICTION_NOW
+                                                   : (uint32_t) appState_->headMovementPredictionMs,
+                                          threadPool_);
 
         // Send robot control when enabled
         if (appState_->robotControlEnabled && !renderGui_) {

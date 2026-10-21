@@ -91,6 +91,7 @@ private:
     /* --- Input state --- */
     InputState input_;
     UserState userState_;
+    bool leadNow_ = false;  // debug.but.lead_now: camera-head command = present-instant pose (Chapter 8 reference)
 
     /* --- Runtime flags --- */
     bool renderGui_ = true;              /* toggle with left thumbstick press */

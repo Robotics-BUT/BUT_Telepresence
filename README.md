@@ -189,7 +189,10 @@ tg_drives:
   elevation_max: 200000000
   azimuth_min: -600000000
   azimuth_max: 1100000000
-  filter_alpha: 0.15       # Low-pass filter (0-1, higher = smoother)
+  filter_min_cutoff: 1.0   # One Euro head-pose filter: cutoff at rest, Hz
+  filter_beta: 20.0        # cutoff increase per rad/s of head speed
+  filter_d_cutoff: 5.0     # cutoff of the speed estimate, Hz
+  position_readback_hz: 200 # poll the drive's measured position (servo_state telemetry); 0 = off
 
 # This enables the built-in telemetry logging and Grafana display.
 telemetry:
