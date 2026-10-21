@@ -768,14 +768,6 @@ VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackOb
         return GST_FLOW_ERROR;
     }
 
-    GstStructure *st = gst_caps_get_structure(caps, 0);
-    const gchar *tex_target_str = gst_structure_get_string(st, "texture-target");
-    if (g_strcmp0(tex_target_str, "external-oes") == 0) {
-        frame.glTarget = GL_TEXTURE_EXTERNAL_OES;
-    } else {
-        frame.glTarget = GL_TEXTURE_2D;  // fallback / SW GL path
-    }
-
     // Check whether this is GLMemory (HW decode) or plain system memory (JPEG)
     GstCapsFeatures *features = gst_caps_get_features(caps, 0);
     const bool isGLMemory = (features != nullptr) &&
