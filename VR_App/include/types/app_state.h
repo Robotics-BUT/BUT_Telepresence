@@ -223,8 +223,8 @@ struct AppState {
     GuiPanelState guiPanel{};
 
     /* Head tracking settings - sent to the robot servo controller */
-    uint32_t headMovementMaxSpeed{990000};        /* servo speed limit (device units) */
-    uint32_t headMovementPredictionMs{50};         /* prediction horizon in milliseconds */
+    uint32_t headMovementMaxSpeed{3000000};       /* camera-head speed, TGZ profile-generator inc/s (1e6 = 0.95 motor rev/s) */
+    uint32_t headMovementPredictionMs{40};         /* lead beyond the predicted display time, ms (matches the drive at 3e6) */
     float headMovementSpeedMultiplier{1.5f};       /* angular velocity scaling factor */
 
     /* Connection monitoring */

@@ -34,11 +34,11 @@ tg_drives:
   elevation_max: 200000000   # Maximum elevation in motor units
   azimuth_min: -600000000    # Minimum azimuth in motor units
   azimuth_max: 1100000000    # Maximum azimuth in motor units
-  speed_max: 1000000         # Largest profile-generator speed sent to the drive (PG PosSpeed, inc/s); the app's
+  speed_max: 3000000         # Largest profile-generator speed sent to the drive (PG PosSpeed, inc/s); the app's
                              # setting is clamped to it. 1,000,000 = 0.95 motor rev/s (BitsPerRevol 20)
-  # pg_acc: 123000000        # Optional: PG acceleration / deceleration (inc/s^2) and profile type written at start-up;
-  # pg_dec: 123000000        # leave commented to keep the drive's stored values (campaigns/servo_speed)
-  # pg_type: 1               # 0 harmonic non-sym., 1 harmonic sym., 2 full harmonic, 3 trapezoidal
+  # pg_acc: 104857600        # Optional: PG acceleration / deceleration (inc/s^2) and profile type written at start-up;
+  # pg_dec: 104857600        # values shown are the drive's stored ones (100 rev/s^2, harmonic); leave commented to keep them
+  # pg_type: 0               # 0 harmonic non-sym., 1 harmonic sym., 2 full harmonic, 3 trapezoidal
   speed_multiplier: 1.5      # Speed multiplier for accelerated movement
   filter_min_cutoff: 1.0     # One Euro head-pose filter: cutoff at rest, Hz (lower = smoother when still)
   filter_beta: 20.0          # cutoff increase per rad/s of head speed (higher = less lag when turning)
