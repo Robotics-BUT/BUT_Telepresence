@@ -133,8 +133,9 @@ static void ConnectLatencyHandoffs(GstElement *pipeline) {
 // rate_capsfilter
 // Physical nvarguscamerasrc sensor-id feeding each logical eye (index 0 = left/8554,
 // 1 = right/8556). This decouples the eye->connector mapping from the wiring so a
-// physical move can be handled in software.
-inline constexpr int EYE_SENSOR_ID[2] = {3, 2};
+// physical move can be handled in software. Sensor 2 is the left camera and sensor 3
+// the right one; the headset draws 8554 in the left lens and 8556 in the right.
+inline constexpr int EYE_SENSOR_ID[2] = {2, 3};
 
 GstElement *BuildCameraPipeline(int sensorId, const StreamingConfig &streamingConfig) {
     SetSensorStaticLatencyForFps(streamingConfig.fps);
