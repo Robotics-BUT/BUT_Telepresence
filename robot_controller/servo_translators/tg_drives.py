@@ -68,6 +68,9 @@ class TGDrivesTranslator(ServoTranslator):
     ANGLE = 0x04
     SPEED = 0x07
     MODE = 0x09
+    PG_ACC = 0x00      # profile generator: acceleration, inc/s^2
+    PG_DEC = 0x01      # profile generator: deceleration, inc/s^2
+    PG_TYPE = 0x0B     # profile generator: 0 harmonic non-sym., 1 harmonic sym., 2 full harmonic, 3 trapezoidal
 
     PACKET_LENGTH = 41
 
@@ -89,6 +92,7 @@ class TGDrivesTranslator(ServoTranslator):
                  azimuth_min: int = -180000, azimuth_max: int = 180000,
                  elevation_min: int = -90000, elevation_max: int = 90000,
                  speed_max: int = 1000000, speed_multiplier: float = 0.0,
+                 pg_acc: Optional[int] = None, pg_dec: Optional[int] = None, pg_type: Optional[int] = None,
                  filter_min_cutoff: float = 1.0, filter_beta: float = 20.0,
                  filter_d_cutoff: float = 5.0, swap_axes: bool = False,
                  invert_azimuth: bool = False, invert_elevation: bool = False):
@@ -103,7 +107,12 @@ class TGDrivesTranslator(ServoTranslator):
             azimuth_max: Maximum azimuth value in motor units
             elevation_min: Minimum elevation value in motor units
             elevation_max: Maximum elevation value in motor units
-            speed_max: Maximum speed value for servos
+            speed_max: Largest profile-generator speed (PG PosSpeed, inc/s) written to the drive; the speed in each
+                head-pose packet is clamped to it. With BitsPerRevol = 20, 1,000,000 inc/s = 0.95 motor rev/s.
+            pg_acc, pg_dec: profile-generator acceleration / deceleration (inc/s^2) written to both axes at start-up;
+                None = leave the drive's stored values
+            pg_type: profile type written at start-up (0 harmonic non-symmetric, 1 harmonic symmetric,
+                2 full harmonic, 3 trapezoidal); None = leave the drive's stored value
             speed_multiplier: Speed multiplier for accelerated movement
             filter_min_cutoff: One Euro cutoff at rest, Hz (lower = smoother when the head is still)
             filter_beta: One Euro cutoff increase per rad/s of head speed (higher = less lag when turning)
@@ -122,6 +131,8 @@ class TGDrivesTranslator(ServoTranslator):
         self.elevation_max = elevation_max
         self.speed_max = speed_max
         self.speed_multiplier = speed_multiplier
+        self.pg_params = {item: value for item, value in ((self.PG_ACC, pg_acc), (self.PG_DEC, pg_dec),
+                                                         (self.PG_TYPE, pg_type)) if value is not None}
         self.swap_axes = swap_axes
         self.invert_azimuth = invert_azimuth
         self.invert_elevation = invert_elevation
@@ -156,8 +167,9 @@ class TGDrivesTranslator(ServoTranslator):
 
             self.logger.info(f"TG Drives translator initialized: {self.servo_ip}:{self.servo_port}")
 
-            # Set mode to position control on both axes
+            # Set mode to position control on both axes, and the profile generator's ramps if configured
             self._set_mode()
+            self._set_profile_generator()
 
             return True
         except Exception as e:
@@ -181,6 +193,21 @@ class TGDrivesTranslator(ServoTranslator):
             self.logger.info("Set servo mode to position control")
         except Exception as e:
             self.logger.warning(f"Failed to set servo mode: {e}")
+
+    def _set_profile_generator(self):
+        """Write the configured profile-generator parameters (Acc, Dec, Type) to both axes (working values)."""
+        if not self.pg_params:
+            return
+        msg = bytearray([self.IDENTIFIER_1, self.IDENTIFIER_2])
+        for group in (self.AZIMUTH, self.ELEVATION):
+            for item, value in self.pg_params.items():
+                msg.extend([self.WRITE, group, item])
+                msg.extend(struct.pack('<I', int(value) & 0xFFFFFFFF))
+        try:
+            self.socket.sendto(bytes(msg), (self.servo_ip, self.servo_port))
+            self.logger.info(f"Profile generator set on both axes: {self.pg_params}")
+        except Exception as e:
+            self.logger.warning(f"Failed to set the profile generator: {e}")
 
     def translate_and_forward(self, data: bytes, client_addr: Tuple[str, int]) -> Optional[bytes]:
         """
@@ -260,7 +287,8 @@ class TGDrivesTranslator(ServoTranslator):
         }
 
         # Build GT protocol message
-        gt_message = self._build_gt_message(azimuth_motor, elevation_motor, int(speed_motor))
+        speed = max(0, min(int(speed_motor), self.speed_max))
+        gt_message = self._build_gt_message(azimuth_motor, elevation_motor, speed)
 
         # Send to servo driver
         try:

@@ -998,8 +998,9 @@ void TelepresenceProgram::BuildSettings() {
         {
             "Head movement max speed", GuiSettingType::Text, "Status Information",
             [this]() { return fmt::format("Camera head movement max speed: {}", appState_->headMovementMaxSpeed); },
-            [this]() { if (appState_->headMovementMaxSpeed < 990000) appState_->headMovementMaxSpeed += 10000; },
-            [this]() { if (appState_->headMovementMaxSpeed > 110000) appState_->headMovementMaxSpeed -= 10000; }
+            // Profile-generator speed in inc/s (1,000,000 = 0.95 motor rev/s); the relay clamps it to its speed_max.
+            [this]() { if (appState_->headMovementMaxSpeed < 5000000) appState_->headMovementMaxSpeed += 100000; },
+            [this]() { if (appState_->headMovementMaxSpeed > 200000) appState_->headMovementMaxSpeed -= 100000; }
         },
         {
             "Head movement speed multiplier", GuiSettingType::Text, "",
