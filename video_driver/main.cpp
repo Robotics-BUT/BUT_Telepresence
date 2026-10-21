@@ -278,6 +278,23 @@ GstPadProbeReturn SwapEncoderProbe(GstPad *pad, GstPadProbeInfo *info, gpointer 
 
     if (oldTail && udpsink && rateCaps) {
         gst_element_set_state(oldTail, GST_STATE_NULL);
+
+        // Keep the RTP stream continuous across the swap: same SSRC and timestamp base,
+        // sequence numbers carrying on from the last packet sent. A fresh payloader would
+        // otherwise start a new random SSRC, sequence and timestamp base mid-stream, which
+        // the headset jitter buffer sees as a discontinuity it has to resynchronise on.
+        guint lastSeq = 0, ssrc = 0, tsOffset = 0;
+        bool haveRtpState = false;
+        if (GstElement *oldPay = gst_bin_get_by_name(GST_BIN(oldTail), "rtppay")) {
+            GstStructure *stats = nullptr;
+            g_object_get(oldPay, "seqnum", &lastSeq, "stats", &stats, nullptr);
+            if (stats) {
+                haveRtpState = gst_structure_get_uint(stats, "ssrc", &ssrc) &&
+                               gst_structure_get_uint(stats, "timestamp-offset", &tsOffset);
+                gst_structure_free(stats);
+            }
+            gst_object_unref(oldPay);
+        }
         gst_element_unlink(rateCaps, oldTail);
         gst_element_unlink(oldTail, udpsink);
         gst_bin_remove(GST_BIN(ctx->pipeline), oldTail);  // drops the pipeline's ref
@@ -290,6 +307,13 @@ GstPadProbeReturn SwapEncoderProbe(GstPad *pad, GstPadProbeInfo *info, gpointer 
             if (err) g_error_free(err);
         } else {
             gst_element_set_name(newTail, "enc_tail");
+            if (haveRtpState) {
+                if (GstElement *newPay = gst_bin_get_by_name(GST_BIN(newTail), "rtppay")) {
+                    g_object_set(newPay, "ssrc", ssrc, "timestamp-offset", tsOffset,
+                                 "seqnum-offset", (gint) ((lastSeq + 1) & 0xFFFF), nullptr);
+                    gst_object_unref(newPay);
+                }
+            }
             gst_bin_add(GST_BIN(ctx->pipeline), newTail);
 
             // Re-arm the latency handoffs on the fresh enc_ident / rtppay_ident.
@@ -312,7 +336,8 @@ GstPadProbeReturn SwapEncoderProbe(GstPad *pad, GstPadProbeInfo *info, gpointer 
             if (ctx->cfg.codec == Codec::H264 || ctx->cfg.codec == Codec::H265) {
                 ForceKeyFrame(ctx->pipeline);
             }
-            std::cout << "Encoder tail swapped (codec " << ctx->cfg.codec << ", camera kept alive)\n";
+            std::cout << "Encoder tail swapped (codec " << ctx->cfg.codec << ", camera kept alive"
+                      << (haveRtpState ? ", RTP state carried over" : ", fresh RTP state") << ")\n";
         }
     } else {
         std::cerr << "Encoder-tail swap: missing enc_tail/udpsink/rate_capsfilter\n";
