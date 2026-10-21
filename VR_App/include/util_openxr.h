@@ -152,6 +152,7 @@ int openxr_begin_frame(XrSession *session, XrTime *display_time);
 int openxr_end_frame(XrSession *session, XrTime *displayTime,
                      std::vector<XrCompositionLayerBaseHeader *> &layers);
 
+/** Returns 0 when the views are valid, -1 when the runtime flags them not valid (contents undefined). */
 int openxr_locate_views(XrSession *session, XrTime *displayTime, XrSpace space, uint32_t viewCount, XrView *view_array);
 
 std::string openxr_get_runtime_name(XrInstance *instance);

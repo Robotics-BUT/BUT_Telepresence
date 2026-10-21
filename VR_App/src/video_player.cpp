@@ -223,9 +223,18 @@ struct OesBlitJob {
     bool         success;
 };
 
-static void oesBlitOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
+static void oesBlitOnGstGlThread(GstGLContext *ctx, gpointer data) {
     auto *job = static_cast<OesBlitJob *>(data);
     job->success = false;
+
+    // Objects from another GstGL context (a rebuilt pipeline) are not ours to touch here:
+    // resetFrameForRebuild hands them back to their own context.
+    if (job->frame->hwBackingCtx != ctx) {
+        job->frame->hwBackingTex = 0;
+        job->frame->hwBackingFBO = 0;
+        if (job->frame->hwBackingCtx) gst_object_unref(GST_OBJECT(job->frame->hwBackingCtx));
+        job->frame->hwBackingCtx = gst_object_ref(ctx);
+    }
 
     if (job->frame->hwBackingTex == 0 ||
         job->frame->hwBackingWidth  != job->width ||
@@ -287,6 +296,69 @@ static void oesBlitOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
     glFinish();
 
     job->success = true;
+}
+
+// ---------------------------------------------------------------------------
+// Publishing to the render thread. Every CameraFrame field the renderer reads
+// (hasGlTexture, glTexture, dataHandle contents, frameWidth/frameHeight) is
+// written only by these three functions, under frameMutex. On 2026-10-20 a
+// single write outside the lock (the decoder's texture target, set before the
+// copy) made the renderer sample the video pane black several times a second.
+// ---------------------------------------------------------------------------
+
+/** HW path: copy the decoder's external-OES image into the frame's 2D texture and publish it. */
+static bool publishGpuFrame(CameraFrame &frame, GstGLContext *glCtx, GLuint oesTex, int w, int h) {
+    OesBlitJob job{&frame, oesTex, w, h, false};
+    std::lock_guard<std::mutex> lk(frame.frameMutex);
+    gst_gl_context_thread_add(glCtx, oesBlitOnGstGlThread, &job);
+    if (job.success) {
+        frame.glTexture    = frame.hwBackingTex;
+        frame.hasGlTexture = true;
+        frame.frameWidth   = w;
+        frame.frameHeight  = h;
+    }
+    return job.success;
+}
+
+/** SW path (JPEG): copy the decoded RGB pixels into the frame's CPU buffer. */
+static void publishCpuFrame(CameraFrame &frame, const void *rgb) {
+    std::lock_guard<std::mutex> lk(frame.frameMutex);
+    memcpy(frame.dataHandle, rgb, frame.memorySize);
+    frame.hasGlTexture = false;
+}
+
+static void deleteCopyTargetOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
+    auto *frame = static_cast<CameraFrame *>(data);
+    if (frame->hwBackingFBO) glDeleteFramebuffers(1, &frame->hwBackingFBO);
+    if (frame->hwBackingTex) glDeleteTextures(1, &frame->hwBackingTex);
+}
+
+/** Before a pipeline rebuild: drop the previous frame and size the CPU buffer for the new resolution.
+ *  Runs after the pipelines are stopped. The copy texture and FBO are freed in the GstGL context that
+ *  created them: an FBO name is only meaningful there, and a texture still attached to that FBO would
+ *  stay allocated if deleted from here (each rebuild leaked two 1080p textures before 2026-10-20). */
+static void resetFrameForRebuild(CameraFrame &frame, int w, int h) {
+    std::lock_guard<std::mutex> lk(frame.frameMutex);
+    if (frame.hwBackingCtx) {
+        auto *ctx = static_cast<GstGLContext *>(frame.hwBackingCtx);
+        gst_gl_context_thread_add(ctx, deleteCopyTargetOnGstGlThread, &frame);
+        gst_object_unref(ctx);
+        frame.hwBackingCtx = nullptr;
+    }
+    frame.hwBackingTex = 0;
+    frame.hwBackingFBO = 0;
+    frame.hwBackingWidth = 0;
+    frame.hwBackingHeight = 0;
+    frame.glTexture = 0;
+    frame.hasGlTexture = false;
+
+    delete[] static_cast<unsigned char *>(frame.dataHandle);
+    frame.frameWidth = w;
+    frame.frameHeight = h;
+    frame.memorySize = static_cast<unsigned long>(w) * h * 3;
+    auto *blank = new unsigned char[frame.memorySize];
+    memset(blank, 0, frame.memorySize);
+    frame.dataHandle = blank;
 }
 
 VideoPlayer::VideoPlayer(CamPair *camPair, NtpTimer *ntpTimer) : camPair_(camPair),
@@ -590,55 +662,16 @@ VideoPlayer::configurePipelines(BS::thread_pool<BS::tp::none> &threadPool,
         //delete callbackObj_;
         callbackObj_ = nullptr;
     }
-    if (camPair_->first.stats) {
-        delete camPair_->first.stats;
-        camPair_->first.stats = nullptr;
-    }
-    if (camPair_->second.stats) {
-        delete camPair_->second.stats;
-        camPair_->second.stats = nullptr;
-    }
-    if (camPair_->first.dataHandle) {
-        delete[] static_cast<unsigned char *>(camPair_->first.dataHandle);
-        camPair_->first.dataHandle = nullptr;
-    }
-    if (camPair_->second.dataHandle) {
-        delete[] static_cast<unsigned char *>(camPair_->second.dataHandle);
-        camPair_->second.dataHandle = nullptr;
-    }
+    delete camPair_->first.stats;
+    delete camPair_->second.stats;
 
     // Allocate new objects
     callbackObj_ = new GStreamerCallbackObj(camPair_, ntpTimer_, &windowFrames_);
     camPair_->first.stats = new CameraStats();
     camPair_->second.stats = new CameraStats();
 
-    camPair_->first.frameWidth = config.resolution.getWidth();
-    camPair_->first.frameHeight = config.resolution.getHeight();
-    camPair_->second.frameWidth = config.resolution.getWidth();
-    camPair_->second.frameHeight = config.resolution.getHeight();
-    camPair_->first.memorySize = camPair_->first.frameWidth * camPair_->first.frameHeight * 3;
-    camPair_->second.memorySize = camPair_->second.frameWidth * camPair_->second.frameHeight * 3;
-
-    auto *emptyFrameLeft = new unsigned char[camPair_->first.memorySize];
-    memset(emptyFrameLeft, 0, camPair_->first.memorySize);
-    camPair_->first.dataHandle = (void *) emptyFrameLeft;
-
-    auto *emptyFrameRight = new unsigned char[camPair_->second.memorySize];
-    memset(emptyFrameRight, 0, camPair_->second.memorySize);
-    camPair_->second.dataHandle = (void *) emptyFrameRight;
-
-    camPair_->first.hwBackingTex = 0;
-    camPair_->first.hwBackingFBO = 0;
-    camPair_->first.hwBackingWidth = 0;
-    camPair_->first.hwBackingHeight = 0;
-    camPair_->first.glTexture = 0;
-    camPair_->first.hasGlTexture = false;
-    camPair_->second.hwBackingTex = 0;
-    camPair_->second.hwBackingFBO = 0;
-    camPair_->second.hwBackingWidth = 0;
-    camPair_->second.hwBackingHeight = 0;
-    camPair_->second.glTexture = 0;
-    camPair_->second.hasGlTexture = false;
+    resetFrameForRebuild(camPair_->first, config.resolution.getWidth(), config.resolution.getHeight());
+    resetFrameForRebuild(camPair_->second, config.resolution.getWidth(), config.resolution.getHeight());
 
     // Determine if we need one or two decode pipelines
     bool singlePipeline = (config.videoMode == VideoMode::Mono || config.videoMode == VideoMode::Panoramic);
@@ -784,11 +817,7 @@ VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackOb
             return GST_FLOW_ERROR;
         }
 
-        {
-            std::lock_guard<std::mutex> lk(frame.frameMutex);
-            memcpy(frame.dataHandle, mapInfo.data, frame.memorySize);
-            frame.hasGlTexture = false;
-        }
+        publishCpuFrame(frame, mapInfo.data);
 
         gst_buffer_unmap(buffer, &mapInfo);
         gst_sample_unref(sample);
@@ -849,23 +878,12 @@ VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackOb
             gst_gl_sync_meta_wait(syncMeta, gl_ctx);
         }
 
-        OesBlitJob job{&frame, tex_id, newW, newH, false};
-        {
-            std::lock_guard<std::mutex> lk(frame.frameMutex);
-            gst_gl_context_thread_add(gl_ctx, oesBlitOnGstGlThread, &job);
-            if (job.success) {
-                frame.glTexture    = frame.hwBackingTex;
-                frame.glTarget     = GL_TEXTURE_2D;
-                frame.hasGlTexture = true;
-                frame.frameWidth   = newW;
-                frame.frameHeight  = newH;
-            }
-        }
+        const bool copied = publishGpuFrame(frame, gl_ctx, tex_id, newW, newH);
 
         gst_video_frame_unmap(&vframe);
         gst_sample_unref(sample);
 
-        if (!job.success) {
+        if (!copied) {
             LOG_ERROR("GSTREAMER: OES->2D blit failed");
             return GST_FLOW_ERROR;
         }

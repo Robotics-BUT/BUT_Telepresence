@@ -181,8 +181,16 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
                                       XrCompositionLayerProjection &layer) {
     auto viewCount = viewsurfaces_.size();
     std::vector<XrView> views(viewCount, {XR_TYPE_VIEW});
-    openxr_locate_views(&openxr_session_, &displayTime, app_reference_space_, viewCount,
-                        views.data());
+    // When the runtime reports the view poses as not valid for this display time, their
+    // contents are undefined; rendering with them puts the video plane nowhere and the eye
+    // shows only the clear colour for that refresh. Reuse the last valid views instead.
+    static std::vector<XrView> lastValidViews;
+    if (openxr_locate_views(&openxr_session_, &displayTime, app_reference_space_, viewCount,
+                            views.data()) == 0) {
+        lastValidViews = views;
+    } else {
+        if (lastValidViews.size() == viewCount) views = lastValidViews;
+    }
 
     layerViews.resize(viewCount);
 

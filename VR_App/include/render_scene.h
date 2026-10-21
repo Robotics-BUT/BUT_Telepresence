@@ -2,8 +2,8 @@
  * render_scene.h - Scene rendering coordination
  *
  * Orchestrates per-frame rendering: the camera image plane (stereo video)
- * and the ImGui settings overlay. Uses separate shaders for GL_TEXTURE_2D
- * (JPEG software decode) and GL_TEXTURE_EXTERNAL_OES (hardware decode).
+ * and the ImGui settings overlay. Every camera frame is a GL_TEXTURE_2D: the JPEG
+ * upload, or VideoPlayer's 2D copy of a hardware-decoded external-OES frame.
  */
 #pragma once
 

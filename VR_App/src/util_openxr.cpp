@@ -875,7 +875,7 @@ int openxr_locate_views(XrSession *session, XrTime *displayTime, XrSpace space, 
     CHECK_XRRESULT(res, "xrLocateViews")
     if ((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
         (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
-        return false;
+        return -1;  // poses not valid for this display time; the caller keeps its last valid views
     }
 
     CHECK(viewCountOutput == viewCapacityInput)

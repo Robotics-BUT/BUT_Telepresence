@@ -30,7 +30,6 @@ static GLuint cubeVertexBuffer{0}, cubeIndexBuffer{0}, vertexArrayObject{0},
         vertexAttribCoords{0}, vertexAttribTexCoords{0}, texture2D{0};
 
 static shader_obj_t image_shader_object_2d;
-static shader_obj_t image_shader_object_oes;
 static shader_obj_t gui_shader_object;
 
 static render_target_t settings_gui_render_target;
@@ -53,16 +52,17 @@ static const char *ImageVertexShaderGlsl = R"_(#version 320 es
 // ----------------------------------------------------------------------------
 // LATENCY_RIG_MODE
 // ----------------------------------------------------------------------------
-// 1 = compile the photon-to-photon measurement shaders. Both fragment shaders
-//     sample the center pixel of the streamed frame, threshold its luminance,
-//     and paint the whole quad pure white above the threshold or pure black
+// 1 = compile the photon-to-photon measurement shader. The fragment shader
+//     samples the center pixel of the streamed frame, thresholds its luminance,
+//     and paints the whole quad pure white above the threshold or pure black
 //     below it. This gives the PT5800B phototransistor a clean binary signal
 //     synchronised to the rig's LED pulse.
 //
-// 0 = normal video rendering. Sample the full texture per-pixel; OES path
-//     applies the limited-range (16-235) expansion used for HW-decoded YUV.
+// 0 = normal video rendering. Sample the full texture per-pixel. Hardware-decoded
+//     frames arrive as GL_TEXTURE_2D too: VideoPlayer copies the decoder's
+//     external-OES image (with the limited-range expansion) into a 2D texture.
 //
-// The two fragment-shader strings below are the only places this toggle
+// The fragment-shader string below is the only place this toggle
 // affects; the C++ render path (FBO setup, texture binding, draw call) is
 // identical either way. Set to 1 while running paper measurements; set
 // back to 0 for actual teleoperation viewing.
@@ -85,28 +85,6 @@ static const char *ImageFragmentShaderGlsl = R"_(#version 320 es
         color = (Y > LATENCY_THRESHOLD) ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0);
     }
     )_";
-
-static const char *ImageFragmentShaderOES = R"_(#version 320 es
-    #extension GL_OES_EGL_image_external_essl3 : require
-
-    in lowp vec2 v_TexCoord;
-    out lowp vec4 color;
-
-    uniform samplerExternalOES u_Texture;
-
-    const lowp float LATENCY_THRESHOLD = 0.7;
-
-    void main() {
-        lowp vec4 c = texture(u_Texture, vec2(0.5, 0.5));
-
-        // Limited-range 16-235 expansion (match normal-mode OES shader).
-        lowp vec3 rgb = (c.rgb - vec3(40.0/255.0)) * (255.0/235.0);
-        rgb = clamp(rgb, 0.0, 1.0);
-
-        lowp float Y = dot(rgb, vec3(0.299, 0.587, 0.114));
-        color = (Y > LATENCY_THRESHOLD) ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0);
-    }
-    )_";
 #else
 static const char *ImageFragmentShaderGlsl = R"_(#version 320 es
     in lowp vec2 v_TexCoord;
@@ -117,26 +95,6 @@ static const char *ImageFragmentShaderGlsl = R"_(#version 320 es
 
     void main() {
         color = texture(u_Texture, v_TexCoord);
-    }
-    )_";
-
-static const char *ImageFragmentShaderOES = R"_(#version 320 es
-    #extension GL_OES_EGL_image_external_essl3 : require
-
-    in lowp vec2 v_TexCoord;
-    out lowp vec4 color;
-
-    uniform samplerExternalOES u_Texture;
-
-    void main() {
-        lowp vec4 c = texture(u_Texture, v_TexCoord);
-
-        // Assume limited-range 16-235 and expand to full range.
-        lowp vec3 rgb = (c.rgb - vec3(40.0/255.0)) * (255.0/235.0);
-        rgb = clamp(rgb, 0.0, 1.0);
-        rgb = rgb * 0.8;
-
-        color = vec4(rgb, c.a);
     }
     )_";
 #endif
@@ -169,10 +127,8 @@ void init_scene(const int textureWidth, const int textureHeight, bool reinit) {
         return;
     }
 
-    // 2D shader (JPEG / SW / GL_TEXTURE_2D)
+    // Image shader: every frame is a GL_TEXTURE_2D (JPEG upload, or the 2D copy of a HW-decoded frame)
     generate_shader(&image_shader_object_2d, ImageVertexShaderGlsl, ImageFragmentShaderGlsl);
-    // OES shader (HW decoder giving GL_TEXTURE_EXTERNAL_OES)
-    generate_shader(&image_shader_object_oes, ImageVertexShaderGlsl, ImageFragmentShaderOES);
     generate_shader(&gui_shader_object, GuiVertexShaderGlsl, GuiFragmentShaderGlsl);
     init_image_plane(textureWidth, textureHeight);
     init_imgui();
@@ -277,32 +233,22 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
     std::lock_guard<std::mutex> lk(cameraFrame->frameMutex);
 
     const bool   hasGl       = cameraFrame->hasGlTexture;
-    const GLenum gTargetSnap = cameraFrame->glTarget;
     const GLuint gTexSnap    = cameraFrame->glTexture;
     void* const  dataSnap    = cameraFrame->dataHandle;
     const int    fwSnap      = cameraFrame->frameWidth;
     const int    fhSnap      = cameraFrame->frameHeight;
 
-    const shader_obj_t *shader = nullptr;
-    GLenum              target = GL_TEXTURE_2D;
+    const shader_obj_t *shader = &image_shader_object_2d;
 
     if (hasGl) {
-        target = gTargetSnap;
-        if (target == GL_TEXTURE_EXTERNAL_OES) {
-            shader = &image_shader_object_oes;
-        } else { // treat everything else as 2D
-            shader = &image_shader_object_2d;
-        }
         if (gTexSnap == 0) return 0;
     } else if (dataSnap) {
-        shader = &image_shader_object_2d;
-        target = GL_TEXTURE_2D;
         if (fwSnap <= 0 || fhSnap <= 0) return 0;
     } else {
         return 0;
     }
 
-    if (!shader || shader->program == 0 || vertexArrayObject == 0) return 0;
+    if (shader->program == 0 || vertexArrayObject == 0) return 0;
 
     glUseProgram(shader->program);
     glBindVertexArray(vertexArrayObject);
@@ -317,9 +263,9 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
     glActiveTexture(GL_TEXTURE0);
 
     if(hasGl) {
-        glBindTexture(target, gTexSnap);
+        glBindTexture(GL_TEXTURE_2D, gTexSnap);
         glUniform1i((GLint)shader->loc_texture, 0);
-        LOG_DEBUG("GStreamer: rendering GL texture %u (target=0x%x)", gTexSnap, target);
+        LOG_DEBUG("GStreamer: rendering GL texture %u", gTexSnap);
     } else {
         glBindTexture(GL_TEXTURE_2D, texture2D);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB, fwSnap, fhSnap, 0,

@@ -359,14 +359,17 @@ struct CameraFrame {
     int frameWidth{CameraResolution::fromLabel("FHD").getWidth()};
     int frameHeight{CameraResolution::fromLabel("FHD").getHeight()};
 
-    /* For HW frames, glTexture points to an *app-owned* GL_TEXTURE_2D backed
-     * by hwBackingTex below — populated by an OES->2D blit on the GstGL
-     * worker thread. Render thread therefore never touches a SurfaceTexture-
-     * backed external-OES handle whose underlying gralloc buffer can be
-     * swapped asynchronously by MediaCodec.updateTexImage(). */
+    /* Fields the render thread reads (hasGlTexture, glTexture, dataHandle and its
+     * contents, frameWidth/frameHeight) are written only under frameMutex, by
+     * VideoPlayer's publishGpuFrame / publishCpuFrame / resetFrameForRebuild.
+     *
+     * For HW frames, glTexture is an *app-owned* GL_TEXTURE_2D (hwBackingTex
+     * below), filled by an OES->2D blit on the GstGL worker thread. The render
+     * thread never touches the decoder's external-OES handle, whose gralloc
+     * buffer MediaCodec.updateTexImage() can swap asynchronously, so a single
+     * 2D image shader serves every frame. */
     bool hasGlTexture{false};
     unsigned int glTexture{0};
-    unsigned int glTarget{0};     /* GL_TEXTURE_2D or GL_TEXTURE_EXTERNAL_OES */
 
     /* CPU buffer info (for software-decoded frames via appsink) */
     unsigned long memorySize{static_cast<unsigned long>(frameWidth * frameHeight * 3)};
@@ -379,6 +382,7 @@ struct CameraFrame {
     unsigned int hwBackingFBO{0};
     int          hwBackingWidth{0};
     int          hwBackingHeight{0};
+    void        *hwBackingCtx{nullptr};   /* GstGLContext* (ref held) that created hwBackingTex/FBO */
 
     /* Serializes GStreamer field-publish against render-thread reads. */
     mutable std::mutex frameMutex;
