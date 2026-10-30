@@ -16,6 +16,7 @@
 /** What the settings table needs from the program besides the AppState. */
 struct SettingsActions {
     std::function<void()> applyStream;                          /* save the settings and apply the stream config */
+    std::function<void()> restartStream;                        /* rebuild both ends with the config in force */
     std::function<void()> applyAudio;                           /* start or stop the audio legs after a change */
     std::function<void(int)> setVolume;                         /* playback volume, percent */
     std::function<void(bool)> setRobotDrive;                    /* enable the robot base (sends a stop when disabling) */

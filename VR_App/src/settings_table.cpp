@@ -128,13 +128,22 @@ std::vector<GuiSetting> BuildSettingsTable(const std::shared_ptr<AppState> &appS
     {
         GuiSetting s;
         s.label = "Apply"; s.control = GuiControl::Button; s.tab = GuiTab::Stream;
-        s.getValue = [&cfg, applied]() {
+        // With nothing to apply and no video arriving (the robot did not start, or the decoder stalled) the button
+        // restarts the stream instead
+        const auto restartable = [&cfg, applied, appState]() {
+            return applied() && PendingStreamChanges(cfg, applied()) == 0 && !appState->statusBar.video;
+        };
+        s.getValue = [&cfg, applied, restartable]() {
             const int n = PendingStreamChanges(cfg, applied());
             if (!applied()) return std::string("Start stream");
+            if (restartable()) return std::string("Restart stream");
             return n == 0 ? std::string("Applied") : fmt::format("Apply {} change{}", n, n == 1 ? "" : "s");
         };
-        s.isEnabled = [&cfg, applied]() { return PendingStreamChanges(cfg, applied()) > 0; };
-        s.onActivate = actions.applyStream;
+        s.isEnabled = [&cfg, applied, restartable]() { return PendingStreamChanges(cfg, applied()) > 0 || restartable(); };
+        s.onActivate = [apply = actions.applyStream, restart = actions.restartStream, restartable]() {
+            if (restartable()) restart();
+            else apply();
+        };
         add(std::move(s));
     }
 

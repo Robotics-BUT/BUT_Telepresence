@@ -1,5 +1,6 @@
 import subprocess
 import threading
+import time
 import connexion
 import json
 import os
@@ -28,6 +29,12 @@ video_thread = None
 
 # Lock to synchronize access to global state across threads
 video_state_lock = threading.Lock()
+
+# A stop waits for the driver to exit (camera and pipeline teardown takes 1-8 s), and kills it after this long; while
+# it waits, a start or update waits for it rather than reconfiguring the exiting driver (the app's stop-then-start
+# on launch used to leave the robot not streaming: the start found the stream "already running" and was dropped)
+VIDEO_STOP_TIMEOUT_S = 10.0
+video_stopping = False
 
 
 def cfg_dict_from_video_state(s: dict) -> dict:
@@ -116,22 +123,60 @@ def configure_video_process():
             return False
 
 
+def wait_for_video_exit(proc):
+    """Wait for the video driver to exit after a stop; kill it if it has not within VIDEO_STOP_TIMEOUT_S."""
+    try:
+        proc.wait(timeout=VIDEO_STOP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print(f"Video driver did not exit {VIDEO_STOP_TIMEOUT_S:.0f} s after stop: killing it")
+        proc.kill()
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            print("Video driver did not exit after SIGKILL")
+
+
+def settle_video_process():
+    """Before a start or update: wait for a stop in progress to finish, and reap a driver that exited by itself, so
+    that is_video_running says whether a live driver is there to reconfigure."""
+    deadline = time.monotonic() + VIDEO_STOP_TIMEOUT_S + 10.0
+    while time.monotonic() < deadline:
+        with video_state_lock:
+            stopping = video_stopping
+            dead = video_process is not None and video_process.poll() is not None
+            thread = video_thread
+        if not stopping and not dead:
+            return
+        if dead and thread is not None:
+            thread.join(timeout=2.0)   # run_video_process clears is_video_running once the driver has exited
+            with video_state_lock:
+                if video_process is not None and video_process.poll() is not None and not video_stopping:
+                    return
+        time.sleep(0.05)
+    print("Timed out waiting for the previous video driver to exit")
+
+
 def api_v1_video_start_post(body):
     global video_state, is_video_running, video_thread
 
     if not connexion.request.is_json:
         return "Missing body!"
 
+    new_config = connexion.request.get_json()
+    RequiredStreamConfiguration.from_dict(new_config)
+    settle_video_process()
+
     with video_state_lock:
-        if is_video_running:
-            return {"error": "Stream is already running. Use /update to reconfigure or /stop first."}
+        video_state = new_config
+        running = is_video_running and video_process is not None and video_process.poll() is None
+        if not running:
+            video_thread = threading.Thread(target=run_video_process, daemon=True)
+            video_thread.start()
+            return video_state
 
-        video_state = connexion.request.get_json()
-        RequiredStreamConfiguration.from_dict(video_state)
-
-        video_thread = threading.Thread(target=run_video_process, daemon=True)
-        video_thread.start()
-        return video_state
+    # Already streaming: a start applies its config to the running stream, as an update would
+    configure_video_process()
+    return video_state
 
 
 def api_v1_video_state_get():  # noqa: E501
@@ -162,24 +207,33 @@ def api_v1_video_state_get():  # noqa: E501
 
 
 def api_v1_video_stop_post():
-    global is_video_running, video_thread, video_process
+    global is_video_running, video_thread, video_process, video_stopping
 
     with video_state_lock:
         if not is_video_running or video_process is None:
             return "Stream already stopped!"
+        if video_stopping:
+            proc = video_process   # another stop is already waiting for it
+        else:
+            video_stopping = True
+            proc = video_process
+            try:
+                if proc.stdin:
+                    proc.stdin.write(json.dumps({"cmd": "stop"}) + "\n")
+                    proc.stdin.flush()
+            except Exception as e:
+                print(f"Failed to send stop command: {e}")
+            proc.terminate()
+        thread = video_thread
 
-        try:
-            if video_process.stdin:
-                video_process.stdin.write(json.dumps({"cmd": "stop"}) + "\n")
-                video_process.stdin.flush()
-        except Exception as e:
-            print(f"Failed to send stop command: {e}")
-
-        video_process.terminate()
-
-    # Join thread outside lock to avoid deadlock
-    if video_thread:
-        video_thread.join(timeout=2.0)
+    # Wait outside the lock: the driver's exit, then run_video_process clearing is_video_running
+    try:
+        wait_for_video_exit(proc)
+        if thread:
+            thread.join(timeout=2.0)
+    finally:
+        with video_state_lock:
+            video_stopping = False
     return "Stopped"
 
 
@@ -199,6 +253,7 @@ def api_v1_video_update_put(body):
 
     should_configure = False
     should_start = False
+    settle_video_process()
 
     with video_state_lock:
         # Merge new config with existing state (update only provided fields)

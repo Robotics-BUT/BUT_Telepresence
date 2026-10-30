@@ -927,9 +927,8 @@ void TelepresenceProgram::InitializeStreaming() {
     appState_->connectionState.cameraServer = ConnectionStatus::Connecting;
     appState_->cameraServerStatus = "Connecting...";
 
-    // Stop any existing stream (OK to fail if not running)
-    restClient_->StopStream();
-
+    // A start also applies the config to a stream that is already running, and waits for one that is stopping (the
+    // previous run's exit) to end first; stopping here too would restart the camera on every launch
     int startResult = restClient_->StartStream();
     if (startResult != 0) {
         appState_->connectionState.cameraServer = ConnectionStatus::Failed;
@@ -960,16 +959,17 @@ void TelepresenceProgram::InitializeStreaming() {
 
 /**
  * Apply a streaming config: classify the change, rebuild the headset side if it is structural, and push it to the
- * robot. Used by the settings panel's Apply and by the adaptation controller (render thread only).
+ * robot. Used by the settings panel's Apply and by the adaptation controller (render thread only). rebuild: rebuild
+ * the headset side even without a change (the panel's Restart stream, when no video arrives).
  */
-bool TelepresenceProgram::ApplyStreamingConfig(StreamingConfig cfg) {
+bool TelepresenceProgram::ApplyStreamingConfig(StreamingConfig cfg, bool rebuild) {
     // Decide whether this change can ride on the live pipeline or needs a full teardown + rebuild. This MUST agree
     // with the robot driver's CanUpdateDynamically(): if the two ends disagree, the headset decoder jumps into a
     // mid-GOP stream and the OES->2D blit FBO is left at the old resolution -> black screen / GL 0x506. See
     // classifyStreamConfigChange().
-    const StreamConfigChange change = lastAppliedConfig_
+    const StreamConfigChange change = lastAppliedConfig_ && !rebuild
         ? classifyStreamConfigChange(*lastAppliedConfig_, cfg)
-        : StreamConfigChange::Structural;  // no baseline yet -> rebuild
+        : StreamConfigChange::Structural;  // no baseline yet, or asked to -> rebuild
 
     // A codec change stops the decoder before the robot switches and builds the new one after, so a fresh decoder
     // is never fed the previous codec's stream: fed H.264, a new H.265 decoder never configured and the video
@@ -1060,6 +1060,7 @@ void TelepresenceProgram::BuildSettings() {
         stateStorage_->SaveAppState(*appState_);
         ApplyStreamingConfig(appState_->streamingConfig);
     };
+    actions.restartStream = [this]() { ApplyStreamingConfig(appState_->streamingConfig, true); };
     actions.applyAudio = [this]() { ApplyAudioState(); };
     actions.setVolume = [this](int volume) { if (audioPlayer_) audioPlayer_->setVolume(volume); };
     actions.setRobotDrive = [this](bool on) {

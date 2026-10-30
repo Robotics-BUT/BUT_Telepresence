@@ -69,7 +69,7 @@ private:
     /** Start the camera stream via REST API and configure GStreamer pipelines. */
     void InitializeStreaming();
     /** Apply a streaming config to both ends (panel Apply and the adaptation controller); true if the robot acknowledged it. */
-    bool ApplyStreamingConfig(StreamingConfig cfg);
+    bool ApplyStreamingConfig(StreamingConfig cfg, bool rebuild = false);
 
     /** Reconcile the optional audio bridge (robot + headset pipelines) with the
      *  current audioRobotEnable / audioMicEnable flags. Safe no-op when both off. */

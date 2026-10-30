@@ -18,7 +18,7 @@ std::unique_ptr<httplib::Client> RestClient::makeClient() {
     auto client = std::make_unique<httplib::Client>(
             IpToString(config_.jetson_ip).c_str(), Config::REST_API_PORT);
     client->set_connection_timeout(2, 0);
-    client->set_read_timeout(5, 0);
+    client->set_read_timeout(20, 0);   // a start or stop can wait for the robot's driver to exit (up to ~15 s)
     client->set_write_timeout(2, 0);
     return client;
 }
