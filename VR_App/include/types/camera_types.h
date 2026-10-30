@@ -238,6 +238,20 @@ struct CameraStatsSnapshot {
 };
 
 /**
+ * Distribution of the rolling window, for the adaptation controller (times in microseconds, NTP-corrected clock).
+ */
+struct CameraWindowSummary {
+    size_t frames{0};
+    double fps{0.0};           // (n - 1) / span of the window
+    double newestUs{0.0};      // arrival of the newest frame in the window
+    double maxGapUs{0.0};      // largest interval between consecutive frames in the window
+    double p95TotalUs{0.0};
+    double p95NetworkUs{0.0};  // udpStream + jbHold
+    double p95EncUs{0.0};
+    double p95DecUs{0.0};
+};
+
+/**
  * Thread-safe camera statistics with running average support.
  * Uses std::atomic for lock-free reads from the render thread while
  * GStreamer callbacks write from pipeline threads. The running average
@@ -338,6 +352,9 @@ struct CameraStats {
      * is robust to decoder bursts that inflate per-frame 1/Δt readings.
      */
     CameraStatsSnapshot averagedSnapshot() const;
+
+    /** Per-stage P95, frame rate and gaps over the rolling window, for the adaptation controller. */
+    CameraWindowSummary windowSummary() const;
 
 private:
     mutable std::mutex historyMutex_;

@@ -17,6 +17,7 @@
 #include "video_player.h"
 #include "audio_player.h"
 #include "rest_client.h"
+#include "adaptation_controller.h"
 #include "ntp_timer.h"
 #include "state_storage.h"
 #include "ros_network_gateway_client.h"
@@ -67,6 +68,8 @@ private:
 
     /** Start the camera stream via REST API and configure GStreamer pipelines. */
     void InitializeStreaming();
+    /** Apply a streaming config to both ends (panel Apply and the adaptation controller); true if the robot acknowledged it. */
+    bool ApplyStreamingConfig(StreamingConfig cfg);
 
     /** Reconcile the optional audio bridge (robot + headset pipelines) with the
      *  current audioRobotEnable / audioMicEnable flags. Safe no-op when both off. */
@@ -111,6 +114,7 @@ private:
     std::unique_ptr<RosNetworkGatewayClient> rosNetworkGatewayClient_;
     std::unique_ptr<RobotControlSender> robotControlSender_;
     std::unique_ptr<StateStorage> stateStorage_;
+    std::unique_ptr<AdaptationController> adaptation_;   /* Chapter 9 controller, debug.but.adapt */
 
     /* --- Frame timing --- */
     std::chrono::time_point<std::chrono::high_resolution_clock> prevFrameStart_, frameStart_;

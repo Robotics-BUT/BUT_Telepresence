@@ -92,6 +92,7 @@ add_library(
         src/state_storage.cpp
         src/ros_network_gateway_client.cpp
         src/camera_stats.cpp
+        src/adaptation_controller.cpp
         external/imgui/imgui.cpp
         external/imgui/imgui_demo.cpp
         external/imgui/imgui_draw.cpp

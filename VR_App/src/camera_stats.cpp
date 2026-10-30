@@ -9,6 +9,10 @@
  */
 #include "types/camera_types.h"
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 CameraStatsSnapshot CameraStats::snapshot() const {
     return CameraStatsSnapshot{
         prevTimestamp.load(),
@@ -117,4 +121,35 @@ CameraStatsSnapshot CameraStats::averagedSnapshot() const {
     avg.frameReadyTimestamp = latest.frameReadyTimestamp;
 
     return avg;
+}
+
+namespace {
+double p95(std::vector<double> &v) {
+    if (v.empty()) return 0.0;
+    const size_t k = static_cast<size_t>(std::ceil(0.95 * v.size())) - 1;
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(k), v.end());
+    return v[k];
+}
+}  // namespace
+
+CameraWindowSummary CameraStats::windowSummary() const {
+    std::lock_guard<std::mutex> lock(historyMutex_);
+    CameraWindowSummary w;
+    w.frames = history_.size();
+    if (w.frames == 0) return w;
+    std::vector<double> tot, net, enc, dec;
+    tot.reserve(w.frames); net.reserve(w.frames); enc.reserve(w.frames); dec.reserve(w.frames);
+    for (size_t i = 0; i < history_.size(); ++i) {
+        const auto &s = history_[i];
+        tot.push_back(static_cast<double>(s.totalLatency + s.presentation));   // as the telemetry total
+        net.push_back(static_cast<double>(s.udpStream + s.jbHold));
+        enc.push_back(static_cast<double>(s.enc));
+        dec.push_back(static_cast<double>(s.dec));
+        if (i > 0) w.maxGapUs = std::max(w.maxGapUs, s.currTimestamp - history_[i - 1].currTimestamp);
+    }
+    w.newestUs = history_.back().currTimestamp;
+    const double span = history_.back().currTimestamp - history_.front().currTimestamp;
+    if (w.frames >= 2 && span > 0.0) w.fps = (w.frames - 1) * 1e6 / span;
+    w.p95TotalUs = p95(tot); w.p95NetworkUs = p95(net); w.p95EncUs = p95(enc); w.p95DecUs = p95(dec);
+    return w;
 }
