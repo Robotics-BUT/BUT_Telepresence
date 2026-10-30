@@ -325,6 +325,7 @@ static void publishCpuFrame(CameraFrame &frame, const void *rgb) {
     std::lock_guard<std::mutex> lk(frame.frameMutex);
     memcpy(frame.dataHandle, rgb, frame.memorySize);
     frame.hasGlTexture = false;
+    frame.hasCpuFrame = true;
 }
 
 static void deleteCopyTargetOnGstGlThread(GstGLContext * /*ctx*/, gpointer data) {
@@ -351,6 +352,7 @@ static void resetFrameForRebuild(CameraFrame &frame, int w, int h) {
     frame.hwBackingHeight = 0;
     frame.glTexture = 0;
     frame.hasGlTexture = false;
+    frame.hasCpuFrame = false;
 
     delete[] static_cast<unsigned char *>(frame.dataHandle);
     frame.frameWidth = w;

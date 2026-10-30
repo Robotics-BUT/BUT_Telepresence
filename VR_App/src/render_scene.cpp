@@ -164,6 +164,7 @@ void init_image_plane(const int textureWidth, const int textureHeight) {
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB, textureWidth, textureHeight, 0, GL_SRGB,GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
+    glBindVertexArray(0);   // leave no VAO bound: later client-array draws would rewrite this one's state
 }
 
 static void draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState);
@@ -225,7 +226,8 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
 
     const bool   hasGl       = cameraFrame->hasGlTexture;
     const GLuint gTexSnap    = cameraFrame->glTexture;
-    void* const  dataSnap    = cameraFrame->dataHandle;
+    // Until a frame is decoded the CPU buffer is blank: uploading it every eye, every frame cost ~5 ms at 2160p
+    void* const  dataSnap    = cameraFrame->hasCpuFrame ? cameraFrame->dataHandle : nullptr;
     const int    fwSnap      = cameraFrame->frameWidth;
     const int    fhSnap      = cameraFrame->frameHeight;
 
@@ -289,6 +291,9 @@ draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &app
     glUseProgram(gui_shader_object.program);
     glUniformMatrix4fv(gui_shader_object.loc_mvp, 1, GL_FALSE, (const GLfloat *) &vp);
 
+    // Client-side vertex arrays need the default VAO; with another one bound the attribute and index-buffer changes
+    // below would land in it (the video plane's VAO lost its index buffer and attributes this way on 2026-10-30)
+    glBindVertexArray(0);
     float vertices[] = {
             panel.rayOrigin.x, panel.rayOrigin.y, panel.rayOrigin.z,
             panel.rayEnd.x, panel.rayEnd.y, panel.rayEnd.z

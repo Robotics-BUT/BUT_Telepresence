@@ -391,6 +391,7 @@ struct CameraFrame {
     /* CPU buffer info (for software-decoded frames via appsink) */
     unsigned long memorySize{static_cast<unsigned long>(frameWidth * frameHeight * 3)};
     void* dataHandle{nullptr};    /* pointer to raw RGB pixel data */
+    bool hasCpuFrame{false};      /* dataHandle holds a decoded frame (not the blank buffer of a rebuild) */
 
     /* App-owned GL_TEXTURE_2D + FBO that the OES->2D blit writes into.
      * Allocated lazily on the GstGL worker thread; reused across frames at
