@@ -57,6 +57,7 @@ void StateStorage::SaveAppState(const AppState &appState) {
         SaveKeyValuePair(editor, putString, "head_movement_sensitivity", static_cast<int>(std::lround(appState.headMovementSensitivity * 100)));
         SaveKeyValuePair(editor, putString, "robot_control_enabled", appState.robotControlEnabled);
         SaveKeyValuePair(editor, putString, "stereo_convergence", static_cast<int>(appState.stereoConvergence * 1000)); // scaled to survive integer formatting
+        SaveKeyValuePair(editor, putString, "panel_layout", static_cast<int>(appState.guiPanel.layout));
 
         SaveKeyValuePair(editor, putString, "audio_robot_enable", appState.audioRobotEnable);
         SaveKeyValuePair(editor, putString, "audio_mic_enable", appState.audioMicEnable);
@@ -137,6 +138,10 @@ void StateStorage::LoadAppState(AppState& appState) {
     }
     try {   // added later than the keys above: read on its own so that, while missing, only it keeps its default
         appState.headMovementSensitivity = std::stof(LoadValue(sharedPreferences, getString, "head_movement_sensitivity")) / 100.0f;
+    } catch(const std::exception& e) {}
+    try {   // likewise
+        appState.guiPanel.layout = std::stoi(LoadValue(sharedPreferences, getString, "panel_layout")) == 1
+                                   ? GuiPanelLayout::Below : GuiPanelLayout::Front;
     } catch(const std::exception& e) {}
 
     env_->DeleteLocalRef(sharedPreferences);

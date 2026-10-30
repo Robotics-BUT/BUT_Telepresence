@@ -77,6 +77,10 @@ private:
 
     /** Process VR controller input for GUI navigation and robot control. */
     void HandleControllers();
+    void PlacePanel();
+    bool RenderPanelLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings);
+    void SendSystemBroadcast(const char *action);
+    void FacePanelToHead();
 
     /** Populate the data-driven settings_ table with GUI entries. */
     void BuildSettings();
@@ -87,6 +91,7 @@ private:
     XrSession openxr_session_ = XR_NULL_HANDLE;
 
     std::vector<viewsurface_t> viewsurfaces_;
+    viewsurface_t panelSurfaces_[2]{};   // the settings panel's quad layer, one per GuiPanelLayout
 
     std::vector<XrSpace> reference_spaces_;
     XrSpace app_reference_space_;
@@ -98,6 +103,7 @@ private:
 
     /* --- Runtime flags --- */
     bool renderGui_ = true;              /* toggle with left thumbstick press */
+    bool panelPlaced_ = false;           /* the panel has been placed for its layout at least once */
     bool controlLockMovement_ = false;   /* debounce lock for right thumbstick press */
     bool controlLockGui_ = false;        /* debounce lock for left thumbstick press */
 
@@ -114,6 +120,7 @@ private:
     std::unique_ptr<RosNetworkGatewayClient> rosNetworkGatewayClient_;
     std::unique_ptr<RobotControlSender> robotControlSender_;
     std::unique_ptr<StateStorage> stateStorage_;
+    struct android_app *app_{nullptr};
     std::unique_ptr<AdaptationController> adaptation_;   /* Chapter 9 controller, debug.but.adapt */
 
     /* --- Frame timing --- */

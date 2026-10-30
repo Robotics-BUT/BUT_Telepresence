@@ -5,271 +5,458 @@
 /**
  * render_imgui.cpp - ImGui VR settings panel rendering
  *
- * Renders the in-VR settings GUI using Dear ImGui. The focus-based
- * navigation system (no mouse) processes queued input events from
- * HandleControllers() to move focus and highlights the active element.
- * Also displays connection status indicators and pipeline latency stats.
+ * Draws the in-VR settings panel: a status header (connections, display rate, latency), tabs, the rows of the open
+ * tab (settings_table.cpp) and a line of controller hints. A row is operated with the right controller's ray, which
+ * arrives as ImGui mouse input, or, when highlighted, with the left thumbstick and X / Y (HandleControllers). Presses
+ * are queued in GUIControl and run by HandleControllers on the next frame, outside the drawing. All sizes are in
+ * panel units (GuiPanelGeometry); the target holds renderScale pixels per unit. A wide panel (the Below layout) puts
+ * the header on one line and the rows in two columns, with the latency bars beside the System rows.
  */
 #include <cfloat>
+#include <cmath>
+#include <algorithm>
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "render_imgui.h"
 #include "openxr/openxr.h"
-#include "utils/string_utils.h"
+#include "util_openxr.h"
+#include "fonts/open_sans_regular.h"
+#include "fonts/open_sans_semibold.h"
 
-#define DISPLAY_SCALE_X 1.0f
-#define DISPLAY_SCALE_Y 1.0f
-#define _X(x)       ((float)(x) / DISPLAY_SCALE_X)
-#define _Y(y)       ((float)(y) / DISPLAY_SCALE_Y)
+namespace {
 
-static ImVec2 s_win_size[10];
-static ImVec2 s_win_pos[10];
-static int s_win_num = 0;
-static ImVec2 s_mouse_pos;
+// Type sizes and geometry
+constexpr float kPad = 30.0f;          // panel margin
+constexpr float kBody = 30.0f;         // row labels and values
+constexpr float kSmall = 23.0f;        // status, hints, captions
+constexpr float kTitle = 31.0f;
+constexpr float kFigure = 60.0f;       // the latency figure
+constexpr float kRowH = 80.0f;
+constexpr float kReadoutH = 60.0f;     // rows that only show a value
+constexpr float kCtl = 58.0f;          // height of a control inside a row
+constexpr float kRound = 14.0f;
+constexpr float kInset = 18.0f;        // label and control inset inside a row
+constexpr float kColumnGap = 40.0f;    // between the two columns of a wide panel
 
-int
-init_imgui() {
-    // Setup Dear ImGui context
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+// Palette (sRGB)
+constexpr uint32_t kBg = 0x111418, kSurface = 0x1C2129, kSurfaceHi = 0x283039, kLine = 0x2B323C;
+constexpr uint32_t kText = 0xECEFF3, kMuted = 0x8D97A4, kAccent = 0x3D8BFF, kAccentHi = 0x62A2FF;
+constexpr uint32_t kGood = 0x36C67C, kWarn = 0xF2B53A, kBad = 0xFF5F5F;
 
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+ImFont *gRegular = nullptr, *gSemibold = nullptr;
 
-    // Setup Platform/Renderer bindings
-    ImGui_ImplOpenGL3_Init(NULL);
+ImVec4 rgba(uint32_t rgb, float a = 1.0f) {
+    return ImVec4(((rgb >> 16) & 255) / 255.0f, ((rgb >> 8) & 255) / 255.0f, (rgb & 255) / 255.0f, a);
+}
+ImU32 col(uint32_t rgb, float a = 1.0f) { return ImGui::ColorConvertFloat4ToU32(rgba(rgb, a)); }
+ImVec2 operator+(ImVec2 a, ImVec2 b) { return ImVec2(a.x + b.x, a.y + b.y); }
 
-    return 0;
+ImDrawList *dl() { return ImGui::GetWindowDrawList(); }
+
+ImVec2 textSize(ImFont *font, float size, const std::string &s) {
+    return font->CalcTextSizeA(size, FLT_MAX, 0.0f, s.c_str());
 }
 
-void
-imgui_mousebutton(int button, int state, int x, int y) {
-    ImGuiIO &io = ImGui::GetIO();
-    io.MousePos = ImVec2(_X(x), (float) _Y(y));
-
-    if (state)
-        io.MouseDown[button] = true;
-    else
-        io.MouseDown[button] = false;
-
-    s_mouse_pos.x = x;
-    s_mouse_pos.y = y;
+void text(ImFont *font, float size, ImVec2 pos, uint32_t color, const std::string &s, float alpha = 1.0f) {
+    dl()->AddText(font, size, pos, col(color, alpha), s.c_str());
 }
 
-void
-imgui_mousemove(int x, int y) {
-    ImGuiIO &io = ImGui::GetIO();
-    io.MousePos = ImVec2(_X(x), _Y(y));
-
-    s_mouse_pos.x = x;
-    s_mouse_pos.y = y;
+// Text centred in a rectangle
+void textIn(ImFont *font, float size, ImVec2 min, ImVec2 max, uint32_t color, const std::string &s, float alpha = 1.0f) {
+    ImVec2 t = textSize(font, size, s);
+    text(font, size, ImVec2(std::floor((min.x + max.x - t.x) * 0.5f), std::floor((min.y + max.y - t.y) * 0.5f)), color, s, alpha);
 }
 
-/**
- * Render the full settings panel: process focus navigation events,
- * iterate over all GuiSettings, draw connection status, and show
- * averaged pipeline latency statistics.
- */
-static void render_settings_gui(const std::shared_ptr<AppState> &appState,
-                                const std::vector<GuiSetting> &settings) {
-    int win_w = 300;
-    int win_h = 0;
-    int win_x = 0;
-    int win_y = 0;
+// A clickable rectangle; returns true when pressed (repeating while held if repeat)
+bool hit(const char *id, ImVec2 min, ImVec2 max, bool *hovered, bool *held, bool repeat = false) {
+    ImGui::SetCursorScreenPos(min);
+    if (repeat) ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+    bool pressed = ImGui::InvisibleButton(id, ImVec2(max.x - min.x, max.y - min.y));
+    if (repeat) ImGui::PopItemFlag();
+    *hovered = ImGui::IsItemHovered();
+    *held = ImGui::IsItemActive();
+    return pressed;
+}
 
-    int numberOfElements = static_cast<int>(settings.size());
+void queue(AppState &app, int row, GuiAction action, int value = 0) {
+    app.guiControl.focusedElement = row;
+    app.guiControl.pendingRow = row;
+    app.guiControl.pendingAction = action;
+    app.guiControl.pendingValue = value;
+}
 
-    s_win_num = 0;
+// A square key with a minus or plus drawn as strokes
+bool stepKey(const char *id, ImVec2 min, bool plus) {
+    ImVec2 max = min + ImVec2(kCtl, kCtl);
+    bool hov, held;
+    bool pressed = hit(id, min, max, &hov, &held, true);
+    dl()->AddRectFilled(min, max, col(held ? kAccent : hov ? kSurfaceHi : kSurface), kRound);
+    ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+    const float r = 11.0f, w = 3.5f;
+    dl()->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col(kText), w);
+    if (plus) dl()->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), col(kText), w);
+    return pressed;
+}
 
-    if (appState->guiControl.changesEnqueued) {
-        if (appState->guiControl.focusMoveUp) {
-            appState->guiControl.focusedElement -= 1;
-            appState->guiControl.focusedSegment = 0;
-            if (appState->guiControl.focusedElement < 0) {
-                appState->guiControl.focusedElement = numberOfElements - 1;
+int focusableRows(const std::vector<GuiSetting> &settings, int tab, std::vector<int> &out) {
+    out.clear();
+    for (int i = 0; i < (int) settings.size(); i++) {
+        const auto &s = settings[i];
+        if ((int) s.tab == tab && (!s.isVisible || s.isVisible())) out.push_back(i);
+    }
+    return (int) out.size();
+}
+
+// Left thumbstick: up/down move the highlight within the open tab; left/right switch tab, or octet on an IP row
+void navigate(AppState &app, const std::vector<GuiSetting> &settings) {
+    auto &gc = app.guiControl;
+    std::vector<int> rows;
+    focusableRows(settings, gc.tab, rows);
+    auto pos = std::find(rows.begin(), rows.end(), gc.focusedElement);
+    int at = pos == rows.end() ? -1 : (int) (pos - rows.begin());
+    if (gc.changesEnqueued) {
+        const bool onIp = at >= 0 && settings[rows[at]].control == GuiControl::IpAddress;
+        if ((gc.focusMoveUp || gc.focusMoveDown) && !rows.empty()) {
+            at = at < 0 ? 0 : (at + (gc.focusMoveDown ? 1 : (int) rows.size() - 1)) % (int) rows.size();
+            gc.focusedSegment = 0;
+        } else if (gc.focusMoveLeft || gc.focusMoveRight) {
+            const int d = gc.focusMoveRight ? 1 : -1;
+            if (onIp) {
+                const int n = settings[rows[at]].segments;
+                gc.focusedSegment = (gc.focusedSegment + d + n) % n;
+            } else {
+                const int n = (int) GuiTab::Count;
+                gc.tab = (gc.tab + d + n) % n;
+                focusableRows(settings, gc.tab, rows);
+                at = 0;
+                gc.focusedSegment = 0;
             }
         }
-        if (appState->guiControl.focusMoveDown) {
-            appState->guiControl.focusedElement += 1;
-            appState->guiControl.focusedSegment = 0;
-            if (appState->guiControl.focusedElement >= numberOfElements) {
-                appState->guiControl.focusedElement = 0;
-            }
+        gc.focusMoveUp = gc.focusMoveDown = gc.focusMoveLeft = gc.focusMoveRight = false;
+        gc.cooldown = 20;
+        gc.changesEnqueued = false;
+    }
+    if (at < 0) at = 0;
+    gc.focusedElement = rows.empty() ? -1 : rows[at];
+}
+
+uint32_t statusColor(const std::string &s, const char *good, const char *pending = nullptr) {
+    if (s == good) return kGood;
+    if (pending && s.rfind(pending, 0) == 0) return kWarn;
+    return kBad;
+}
+
+// A status item: coloured dot and its name; returns the x after it
+float chip(float x, float y, uint32_t dot, const std::string &label) {
+    const float r = 7.0f;
+    dl()->AddCircleFilled(ImVec2(x + r, y + kSmall * 0.55f), r, col(dot));
+    text(gRegular, kSmall, ImVec2(x + 2 * r + 9, y), kText, label, 0.9f);
+    return x + 2 * r + 9 + textSize(gRegular, kSmall, label).x + 26;
+}
+
+struct Stage { const char *name; uint64_t us; };
+
+// The title over the status items, or beside them on one line (wide panel)
+void drawHeader(AppState &app, float x0, float x1, float y, uint64_t totalUs, bool oneLine) {
+    text(gSemibold, kTitle, ImVec2(x0, oneLine ? y + 8 : y), kText, "BUT Telepresence");
+    // the latency figure, right-aligned over the two header lines
+    std::string figure = totalUs ? fmt::format("{}", (int) std::lround(totalUs / 1000.0)) : "–";
+    ImVec2 fs = textSize(gSemibold, kFigure, figure), us = textSize(gRegular, kSmall, "ms");
+    const float fx = x1 - us.x - 8 - fs.x;
+    text(gSemibold, kFigure, ImVec2(fx, y - 12), kText, figure);
+    text(gRegular, kSmall, ImVec2(x1 - us.x, y + 18), kMuted, "ms");
+    ImVec2 cs = textSize(gRegular, kSmall, "latency");
+    text(gRegular, kSmall, ImVec2(x1 - cs.x, y + 50), kMuted, "latency");
+
+    float cx = x0, cy = y + 52;
+    if (oneLine) {
+        cx = x0 + textSize(gSemibold, kTitle, "BUT Telepresence").x + 44;
+        cy = y + 14;
+    }
+    cx = chip(cx, cy, statusColor(app.cameraServerStatus, "Connected", "Connecting"), "Video");
+    cx = chip(cx, cy, statusColor(app.robotControlStatus, "Connected", "Connecting"), "Robot");
+    cx = chip(cx, cy, statusColor(app.ntpSyncStatus, "Synced", "Not Synced"), "Clock");
+    const float hz = openxr_current_refresh_rate(), req = openxr_requested_refresh_rate();
+    cx = chip(cx, cy, hz + 0.5f >= req ? kGood : kWarn, fmt::format("{:.0f} Hz", hz));
+    if (app.robotControlEnabled) cx = chip(cx, cy, kAccent, "Driving");   // the base follows the right thumbstick
+    if (app.keepRunningOffHead) chip(cx, cy, kWarn, "Stays on");         // the display stays on off-head
+}
+
+void drawTabs(AppState &app, float x0, float x1, float y) {
+    static const char *names[] = {"Stream", "Camera", "Audio", "System"};
+    const int n = (int) GuiTab::Count;
+    const float h = 64.0f, w = (x1 - x0) / n;
+    dl()->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + h), col(kSurface), kRound);
+    for (int i = 0; i < n; i++) {
+        ImVec2 min(x0 + i * w, y), max(x0 + (i + 1) * w, y + h);
+        bool hov, held;
+        ImGui::PushID(1000 + i);
+        if (hit("tab", min, max, &hov, &held) && app.guiControl.tab != i) {
+            app.guiControl.tab = i;
+            app.guiControl.focusedElement = -1;   // navigate() picks the first row of the tab
+            app.guiControl.focusedSegment = 0;
         }
-        if (appState->guiControl.focusMoveLeft) {
-            int maxSegments = settings[appState->guiControl.focusedElement].segments;
-            appState->guiControl.focusedSegment -= 1;
-            if (appState->guiControl.focusedSegment < 0) {
-                appState->guiControl.focusedSegment = maxSegments - 1;
-            }
-        }
-        if (appState->guiControl.focusMoveRight) {
-            int maxSegments = settings[appState->guiControl.focusedElement].segments;
-            appState->guiControl.focusedSegment += 1;
-            if (appState->guiControl.focusedSegment >= maxSegments) {
-                appState->guiControl.focusedSegment = 0;
-            }
-        }
-        appState->guiControl.focusMoveUp = false;
-        appState->guiControl.focusMoveDown = false;
-        appState->guiControl.focusMoveLeft = false;
-        appState->guiControl.focusMoveRight = false;
-        appState->guiControl.cooldown = 20;
-        appState->guiControl.changesEnqueued = false;
+        ImGui::PopID();
+        const bool on = app.guiControl.tab == i;
+        if (on) dl()->AddRectFilled(min + ImVec2(5, 5), max + ImVec2(-5, -5), col(kSurfaceHi), kRound - 4);
+        else if (hov) dl()->AddRectFilled(min + ImVec2(5, 5), max + ImVec2(-5, -5), col(kSurfaceHi, 0.5f), kRound - 4);
+        textIn(on ? gSemibold : gRegular, kBody - 2, min, max, on ? kText : kMuted, names[i]);
+        if (on) dl()->AddRectFilled(ImVec2(min.x + w * 0.3f, max.y - 9), ImVec2(max.x - w * 0.3f, max.y - 5), col(kAccent), 2.0f);
+    }
+}
+
+// One row; returns its height
+float drawRow(AppState &app, const GuiSetting &s, int index, float x0, float x1, float y) {
+    auto &gc = app.guiControl;
+    const bool focused = gc.focusedElement == index;
+    ImGui::PushID(index);
+
+    if (s.control == GuiControl::Button) {
+        const bool enabled = !s.isEnabled || s.isEnabled();
+        ImVec2 min(x0, y + 10), max(x1, y + kRowH + 4);
+        bool hov = false, held = false;
+        if (hit("button", min, max, &hov, &held) && enabled) queue(app, index, GuiAction::Activate);
+        uint32_t fill = !enabled ? kSurface : held ? kAccentHi : kAccent;
+        dl()->AddRectFilled(min, max, col(fill, enabled && hov && !held ? 0.9f : 1.0f), kRound);
+        if (focused) dl()->AddRect(min + ImVec2(-4, -4), max + ImVec2(4, 4), col(kAccentHi, 0.8f), kRound + 3, 0, 3.0f);
+        textIn(gSemibold, kBody, min, max, enabled ? 0xFFFFFF : kMuted, s.getValue ? s.getValue() : s.label);
+        ImGui::PopID();
+        return kRowH + 20;
     }
 
-    win_y += win_h;
-    win_h = (int) ImGui::GetIO().DisplaySize.y;
+    const float rowH = s.control == GuiControl::Readout ? kReadoutH : kRowH;
+    ImVec2 rmin(x0, y), rmax(x1, y + rowH);
+    const bool rowHover = ImGui::IsMouseHoveringRect(rmin, rmax, false);
+    if (focused) {
+        dl()->AddRectFilled(rmin, rmax, col(kSurface), kRound);
+        dl()->AddRect(rmin, rmax, col(kAccent, 0.75f), kRound, 0, 2.5f);
+    } else if (rowHover) {
+        dl()->AddRectFilled(rmin, rmax, col(kSurface, 0.6f), kRound);
+    }
+    const float cy = y + rowH * 0.5f;
+    const float ctlTop = cy - kCtl * 0.5f;
+    ImVec2 ls = textSize(gRegular, kBody, s.label);
+    text(gRegular, kBody, ImVec2(x0 + kInset, std::floor(cy - ls.y * 0.5f)), kText, s.label);
+    if (s.isPending && s.isPending())                            // changed, not applied yet
+        dl()->AddCircleFilled(ImVec2(x0 + kInset + ls.x + 16, cy), 6.0f, col(kAccent));
+    const float right = x1 - kInset * 0.6f;
+
+    switch (s.control) {
+        case GuiControl::Stepper: {
+            const float valueW = 190.0f;
+            const float xPlus = right - kCtl, xVal = xPlus - 8 - valueW, xMinus = xVal - 8 - kCtl;
+            if (stepKey("dec", ImVec2(xMinus, ctlTop), false)) queue(app, index, GuiAction::Decrement);
+            if (stepKey("inc", ImVec2(xPlus, ctlTop), true)) queue(app, index, GuiAction::Increment);
+            textIn(gSemibold, kBody, ImVec2(xVal, ctlTop), ImVec2(xVal + valueW, ctlTop + kCtl), kText, s.getValue());
+            break;
+        }
+        case GuiControl::Choice: {
+            const int n = (int) s.choices.size(), sel = s.getChoice();
+            float segW = 0;
+            for (auto &c : s.choices) segW = std::max(segW, textSize(gRegular, kSmall + 3, c).x + 34);
+            const float total = segW * n, xs = right - total;
+            dl()->AddRectFilled(ImVec2(xs, ctlTop), ImVec2(right, ctlTop + kCtl), col(kSurface), kRound);
+            for (int i = 0; i < n; i++) {
+                ImVec2 min(xs + i * segW, ctlTop), max(xs + (i + 1) * segW, ctlTop + kCtl);
+                bool hov, held;
+                ImGui::PushID(i);
+                if (hit("opt", min, max, &hov, &held) && i != sel) queue(app, index, GuiAction::Choose, i);
+                ImGui::PopID();
+                if (i == sel) dl()->AddRectFilled(min + ImVec2(4, 4), max + ImVec2(-4, -4), col(kAccent), kRound - 4);
+                else if (hov) dl()->AddRectFilled(min + ImVec2(4, 4), max + ImVec2(-4, -4), col(kSurfaceHi), kRound - 4);
+                textIn(i == sel ? gSemibold : gRegular, kSmall + 3, min, max, i == sel ? 0xFFFFFF : kText, s.choices[i]);
+            }
+            break;
+        }
+        case GuiControl::Toggle: {
+            const bool on = s.getToggle();
+            const float w = 104.0f, h = 56.0f, ty = cy - h * 0.5f;
+            ImVec2 min(right - w, ty), max(right, ty + h);
+            bool hov, held;
+            if (hit("switch", ImVec2(min.x - 30, ctlTop), ImVec2(max.x, ctlTop + kCtl), &hov, &held))
+                queue(app, index, GuiAction::Toggle, on ? 0 : 1);
+            dl()->AddRectFilled(min, max, col(on ? kAccent : kSurfaceHi, hov && !on ? 0.85f : 1.0f), h * 0.5f);
+            const float r = h * 0.5f - 6;
+            dl()->AddCircleFilled(ImVec2(on ? max.x - h * 0.5f : min.x + h * 0.5f, cy), r, col(0xFFFFFF, on ? 1.0f : 0.85f), 32);
+            break;
+        }
+        case GuiControl::IpAddress: {
+            std::vector<std::string> parts;
+            std::string v = s.getValue(), cur;
+            for (char c : v) { if (c == '.') { parts.push_back(cur); cur.clear(); } else cur += c; }
+            parts.push_back(cur);
+            const float boxW = 76.0f, dot = 14.0f;
+            const float xPlus = right - kCtl, xMinus = xPlus - 8 - kCtl;
+            float x = xMinus - 16 - (4 * boxW + 3 * dot);
+            for (int i = 0; i < (int) parts.size() && i < 4; i++) {
+                ImVec2 min(x, ctlTop), max(x + boxW, ctlTop + kCtl);
+                bool hov, held;
+                ImGui::PushID(i);
+                if (hit("octet", min, max, &hov, &held)) { gc.focusedElement = index; gc.focusedSegment = i; }
+                ImGui::PopID();
+                const bool sel = focused && gc.focusedSegment == i;
+                dl()->AddRectFilled(min, max, col(sel ? kSurfaceHi : kSurface), kRound - 4);
+                if (sel) dl()->AddRect(min, max, col(kAccent), kRound - 4, 0, 2.5f);
+                textIn(gSemibold, kSmall + 3, min, max, kText, parts[i]);
+                x += boxW;
+                if (i < 3) { textIn(gSemibold, kSmall + 3, ImVec2(x, ctlTop), ImVec2(x + dot, ctlTop + kCtl), kMuted, "."); x += dot; }
+            }
+            if (stepKey("dec", ImVec2(xMinus, ctlTop), false)) queue(app, index, GuiAction::Decrement);
+            if (stepKey("inc", ImVec2(xPlus, ctlTop), true)) queue(app, index, GuiAction::Increment);
+            break;
+        }
+        case GuiControl::Readout: {
+            std::string v = s.getValue();
+            ImVec2 vs = textSize(gRegular, kBody, v);
+            text(gRegular, kBody, ImVec2(right - vs.x, std::floor(cy - vs.y * 0.5f)), kMuted, v);
+            break;
+        }
+        default:
+            break;
+    }
+    ImGui::PopID();
+    return rowH + 6;
+}
+
+void drawLatency(const CameraStatsSnapshot &s, float x0, float x1, float y) {
+    const Stage stages[] = {{"Camera (model)", s.camera}, {"Convert", s.vidConv}, {"Encode", s.enc}, {"Packetize", s.rtpPay},
+                            {"Network", s.udpStream}, {"Jitter buffer", s.jbHold}, {"Depacketize", s.rtpDepay},
+                            {"Decode", s.dec}, {"Hand-off", s.appsink}, {"Display", s.presentation}};
+    uint64_t total = 0, peak = 1;
+    for (auto &st : stages) { total += st.us; peak = std::max(peak, st.us); }
+    text(gSemibold, kBody - 2, ImVec2(x0, y), kText, "Latency by stage");
+    std::string t = fmt::format("{:.1f} ms", total / 1000.0);
+    text(gSemibold, kBody - 2, ImVec2(x1 - textSize(gSemibold, kBody - 2, t).x, y), kText, t);
+    y += 44;
+    const float nameW = 200.0f, valW = 90.0f, barX = x0 + nameW, barW = x1 - valW - barX - 12;
+    for (auto &st : stages) {
+        text(gRegular, kSmall, ImVec2(x0, y), kMuted, st.name);
+        const float w = std::max(3.0f, barW * (float) st.us / (float) peak);
+        dl()->AddRectFilled(ImVec2(barX, y + 7), ImVec2(barX + barW, y + 21), col(kSurface), 7.0f);
+        dl()->AddRectFilled(ImVec2(barX, y + 7), ImVec2(barX + w, y + 21), col(kAccent, 0.85f), 7.0f);
+        std::string v = fmt::format("{:.1f}", st.us / 1000.0);
+        text(gRegular, kSmall, ImVec2(x1 - textSize(gRegular, kSmall, v).x, y), kText, v);
+        y += 31;
+    }
+}
+
+void drawHints(float x0, float x1, float y) {
+    const std::pair<const char *, const char *> hints[] = {{"Trigger", "select"}, {"Grip", "move"},
+                                                           {"Left stick", "navigate"}, {"X / Y", "adjust"}};
+    float total = 0;
+    for (auto &h : hints) total += textSize(gSemibold, kSmall, h.first).x + 8 + textSize(gRegular, kSmall, h.second).x + 28;
+    float x = std::floor(x0 + (x1 - x0 - (total - 28)) * 0.5f);
+    for (auto &h : hints) {
+        text(gSemibold, kSmall, ImVec2(x, y), kText, h.first, 0.85f);
+        x += textSize(gSemibold, kSmall, h.first).x + 8;
+        text(gRegular, kSmall, ImVec2(x, y), kMuted, h.second);
+        x += textSize(gRegular, kSmall, h.second).x + 28;
+    }
+}
+
+void render_settings_gui(const std::shared_ptr<AppState> &appState, const std::vector<GuiSetting> &settings) {
+    AppState &app = *appState;
+    navigate(app, settings);
+
+    ImGuiIO &io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(_X(win_w), _Y(win_h)), ImGuiCond_Always);
-    ImGui::Begin("Settings", nullptr,
-                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-    {
-        for (int i = 0; i < numberOfElements; i++) {
-            auto& s = settings[i];
-            bool focused = (appState->guiControl.focusedElement == i);
+    ImGui::SetNextWindowSize(ImVec2(W, H), ImGuiCond_Always);
+    ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
+    const float x0 = kPad, x1 = W - kPad;
 
-            if (!s.sectionHeader.empty()) {
-                ImGui::SeparatorText(s.sectionHeader.c_str());
-            }
+    CameraStatsSnapshot snap{};
+    uint64_t total = 0;
+    if (auto *st = app.cameraStreamingStates.first.stats) {
+        snap = st->averagedSnapshot();
+        total = snap.camera + snap.vidConv + snap.enc + snap.rtpPay + snap.udpStream + snap.jbHold + snap.rtpDepay +
+                snap.dec + snap.appsink + snap.presentation;
+    }
+    const bool wide = W > H;
+    drawHeader(app, x0, x1, kPad, total, wide);
+    float y = kPad + (wide ? 92 : 104);
+    drawTabs(app, x0, x1, y);
+    y += 64 + 22;
 
-            switch (s.type) {
-                case GuiSettingType::IpAddress:
-                    focusable_text_ip(s.getDisplayText(), focused, appState->guiControl.focusedSegment);
-                    break;
-                case GuiSettingType::Button:
-                    if (focusable_button(s.label, focused)) {
-                        appState->guiControl.pendingActivation = i;
-                    }
-                    break;
-                case GuiSettingType::Text:
-                    focusable_text(s.getDisplayText(), focused);
-                    break;
-            }
+    std::vector<int> rows;
+    focusableRows(settings, app.guiControl.tab, rows);
+    const bool system = app.guiControl.tab == (int) GuiTab::System;
+    if (wide) {
+        // Two columns, filled top to bottom; on the System tab the rows take the left one and the latency the right
+        const float colW = (x1 - x0 - kColumnGap) * 0.5f, top = y;
+        const int perColumn = system ? (int) rows.size() : ((int) rows.size() + 1) / 2;
+        for (int k = 0; k < (int) rows.size(); k++) {
+            if (k == perColumn) y = top;
+            const float cx = k < perColumn ? x0 : x0 + colW + kColumnGap;
+            y += drawRow(app, settings[rows[k]], rows[k], cx, cx + colW, y);
         }
-
-        ImGui::Text("Robot control: %s", BoolToString(appState->robotControlEnabled));
-
-        ImGui::SeparatorText("Connection Status");
-        {
-            ImVec4 color = (appState->cameraServerStatus == "Connected")
-                ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
-                : (appState->cameraServerStatus == "Connecting...")
-                    ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)
-                    : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-            ImGui::TextColored(color, "Camera Server: %s", appState->cameraServerStatus.c_str());
+        if (system) {
+            const float lx = x0 + colW + kColumnGap;
+            dl()->AddLine(ImVec2(lx - kColumnGap * 0.5f, top), ImVec2(lx - kColumnGap * 0.5f, top + 340), col(kLine), 2.0f);
+            drawLatency(snap, lx + kInset * 0.5f, x1 - kInset * 0.5f, top + 4);
         }
-        {
-            ImVec4 color = (appState->robotControlStatus == "Connected")
-                ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
-                : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-            ImGui::TextColored(color, "Robot Control: %s", appState->robotControlStatus.c_str());
+    } else {
+        for (int i : rows) y += drawRow(app, settings[i], i, x0, x1, y);
+        if (system) {
+            y += 18;
+            dl()->AddLine(ImVec2(x0, y), ImVec2(x1, y), col(kLine), 2.0f);
+            drawLatency(snap, x0 + kInset * 0.5f, x1 - kInset * 0.5f, y + 24);
         }
-        {
-            ImVec4 color = (appState->ntpSyncStatus == "Synced")
-                ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
-                : ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
-            ImGui::TextColored(color, "NTP Time Sync: %s", appState->ntpSyncStatus.c_str());
-        }
-
-        ImGui::Text("");
-        ImGui::Text("Latencies (avg last 50 frames):");
-        auto s = appState->cameraStreamingStates.first.stats;
-        if (s) {
-            auto snapshot = s->averagedSnapshot();
-
-            uint16_t cameraMs = snapshot.camera / 1000;
-            uint16_t vidConvMs = snapshot.vidConv / 1000;
-            uint16_t encMs = snapshot.enc / 1000;
-            uint16_t rtpPayMs = snapshot.rtpPay / 1000;
-            uint16_t udpStreamMs = snapshot.udpStream / 1000;
-            uint16_t jbHoldMs = snapshot.jbHold / 1000;
-            uint16_t rtpDepayMs = snapshot.rtpDepay / 1000;
-            uint16_t decMs = snapshot.dec / 1000;
-            uint16_t queueMs = snapshot.queue / 1000;
-            uint16_t displayMs = snapshot.presentation / 1000;
-
-            ImGui::Text(
-                    "camera: %u vidConv: %u enc: %u\nrtpPay: %u udpStream: %u jbHold: %u\nrtpDepay: %u dec: %u queue: %u display: %u",
-                    cameraMs, vidConvMs, encMs, rtpPayMs, udpStreamMs, jbHoldMs, rtpDepayMs,
-                    decMs, queueMs, displayMs);
-            ImGui::Text("In Total: %u: \n", cameraMs + vidConvMs + encMs + rtpPayMs + udpStreamMs +
-                                             jbHoldMs + rtpDepayMs + decMs + queueMs + displayMs);
-            ImGui::Text("Camera FPS: %.1f | App: %.1f Hz",
-                        snapshot.fps, appState->appFrameRate);
-        }
-
-        s_win_pos[s_win_num] = ImGui::GetWindowPos();
-        s_win_size[s_win_num] = ImGui::GetWindowSize();
-        s_win_num++;
     }
 
+    dl()->AddLine(ImVec2(x0, H - kPad - 52), ImVec2(x1, H - kPad - 52), col(kLine), 2.0f);
+    drawHints(x0, x1, H - kPad - 30);
+
+    // The controller ray ends behind the panel's layer: show where it points
+    if (app.guiPanel.rayHitting) {
+        auto *fg = ImGui::GetForegroundDrawList();
+        fg->AddCircleFilled(io.MousePos, 10.0f, col(0xFFFFFF, app.guiPanel.triggerDown ? 1.0f : 0.9f), 24);
+        fg->AddCircle(io.MousePos, 13.0f, col(kAccent), 24, 3.0f);
+    }
     ImGui::End();
 }
 
-void focusable_text(const std::string &text, bool isFocused) {
-    ImVec2 p = ImGui::GetCursorScreenPos(); // Top-left position of the current drawing cursor
-    ImVec2 textSize = ImGui::CalcTextSize(text.c_str()); // Size of the text
+}  // namespace
 
-    // Draw a background rectangle if isFocused is true
-    if (isFocused) {
-        ImDrawList *drawList = ImGui::GetWindowDrawList();
-        drawList->AddRectFilled(
-                p,
-                ImVec2(p.x + textSize.x, p.y + textSize.y),
-                IM_COL32(100, 100, 255, 100) // Light blue color with transparency
-        );
-    }
+int
+init_imgui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.LogFilename = nullptr;
 
-    // Draw the text
-    ImGui::Text("%s", text.c_str());
-}
+    ImFontConfig cfg;
+    cfg.OversampleH = 2;
+    gRegular = io.Fonts->AddFontFromMemoryCompressedBase85TTF(open_sans_regular_compressed_data_base85, kBody, &cfg);
+    gSemibold = io.Fonts->AddFontFromMemoryCompressedBase85TTF(open_sans_semibold_compressed_data_base85, kBody, &cfg);
+    io.FontDefault = gRegular;
 
-void focusable_text_ip(const std::string &text, bool isFocused, int segment) {
-    ImVec2 p = ImGui::GetCursorScreenPos(); // Top-left position of the current drawing cursor
+    ImGuiStyle &style = ImGui::GetStyle();
+    ImGui::StyleColorsDark(&style);
+    style.FontSizeBase = kBody;
+    style.WindowPadding = ImVec2(kPad, kPad);
+    style.WindowRounding = 26.0f;
+    style.WindowBorderSize = 0.0f;
+    style.FrameRounding = kRound;
+    style.ItemSpacing = ImVec2(12, 12);
+    style.AntiAliasedFill = true;
+    style.AntiAliasedLines = true;
+    style.Colors[ImGuiCol_WindowBg] = rgba(kBg, 1.0f);   // opaque: the moving video must not show through
+    style.Colors[ImGuiCol_Text] = rgba(kText);
+    style.Colors[ImGuiCol_Border] = rgba(kLine);
 
-    // Split the text into 4 IP segments
-    size_t start = text.find_first_of("0123456789");
-    for (int i = 0; i < segment && start != std::string::npos; ++i) {
-        start = text.find_first_of("0123456789", text.find_first_not_of("0123456789", start));
-    }
-    size_t end = text.find_first_not_of("0123456789", start);
-
-    // Draw highlight if focused
-    if (isFocused && start != std::string::npos) {
-        ImDrawList *drawList = ImGui::GetWindowDrawList();
-        ImVec2 highlightStart = ImVec2(p.x + ImGui::CalcTextSize(text.substr(0, start).c_str()).x,
-                                       p.y);
-        ImVec2 highlightSize = ImGui::CalcTextSize(text.substr(start, end - start).c_str());
-        drawList->AddRectFilled(highlightStart, ImVec2(highlightStart.x + highlightSize.x,
-                                                       highlightStart.y + highlightSize.y),
-                                IM_COL32(100, 100, 255, 100));
-    }
-
-    // Render the full text
-    ImGui::Text("%s", text.c_str());
-}
-
-bool focusable_button(const std::string &label, bool isFocused) {
-    if (isFocused) {
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(100, 100, 255, 100));  // Light blue
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              IM_COL32(100, 100, 255, 20));  // Transparent light blue
-    }
-
-    bool clicked = ImGui::Button(label.c_str());
-
-    ImGui::PopStyleColor(1);
-    return clicked;
+    ImGui_ImplOpenGL3_Init(NULL);
+    return 0;
 }
 
 int
-invoke_imgui_settings(int win_w, int win_h, const std::shared_ptr<AppState> &appState,
+invoke_imgui_settings(int win_w, int win_h, float scale, const std::shared_ptr<AppState> &appState,
                       const std::vector<GuiSetting> &settings) {
     ImGuiIO &io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(_X(win_w), _Y(win_h));
-    io.DisplayFramebufferScale = {DISPLAY_SCALE_X, DISPLAY_SCALE_Y};
+    io.DisplaySize = ImVec2((float) win_w, (float) win_h);
+    io.DisplayFramebufferScale = {scale, scale};   // geometry and font glyphs are rasterised at this density
 
     // Inject controller ray as mouse input
     if (appState->guiPanel.rayHitting && !appState->guiPanel.grabbing) {

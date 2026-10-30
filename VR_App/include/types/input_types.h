@@ -38,6 +38,10 @@ struct UserState {
     XrPosef hmdPoseNow{};
     uint64_t hmdPoseNowTimeUs = 0;
 
+    // The head (midway between the eyes) in app space, from the views located for rendering: where the settings
+    // panel is placed relative to. App space is head-locked ("ViewFront"), so this barely changes.
+    XrPosef headInApp{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
+
     // Head pose and angular velocity (world / LOCAL space, rad/s) at the predicted display time of the last render, and that
     // display time on the NTP-corrected robot clock (us). Sent with every per-frame telemetry record, so the
     // latency of a frame and the head motion while it is shown share one record.

@@ -32,6 +32,7 @@ struct render_target_t {
 /** A swapchain surface for one eye view, with its associated render targets. */
 struct viewsurface_t {
     uint32_t width, height;
+    int64_t format{0};                 /* GL internal format of the swapchain images */
     XrViewConfigurationView config_view;
     XrSwapchain swapchain;
     std::vector<render_target_t> render_targets;
@@ -106,6 +107,12 @@ int openxr_acquire_viewsurface(viewsurface_t &viewSurface, render_target_t &rend
                                XrSwapchainSubImage &subImage);
 
 int openxr_release_viewsurface(viewsurface_t &viewsurface);
+
+/** A single-sample swapchain for a quad layer (the settings panel): sRGB with alpha when the runtime offers it. */
+viewsurface_t openxr_create_panel_swapchain(XrSession *session, uint32_t width, uint32_t height);
+
+/** Whether XR_FB_composition_layer_settings is enabled (compositor super-sampling / sharpening for a layer). */
+bool openxr_has_layer_settings();
 
 int openxr_acquire_swapchain_img(XrSwapchain swapchain);
 

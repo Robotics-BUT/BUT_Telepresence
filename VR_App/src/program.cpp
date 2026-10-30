@@ -2,8 +2,8 @@
  * program.cpp - TelepresenceProgram implementation
  *
  * Contains the full VR application lifecycle: initialization, per-frame
- * update/render loop, controller input handling, and the data-driven
- * settings table. See program.h for the class overview.
+ * update/render loop, controller input handling, and the actions behind the
+ * settings panel (rows in settings_table.cpp). See program.h for the class overview.
  */
 
 #include "pch.h"
@@ -11,6 +11,7 @@
 #include "check.h"
 #include "render_scene.h"
 #include "render_imgui.h"
+#include "settings_table.h"
 
 #include <utility>
 #include <algorithm>
@@ -38,7 +39,7 @@
  *   7. Collect system info (runtime, GPU)
  *   8. Input actions, streaming, GUI settings table
  */
-TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
+TelepresenceProgram::TelepresenceProgram(struct android_app *app) : app_(app) {
 
     /* Initialize the OpenXR loader which detects and interfaces with the XR runtime */
     openxr_init_loader(app);
@@ -64,6 +65,12 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
     app_reference_space_ = reference_spaces_[0]; // "ViewFront"
 
     viewsurfaces_ = openxr_create_swapchains(&openxr_instance_, &openxr_system_id_, &openxr_session_);
+    for (auto layout : {GuiPanelLayout::Front, GuiPanelLayout::Below}) {
+        const GuiPanelGeometry g = GuiPanelState::geometryOf(layout);
+        panelSurfaces_[(int) layout] = openxr_create_panel_swapchain(
+                &openxr_session_, (uint32_t) std::lround(g.width * g.renderScale),
+                (uint32_t) std::lround(g.height * g.renderScale));
+    }
 
     ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
@@ -87,6 +94,9 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) {
 }
 
 TelepresenceProgram::~TelepresenceProgram() {
+    if (appState_ && appState_->keepRunningOffHead) {
+        SendSystemBroadcast("com.oculus.vrpowermanager.automation_disable");   // hand the proximity sensor back
+    }
     if (adaptation_) adaptation_->stop();
     if (audioPlayer_) {
         audioPlayer_->stopSend();
@@ -170,6 +180,12 @@ void TelepresenceProgram::RenderFrame() {
     if (RenderLayer(display_time, projectionLayerViews, layer)) {
         layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&layer));
     }
+    // The settings panel as a quad layer over the scene: the compositor samples it once, straight to the display
+    XrCompositionLayerQuad panelLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerSettingsFB panelSettings{XR_TYPE_COMPOSITION_LAYER_SETTINGS_FB};
+    if (renderGui_ && RenderPanelLayer(panelLayer, panelSettings)) {
+        layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&panelLayer));
+    }
 
     openxr_end_frame(&openxr_session_, &display_time, layers);
     auto end = std::chrono::high_resolution_clock::now();
@@ -178,6 +194,32 @@ void TelepresenceProgram::RenderFrame() {
     auto frameDuration = std::chrono::duration_cast<std::chrono::microseconds>(
             frameStart_ - prevFrameStart_).count();
     appState_->appFrameRate = (frameDuration > 0) ? (1e6f / frameDuration) : 0.0f;
+}
+
+/**
+ * Draw the settings panel into its swapchain and describe its quad layer: the panel's pose and size in app space.
+ */
+bool TelepresenceProgram::RenderPanelLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings) {
+    const auto &panel = appState_->guiPanel;
+    viewsurface_t &surface = panelSurfaces_[(int) panel.layout];
+    render_target_t target{};
+    XrSwapchainSubImage subImage{};
+    openxr_acquire_viewsurface(surface, target, subImage);
+    draw_settings_panel(target, surface.format == GL_SRGB8_ALPHA8, appState_, settings_);
+    openxr_release_viewsurface(surface);
+
+    layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied: rounded corners
+    layer.space = app_reference_space_;
+    layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    layer.subImage = subImage;
+    layer.pose.orientation = panel.orientation();
+    layer.pose.position = panel.position;
+    layer.size = {panel.getWorldWidth(), panel.height};
+    if (openxr_has_layer_settings()) {
+        settings.layerFlags = XR_COMPOSITION_LAYER_SETTINGS_QUALITY_SUPER_SAMPLING_BIT_FB;   // filter text well when minified
+        layer.next = &settings;
+    }
+    return true;
 }
 
 /**
@@ -202,6 +244,14 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
     if (openxr_locate_views(&openxr_session_, &displayTime, app_reference_space_, viewCount,
                             views.data()) == 0) {
         lastValidViews = views;
+        if (viewCount >= 2) {
+            const auto &a = views[0].pose.position, &b = views[1].pose.position;
+            userState_.headInApp = {views[0].pose.orientation, {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f}};
+            if (!panelPlaced_) {   // the panel starts open: place it once the head is known
+                PlacePanel();
+                panelPlaced_ = true;
+            }
+        }
     } else {
         if (lastValidViews.size() == viewCount) views = lastValidViews;
     }
@@ -348,7 +398,7 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
             }
         }
 
-        render_scene(layerViews[i], rtarget, quad, appState_, imageHandle, renderGui_, settings_);
+        render_scene(layerViews[i], rtarget, quad, appState_, imageHandle);
 
         openxr_release_viewsurface(viewsurfaces_[i]);
     }
@@ -928,172 +978,112 @@ void TelepresenceProgram::ApplyAudioState() {
 }
 
 void TelepresenceProgram::BuildSettings() {
-    auto noop = []() {};
-
-    settings_ = {
-        // --- Network ---
-        {
-            "Headset IP", GuiSettingType::IpAddress, "Network",
-            [this]() { return fmt::format("Headset IP: {}", IpToString(appState_->streamingConfig.headset_ip)); },
-            noop, noop, nullptr, 4
-        },
-        {
-            "Telepresence IP", GuiSettingType::IpAddress, "",
-            [this]() { return fmt::format("Telepresence IP: {}", IpToString(appState_->streamingConfig.jetson_ip)); },
-            [this]() { appState_->streamingConfig.jetson_ip[appState_->guiControl.focusedSegment] += 1; },
-            [this]() { appState_->streamingConfig.jetson_ip[appState_->guiControl.focusedSegment] -= 1; },
-            nullptr, 4
-        },
-
-        // --- Streaming & Rendering ---
-        {
-            "Codec", GuiSettingType::Text, "Streaming & Rendering",
-            [this]() { return fmt::format("Codec: {}", CodecToString(appState_->streamingConfig.codec)); },
-            [this]() {
-                auto& codec = appState_->streamingConfig.codec;
-                codec = static_cast<Codec>(
-                    (static_cast<int>(codec) + 1 + static_cast<int>(Codec::Count)) % static_cast<int>(Codec::Count));
-                if (codec == Codec::VP8 || codec == Codec::VP9) codec = Codec::H264;
-            },
-            [this]() {
-                auto& codec = appState_->streamingConfig.codec;
-                codec = static_cast<Codec>(
-                    (static_cast<int>(codec) - 1 + static_cast<int>(Codec::Count)) % static_cast<int>(Codec::Count));
-                if (codec == Codec::VP8 || codec == Codec::VP9) codec = Codec::JPEG;
-            }
-        },
-        {
-            "Encoding quality", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Encoding quality: {}", appState_->streamingConfig.encodingQuality); },
-            [this]() { appState_->streamingConfig.encodingQuality = std::min(appState_->streamingConfig.encodingQuality + 1, 100); },
-            [this]() { appState_->streamingConfig.encodingQuality = std::max(appState_->streamingConfig.encodingQuality - 1, 0); }
-        },
-        {
-            "Bitrate", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Bitrate: {}", appState_->streamingConfig.bitrate); },
-            [this]() { appState_->streamingConfig.bitrate = std::min(appState_->streamingConfig.bitrate + 1000000, 100000000); },
-            [this]() { appState_->streamingConfig.bitrate = std::max(appState_->streamingConfig.bitrate - 1000000, 1000000); }
-        },
-        {
-            "Video Mode", GuiSettingType::Text, "",
-            [this]() { return fmt::format("{}", VideoModeToString(appState_->streamingConfig.videoMode)); },
-            [this]() {
-                auto& vm = appState_->streamingConfig.videoMode;
-                vm = static_cast<VideoMode>(
-                    (static_cast<int>(vm) + 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
-            },
-            [this]() {
-                auto& vm = appState_->streamingConfig.videoMode;
-                vm = static_cast<VideoMode>(
-                    (static_cast<int>(vm) - 1 + static_cast<int>(VideoMode::Count)) % static_cast<int>(VideoMode::Count));
-            }
-        },
-        {
-            "Aspect Ratio", GuiSettingType::Text, "",
-            [this]() { return fmt::format("{}", AspectRatioModeToString(appState_->aspectRatioMode)); },
-            [this]() {
-                appState_->aspectRatioMode = static_cast<AspectRatioMode>(
-                    (static_cast<int>(appState_->aspectRatioMode) + 1 + static_cast<int>(AspectRatioMode::Count)) % static_cast<int>(AspectRatioMode::Count));
-            },
-            [this]() {
-                appState_->aspectRatioMode = static_cast<AspectRatioMode>(
-                    (static_cast<int>(appState_->aspectRatioMode) - 1 + static_cast<int>(AspectRatioMode::Count)) % static_cast<int>(AspectRatioMode::Count));
-            }
-        },
-        {
-            "FPS", GuiSettingType::Text, "",
-            [this]() { return fmt::format("FPS: {}", appState_->streamingConfig.fps); },
-            [this]() { if (appState_->streamingConfig.fps < 80) appState_->streamingConfig.fps += 1; },
-            [this]() { if (appState_->streamingConfig.fps > 1) appState_->streamingConfig.fps -= 1; }
-        },
-        {
-            "Resolution", GuiSettingType::Text, "",
-            [this]() {
-                auto& r = appState_->streamingConfig.resolution;
-                return fmt::format("Resolution: {}x{}({})", r.getWidth(), r.getHeight(), r.getLabel());
-            },
-            [this]() {
-                auto& r = appState_->streamingConfig.resolution;
-                if (r.getIndex() < CameraResolution::count() - 1)
-                    appState_->streamingConfig.resolution = CameraResolution::fromIndex(r.getIndex() + 1);
-            },
-            [this]() {
-                auto& r = appState_->streamingConfig.resolution;
-                if (r.getIndex() > 0)
-                    appState_->streamingConfig.resolution = CameraResolution::fromIndex(r.getIndex() - 1);
-            }
-        },
-
-        // --- Apply button ---
-        {
-            "Apply", GuiSettingType::Button, "",
-            nullptr, noop, noop,
-            [this]() {
-                stateStorage_->SaveAppState(*appState_);
-                ApplyStreamingConfig(appState_->streamingConfig);
-            }
-        },
-
-        // --- Status Information ---
-        {
-            "Head movement max speed", GuiSettingType::Text, "Status Information",
-            [this]() { return fmt::format("Camera head movement max speed: {}", appState_->headMovementMaxSpeed); },
-            // Profile-generator speed in inc/s (1,000,000 = 0.95 motor rev/s); the relay clamps it to its speed_max.
-            [this]() { if (appState_->headMovementMaxSpeed < 5000000) appState_->headMovementMaxSpeed += 100000; },
-            [this]() { if (appState_->headMovementMaxSpeed > 200000) appState_->headMovementMaxSpeed -= 100000; }
-        },
-        {
-            "Head movement sensitivity", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Head movement sensitivity: {:.2f}x", appState_->headMovementSensitivity); },
-            // 0.25 to 5.00: steps of 0.05 up to 2.00, of 0.25 above it
-            [this]() { float &s = appState_->headMovementSensitivity;
-                       s = std::min(5.0f, s < 1.999f ? std::round(s * 20 + 1) / 20 : std::round(s * 4 + 1) / 4); },
-            [this]() { float &s = appState_->headMovementSensitivity;
-                       s = std::max(0.25f, s > 2.001f ? std::round(s * 4 - 1) / 4 : std::round(s * 20 - 1) / 20); }
-        },
-        {
-            "Headset movement prediction", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Headset movement prediction: {} ms", appState_->headMovementPredictionMs); },
-            [this]() { if (appState_->headMovementPredictionMs < 100) appState_->headMovementPredictionMs += 1; },
-            [this]() { if (appState_->headMovementPredictionMs > 0) appState_->headMovementPredictionMs -= 1; }
-        },
-        {
-            "Stereo convergence", GuiSettingType::Text, "Rendering",
-            [this]() { return fmt::format("Stereo convergence (HIT): {:.3f}", appState_->stereoConvergence); },
-            [this]() { if (appState_->stereoConvergence <  0.5f) appState_->stereoConvergence += 0.01f; },
-            [this]() { if (appState_->stereoConvergence > -0.5f) appState_->stereoConvergence -= 0.01f; }
-        },
-        {
-            "Robot sound", GuiSettingType::Text, "Audio",
-            [this]() { return fmt::format("Robot sound: {}", appState_->audioRobotEnable ? "ON" : "OFF"); },
-            [this]() { appState_->audioRobotEnable = true;  ApplyAudioState(); },
-            [this]() { appState_->audioRobotEnable = false; ApplyAudioState(); }
-        },
-        {
-            "Microphone", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Microphone: {}", appState_->audioMicEnable ? "ON" : "OFF"); },
-            [this]() { appState_->audioMicEnable = true;  ApplyAudioState(); },
-            [this]() { appState_->audioMicEnable = false; ApplyAudioState(); }
-        },
-        {
-            "Mic mode", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Mic mode: {}", appState_->micPushToTalk ? "Push-to-talk (L grip)" : "Open mic"); },
-            [this]() { appState_->micPushToTalk = true; },
-            [this]() { appState_->micPushToTalk = false; }
-        },
-        {
-            "Mic mute", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Mic mute: {}", appState_->micMuted ? "MUTED" : "live"); },
-            [this]() { appState_->micMuted = true; },
-            [this]() { appState_->micMuted = false; }
-        },
-        {
-            "Audio volume", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Audio volume: {}", appState_->audioVolume); },
-            [this]() { if (appState_->audioVolume < 100) appState_->audioVolume += 5; if (audioPlayer_) audioPlayer_->setVolume(appState_->audioVolume); },
-            [this]() { if (appState_->audioVolume >   0) appState_->audioVolume -= 5; if (audioPlayer_) audioPlayer_->setVolume(appState_->audioVolume); }
-        },
+    SettingsActions actions;
+    actions.applyStream = [this]() {
+        stateStorage_->SaveAppState(*appState_);
+        ApplyStreamingConfig(appState_->streamingConfig);
     };
+    actions.applyAudio = [this]() { ApplyAudioState(); };
+    actions.setVolume = [this](int volume) { if (audioPlayer_) audioPlayer_->setVolume(volume); };
+    actions.setRobotDrive = [this](bool on) {
+        appState_->robotControlEnabled = on;
+        if (!on && robotControlSender_ && robotControlSender_->isInitialized()) {
+            robotControlSender_->sendRobotControl(0.0f, 0.0f, 0.0f, threadPool_);   // stop the base
+        }
+    };
+    actions.setKeepRunningOffHead = [this](bool on) {
+        // The system's VR power manager treats the headset as worn until told to use the proximity sensor again
+        appState_->keepRunningOffHead = on;
+        SendSystemBroadcast(on ? "com.oculus.vrpowermanager.prox_close" : "com.oculus.vrpowermanager.automation_disable");
+    };
+    actions.setPanelLayout = [this](GuiPanelLayout layout) {
+        appState_->guiPanel.layout = layout;
+        PlacePanel();
+        stateStorage_->SaveAppState(*appState_);
+    };
+    actions.appliedConfig = [this]() { return lastAppliedConfig_ ? &*lastAppliedConfig_ : nullptr; };
+    settings_ = BuildSettingsTable(appState_, actions);
+}
+
+/**
+ * The settings panel's frame: a rotation by pitch about +X, then by yaw about +Y (at 0, 0 the panel faces +Z).
+ */
+static XrVector3f ToPanelFrame(const GuiPanelState &panel, const XrVector3f &v) {
+    const float cy = std::cos(panel.yaw), sy = std::sin(panel.yaw), cp = std::cos(panel.pitch), sp = std::sin(panel.pitch);
+    const XrVector3f u{cy * v.x - sy * v.z, v.y, sy * v.x + cy * v.z};
+    return {u.x, cp * u.y + sp * u.z, -sp * u.y + cp * u.z};
+}
+
+static XrVector3f FromPanelFrame(const GuiPanelState &panel, const XrVector3f &v) {
+    const float cy = std::cos(panel.yaw), sy = std::sin(panel.yaw), cp = std::cos(panel.pitch), sp = std::sin(panel.pitch);
+    const XrVector3f u{v.x, cp * v.y - sp * v.z, sp * v.y + cp * v.z};
+    return {cy * u.x + sy * u.z, u.y, -sy * u.x + cy * u.z};
+}
+
+/**
+ * Put the settings panel where its layout opens, facing the head: Front 0.7 m ahead and 0.1 m below eye level;
+ * Below 0.6 m away and 36 deg down, 20 deg tall, so that its top edge meets the bottom edge of the Full FOV video
+ * (26.6 deg below the eyes at 16:9).
+ */
+void TelepresenceProgram::PlacePanel() {
+    const XrPosef &head = userState_.headInApp;
+    const auto &q = head.orientation;
+    XrVector3f fwd{-2.0f * (q.x * q.z + q.w * q.y), 0.0f, -(1.0f - 2.0f * (q.x * q.x + q.y * q.y))};
+    const float len = std::sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
+    if (len < 1e-3f) return;   // looking straight up or down: keep the panel where it is
+    fwd.x /= len;
+    fwd.z /= len;
+    auto &panel = appState_->guiPanel;
+    if (panel.layout == GuiPanelLayout::Below) {
+        constexpr float DISTANCE = 0.6f, DOWN = 36.0f * (float) M_PI / 180.0f, TALL = 20.0f * (float) M_PI / 180.0f;
+        const float ahead = DISTANCE * std::cos(DOWN);
+        panel.position = {head.position.x + fwd.x * ahead, head.position.y - DISTANCE * std::sin(DOWN),
+                          head.position.z + fwd.z * ahead};
+        panel.height = 2.0f * DISTANCE * std::tan(TALL * 0.5f);
+    } else {
+        constexpr float DISTANCE = 0.7f, BELOW_EYES = 0.1f;
+        panel.position = {head.position.x + fwd.x * DISTANCE, head.position.y - BELOW_EYES, head.position.z + fwd.z * DISTANCE};
+        panel.height = 0.6f;
+    }
+    FacePanelToHead();
+}
+
+/**
+ * Send a broadcast intent from the app's context (used for the system's VR power manager).
+ */
+void TelepresenceProgram::SendSystemBroadcast(const char *action) {
+    JNIEnv *env = nullptr;
+    if (!app_ || app_->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    jclass intentClass = env->FindClass("android/content/Intent");
+    jmethodID ctor = env->GetMethodID(intentClass, "<init>", "(Ljava/lang/String;)V");
+    jstring jaction = env->NewStringUTF(action);
+    jobject intent = env->NewObject(intentClass, ctor, jaction);
+    jobject activity = app_->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    jmethodID send = env->GetMethodID(activityClass, "sendBroadcast", "(Landroid/content/Intent;)V");
+    env->CallVoidMethod(activity, send, intent);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        LOG_ERROR("Broadcast %s failed", action);
+    } else {
+        LOG_INFO("Broadcast %s sent", action);
+    }
+    env->DeleteLocalRef(activityClass);
+    env->DeleteLocalRef(intent);
+    env->DeleteLocalRef(jaction);
+    env->DeleteLocalRef(intentClass);
+}
+
+/**
+ * Turn the settings panel to face the head, sideways and up or down; it stays level (no roll).
+ */
+void TelepresenceProgram::FacePanelToHead() {
+    auto &panel = appState_->guiPanel;
+    const XrVector3f &h = userState_.headInApp.position;
+    const float dx = h.x - panel.position.x, dy = h.y - panel.position.y, dz = h.z - panel.position.z;
+    const float level = std::sqrt(dx * dx + dz * dz);
+    if (level > 1e-3f) panel.yaw = std::atan2(dx, dz);
+    if (level + std::abs(dy) > 1e-3f) panel.pitch = -std::atan2(dy, level);
 }
 
 /**
@@ -1111,12 +1101,22 @@ void TelepresenceProgram::BuildSettings() {
  *   Left trigger:           activate focused button setting
  */
 void TelepresenceProgram::HandleControllers() {
-    // Process deferred button activation from controller ray click
-    int pending = appState_->guiControl.pendingActivation;
-    if (pending >= 0 && pending < (int) settings_.size()) {
-        appState_->guiControl.pendingActivation = -1;
-        auto &setting = settings_[pending];
-        if (setting.onActivate) setting.onActivate();
+    // A row control pressed with the controller ray (render_imgui.cpp), run here, outside the panel's drawing
+    {
+        auto &gc = appState_->guiControl;
+        if (gc.pendingRow >= 0 && gc.pendingRow < (int) settings_.size()) {
+            auto &setting = settings_[gc.pendingRow];
+            switch (gc.pendingAction) {
+                case GuiAction::Increment: if (setting.onIncrement) setting.onIncrement(); break;
+                case GuiAction::Decrement: if (setting.onDecrement) setting.onDecrement(); break;
+                case GuiAction::Activate:  if (setting.onActivate) setting.onActivate(); break;
+                case GuiAction::Choose:    if (setting.setChoice) setting.setChoice(gc.pendingValue); break;
+                case GuiAction::Toggle:    if (setting.setToggle) setting.setToggle(gc.pendingValue != 0); break;
+                case GuiAction::None:      break;
+            }
+        }
+        gc.pendingRow = -1;
+        gc.pendingAction = GuiAction::None;
     }
 
     if (userState_.thumbstickPressed[Side::RIGHT] && !controlLockMovement_) {
@@ -1136,7 +1136,9 @@ void TelepresenceProgram::HandleControllers() {
     // Toggling GUI rendering
     if (userState_.thumbstickPressed[Side::LEFT] && !controlLockGui_) {
         renderGui_ = !renderGui_;
-        if (!renderGui_) {
+        if (renderGui_) {
+            PlacePanel();
+        } else {
             stateStorage_->SaveAppState(*appState_);
         }
         controlLockGui_ = true;
@@ -1177,23 +1179,23 @@ void TelepresenceProgram::HandleControllers() {
         }
 
             // Value increment (Y button)
-        else if (userState_.yPressed) {
+        else if (userState_.yPressed && appState_->guiControl.focusedElement >= 0) {
             auto& setting = settings_[appState_->guiControl.focusedElement];
             if (setting.onIncrement) setting.onIncrement();
             appState_->guiControl.changesEnqueued = true;
         }
 
             // Value decrement (X button)
-        else if (userState_.xPressed) {
+        else if (userState_.xPressed && appState_->guiControl.focusedElement >= 0) {
             auto& setting = settings_[appState_->guiControl.focusedElement];
             if (setting.onDecrement) setting.onDecrement();
             appState_->guiControl.changesEnqueued = true;
         }
 
             // Button activation (left trigger)
-        else if (userState_.triggerValue[Side::LEFT] > 0.9f) {
+        else if (userState_.triggerValue[Side::LEFT] > 0.9f && appState_->guiControl.focusedElement >= 0) {
             auto& setting = settings_[appState_->guiControl.focusedElement];
-            if (setting.type == GuiSettingType::Button && setting.onActivate) {
+            if (setting.control == GuiControl::Button && setting.onActivate && (!setting.isEnabled || setting.isEnabled())) {
                 setting.onActivate();
                 appState_->guiControl.changesEnqueued = true;
             }
@@ -1216,34 +1218,28 @@ void TelepresenceProgram::HandleControllers() {
         panel.rayOrigin = aim.position;
         panel.rayActive = true;
         panel.rayHitting = false;
+        const float halfW = panel.getWorldWidth() * 0.5f;
+        const float halfH = panel.height * 0.5f;
 
-        float panelZ = panel.position.z;
-
-        // Ray-plane intersection: panel lies in the plane Z = panelZ
-        if (std::abs(fwd.z) > 1e-6f) {
-            float t = (panelZ - aim.position.z) / fwd.z;
-            if (t > 0.0f) {
-                float hitX = aim.position.x + t * fwd.x;
-                float hitY = aim.position.y + t * fwd.y;
-
-                float halfW = panel.getWorldWidth() * 0.5f;
-                float halfH = panel.height * 0.5f;
-
-                // Check if hit is within panel bounds
-                if (hitX >= panel.position.x - halfW && hitX <= panel.position.x + halfW &&
-                    hitY >= panel.position.y - halfH && hitY <= panel.position.y + halfH) {
-
-                    panel.rayHitting = true;
-                    panel.rayEnd = {hitX, hitY, panelZ};
-
-                    // Convert to ImGui pixel coordinates
-                    float u = (hitX - (panel.position.x - halfW)) / (2.0f * halfW);
-                    float v = ((panel.position.y + halfH) - hitY) / (2.0f * halfH);
-                    panel.imguiMouseX = u * (float) GuiPanelState::PIXEL_WIDTH;
-                    panel.imguiMouseY = v * (float) GuiPanelState::PIXEL_HEIGHT;
-                    panel.triggerDown = userState_.triggerValue[Side::RIGHT] > 0.5f;
-                }
+        // Ray against the panel's plane, in the panel's own frame (the panel faces +Z there)
+        float hitX = 0.0f, hitY = 0.0f, t = -1.0f;
+        {
+            const XrVector3f o = ToPanelFrame(panel, {aim.position.x - panel.position.x, aim.position.y - panel.position.y,
+                                                      aim.position.z - panel.position.z});
+            const XrVector3f d = ToPanelFrame(panel, fwd);
+            if (std::abs(d.z) > 1e-6f) {
+                t = -o.z / d.z;
+                hitX = o.x + t * d.x;
+                hitY = o.y + t * d.y;
             }
+        }
+        if (t > 0.0f && std::abs(hitX) <= halfW && std::abs(hitY) <= halfH) {
+            const GuiPanelGeometry g = panel.geometry();
+            panel.rayHitting = true;
+            panel.rayEnd = {aim.position.x + t * fwd.x, aim.position.y + t * fwd.y, aim.position.z + t * fwd.z};
+            panel.imguiMouseX = (hitX + halfW) / (2.0f * halfW) * (float) g.width;
+            panel.imguiMouseY = (halfH - hitY) / (2.0f * halfH) * (float) g.height;
+            panel.triggerDown = userState_.triggerValue[Side::RIGHT] > 0.5f;
         }
 
         if (!panel.rayHitting) {
@@ -1262,33 +1258,30 @@ void TelepresenceProgram::HandleControllers() {
         float gripValue = userState_.squeezeValue[Side::RIGHT];
         if (gripValue > 0.5f && panel.rayHitting && !panel.grabbing) {
             panel.grabbing = true;
-            panel.grabPlaneZ = panel.position.z;
-            panel.grabHitX = panel.rayEnd.x;
-            panel.grabHitY = panel.rayEnd.y;
-            panel.grabPanelPos = panel.position;
+            panel.grabHitX = hitX;
+            panel.grabHitY = hitY;
+            panel.grabDistance = t;
             panel.grabInitialHeight = panel.height;
         }
         if (panel.grabbing) {
             if (gripValue < 0.3f) {
                 panel.grabbing = false;
             } else {
-                // Track panel to controller movement on the grab plane
-                if (std::abs(fwd.z) > 1e-6f) {
-                    float t = (panel.grabPlaneZ - aim.position.z) / fwd.z;
-                    if (t > 0.0f) {
-                        float hitX = aim.position.x + t * fwd.x;
-                        float hitY = aim.position.y + t * fwd.y;
-                        panel.position.x = panel.grabPanelPos.x + (hitX - panel.grabHitX);
-                        panel.position.y = panel.grabPanelPos.y + (hitY - panel.grabHitY);
-                    }
-                }
-
                 // Resize with right thumbstick Y while gripping
                 float thumbY = userState_.thumbstickPose[Side::RIGHT].y;
                 if (std::abs(thumbY) > 0.1f) {
                     panel.height += thumbY * 0.01f;
-                    panel.height = std::max(0.3f, std::min(3.0f, panel.height));
+                    panel.height = std::max(0.15f, std::min(3.0f, panel.height));
                 }
+
+                // The grabbed point stays on the ray as far out as it was grabbed, and the panel keeps facing the
+                // head, so it swivels both ways as it is carried around
+                const float k = panel.height / panel.grabInitialHeight;
+                const XrVector3f held{aim.position.x + fwd.x * panel.grabDistance, aim.position.y + fwd.y * panel.grabDistance,
+                                      aim.position.z + fwd.z * panel.grabDistance};
+                FacePanelToHead();
+                const XrVector3f offset = FromPanelFrame(panel, {panel.grabHitX * k, panel.grabHitY * k, 0.0f});
+                panel.position = {held.x - offset.x, held.y - offset.y, held.z - offset.z};
             }
         }
 

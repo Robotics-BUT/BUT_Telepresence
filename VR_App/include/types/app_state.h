@@ -10,11 +10,13 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cmath>
 
 #include <openxr/openxr.h>
 #include "config.h"
 #include "types/enums.h"
 #include "types/camera_types.h"
+#include "types/gui_setting.h"
 
 // =============================================================================
 // Streaming Configuration
@@ -109,19 +111,41 @@ struct SystemInfo {
 // GUI Panel State (3D positioning + controller ray interaction)
 // =============================================================================
 
+/** Where the settings panel opens: upright in front of the head, or wide and tilted up under the video. */
+enum class GuiPanelLayout { Front = 0, Below = 1 };
+
+/** The panel's drawing surface for a layout. */
+struct GuiPanelGeometry {
+    int width;            // panel units: the ImGui layout and the controller ray's coordinates
+    int height;
+    float renderScale;    // swapchain pixels per panel unit (ImGui framebuffer scale)
+};
+
 /**
  * State of the floating GUI panel in VR space.
  * Stores the panel's world-space transform, controller ray hit-test results,
  * and grab-to-move state. Written by HandleControllers(), read by render.
  */
 struct GuiPanelState {
-    static constexpr int PIXEL_WIDTH = 300;
-    static constexpr int PIXEL_HEIGHT = 540;
+    // Front: 1080 x 1620 px, a little above the ~1160 display pixels the panel spans at its default distance, so the
+    // compositor samples it slightly minified; Below: 1440 x 660 px, likewise above the ~1000 it spans
+    static constexpr GuiPanelGeometry FRONT{720, 1080, 1.5f};
+    static constexpr GuiPanelGeometry BELOW{1440, 660, 1.0f};
+    static constexpr GuiPanelGeometry geometryOf(GuiPanelLayout l) { return l == GuiPanelLayout::Below ? BELOW : FRONT; }
 
-    XrVector3f position{1.0f, -0.5f, 0.2f};
-    float height{1.0f};
+    GuiPanelLayout layout{GuiPanelLayout::Front};   // saved; the panel is placed for it whenever it opens
+    XrVector3f position{0.0f, -0.1f, -0.7f};
+    float yaw{0.0f};                       // rotation about +Y; at 0 (and pitch 0) the panel faces +Z
+    float pitch{0.0f};                     // then about the panel's own X; negative tilts its top away
+    float height{0.6f};
 
-    float getWorldWidth() const { return height * (float)PIXEL_WIDTH / (float)PIXEL_HEIGHT; }
+    GuiPanelGeometry geometry() const { return geometryOf(layout); }
+    float getWorldWidth() const { return height * (float) geometry().width / (float) geometry().height; }
+    XrQuaternionf orientation() const {    // yaw, then pitch
+        const float sy = std::sin(yaw * 0.5f), cy = std::cos(yaw * 0.5f);
+        const float sp = std::sin(pitch * 0.5f), cp = std::cos(pitch * 0.5f);
+        return {cy * sp, sy * cp, -sy * sp, cy * cp};
+    }
 
     // Controller ray (written by HandleControllers, read by render)
     bool rayActive{false};
@@ -135,10 +159,9 @@ struct GuiPanelState {
 
     // Grab-to-move / resize (right grip while pointing at panel)
     bool grabbing{false};
-    float grabPlaneZ{0.0f};
-    float grabHitX{0.0f};
+    float grabHitX{0.0f};                  // where the grab started, in the panel's own frame
     float grabHitY{0.0f};
-    XrVector3f grabPanelPos{};
+    float grabDistance{0.0f};              // along the ray: the grabbed point stays this far from the controller
     float grabInitialHeight{1.0f};
 };
 
@@ -157,13 +180,17 @@ struct GUIControl {
     bool focusMoveLeft{false};
     bool focusMoveRight{false};
 
-    int focusedElement{0};   /* index into the settings vector */
+    int tab{0};              /* open tab (GuiTab) */
+    int focusedElement{0};   /* highlighted row: index into the settings vector, always a visible row of the open tab */
     int focusedSegment{0};   /* sub-segment index (e.g. IP address octets) */
 
     bool changesEnqueued{false};  /* true when a GUI input event needs processing */
     int cooldown{0};              /* frames to wait before accepting the next input */
 
-    int pendingActivation{-1};   /* button index clicked via controller ray, deferred to HandleControllers */
+    /* A row control pressed with the controller ray: run by HandleControllers on the next frame, outside drawing */
+    int pendingRow{-1};
+    GuiAction pendingAction{GuiAction::None};
+    int pendingValue{0};
 };
 
 // =============================================================================
@@ -234,6 +261,8 @@ struct AppState {
     std::string ntpSyncStatus{"Unknown"};
 
     /* Runtime state */
+    /* Proximity sensor overridden: the display and the app stay on with the headset off the head (not saved) */
+    bool keepRunningOffHead{false};
     bool robotControlEnabled{true};
     bool headsetMounted{false};
 };

@@ -83,11 +83,11 @@ add_library(
         src/robot_control_sender.cpp
         src/rest_client.cpp
         src/render_imgui.cpp
+        src/settings_table.cpp
         src/util_openxr.cpp
         src/util_egl.cpp
         src/util_shader.cpp
         src/util_render_target.cpp
-        src/render_texplate.cpp
         src/ntp_timer.cpp
         src/state_storage.cpp
         src/ros_network_gateway_client.cpp

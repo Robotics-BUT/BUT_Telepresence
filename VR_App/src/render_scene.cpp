@@ -15,15 +15,12 @@
 #include <GLES2/gl2ext.h>
 #include "render_imgui.h"
 #include "util_render_target.h"
-#include "render_texplate.h"
 
 #include "render_scene.h"
 #include "log.h"
 
 static const std::array<float, 4> CLEAR_COLOR{0.02f, 0.02f, 0.02f, 1.0f};
 
-static const int SETTINGS_GUI_WIDTH = GuiPanelState::PIXEL_WIDTH;
-static const int SETTINGS_GUI_HEIGHT = GuiPanelState::PIXEL_HEIGHT;
 
 
 static GLuint cubeVertexBuffer{0}, cubeIndexBuffer{0}, vertexArrayObject{0},
@@ -32,7 +29,6 @@ static GLuint cubeVertexBuffer{0}, cubeIndexBuffer{0}, vertexArrayObject{0},
 static shader_obj_t image_shader_object_2d;
 static shader_obj_t gui_shader_object;
 
-static render_target_t settings_gui_render_target;
 
 static const char *ImageVertexShaderGlsl = R"_(#version 320 es
 
@@ -132,9 +128,6 @@ void init_scene(const int textureWidth, const int textureHeight, bool reinit) {
     generate_shader(&gui_shader_object, GuiVertexShaderGlsl, GuiFragmentShaderGlsl);
     init_image_plane(textureWidth, textureHeight);
     init_imgui();
-    init_texplate();
-
-    create_render_target(&settings_gui_render_target, SETTINGS_GUI_WIDTH, SETTINGS_GUI_HEIGHT);
 }
 
 void init_image_plane(const int textureWidth, const int textureHeight) {
@@ -178,8 +171,7 @@ static void draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<Ap
 void render_scene(const XrCompositionLayerProjectionView &layerView,
                   render_target_t &rtarget, const Quad &quad,
                   const std::shared_ptr<AppState> &appState,
-                  const CameraFrame *cameraFrame, bool drawSettingsGui,
-                  const std::vector<GuiSetting> &settings) {
+                  const CameraFrame *cameraFrame) {
 
     glBindFramebuffer(GL_FRAMEBUFFER, rtarget.fbo_id);
     glViewport(
@@ -213,7 +205,6 @@ void render_scene(const XrCompositionLayerProjectionView &layerView,
     XrMatrix4x4f_Multiply(&vp, &proj, &view);
 
     draw_image_plane(vp, quad, cameraFrame);
-    draw_imgui(vp, appState, drawSettingsGui, settings);
     draw_controller_ray(vp, appState);
 
     glUseProgram(0);
@@ -326,43 +317,20 @@ draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &app
     glDisableVertexAttribArray(gui_shader_object.loc_position);
 }
 
-int
-draw_imgui(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState,
-           bool drawSettingsGui, const std::vector<GuiSetting> &settings) {
-
-    /* save current FBO */
-    render_target_t rtarget0{};
-    get_render_target(&rtarget0);
-
-    /* render to settings UIPlane-FBO */
-    if (drawSettingsGui) {
-        set_render_target(&settings_gui_render_target);
-        glClearColor(1.0f, 0.0f, 1.0f, 0.8f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        {
-            invoke_imgui_settings(SETTINGS_GUI_WIDTH, SETTINGS_GUI_HEIGHT, appState, settings);
-        }
-
-        /* restore FBO */
-        set_render_target(&rtarget0);
-
-        glEnable(GL_DEPTH_TEST);
-
-        {
-            XrMatrix4x4f matT;
-            float win_h = appState->guiPanel.height;
-            float win_w = appState->guiPanel.getWorldWidth();
-            XrVector3f translation = appState->guiPanel.position;
-            XrQuaternionf rotation{0.0f, 0.0f, 0.0f, 1.0f};
-            XrVector3f scale{win_w, win_h, 1.0f};
-            XrMatrix4x4f_CreateTranslationRotationScale(&matT, &translation, &rotation, &scale);
-
-            XrMatrix4x4f matPVM;
-            XrMatrix4x4f_Multiply(&matPVM, &vp, &matT);
-            draw_tex_plate(settings_gui_render_target.texc_id, matPVM);
-        }
-    }
-
-    return 0;
+void draw_settings_panel(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState,
+                         const std::vector<GuiSetting> &settings) {
+    glBindFramebuffer(GL_FRAMEBUFFER, target.fbo_id);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.texc_id, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+    glViewport(0, 0, target.width, target.height);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);   // transparent outside the panel's rounded window
+    glClear(GL_COLOR_BUFFER_BIT);
+    // The panel's colours are sRGB values and ImGui blends them as such: store them unconverted in the sRGB
+    // swapchain, which the compositor decodes (EXT_sRGB_write_control)
+    if (srgbTarget) glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+    const GuiPanelGeometry g = appState->guiPanel.geometry();
+    invoke_imgui_settings(g.width, g.height, g.renderScale, appState, settings);
+    if (srgbTarget) glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

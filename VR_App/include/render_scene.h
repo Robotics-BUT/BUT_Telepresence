@@ -34,12 +34,11 @@ void init_image_plane(int textureWidth, int textureHeight);
  */
 void render_scene(const XrCompositionLayerProjectionView &layerView, render_target_t &rtarget,
                   const Quad &quad, const std::shared_ptr<AppState> &appState,
-                  const CameraFrame *image, bool drawSettingsGui,
-                  const std::vector<GuiSetting> &settings);
+                  const CameraFrame *image);
 
 /** Render a camera frame onto the image quad (GL texture or CPU upload). */
 int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame *image);
 
-/** Render the ImGui settings panel into an off-screen FBO and draw it in VR. */
-int draw_imgui(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &appState,
-               bool drawSettingsGui, const std::vector<GuiSetting> &settings);
+/** Draw the settings panel into a swapchain image of its quad layer (srgbTarget: an sRGB swapchain). */
+void draw_settings_panel(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState,
+                         const std::vector<GuiSetting> &settings);

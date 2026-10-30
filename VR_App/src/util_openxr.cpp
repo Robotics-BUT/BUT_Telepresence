@@ -9,6 +9,7 @@
  */
 #include <GLES3/gl32.h>
 #include <time.h>
+#include <algorithm>
 #include "pch.h"
 #include "util_egl.h"
 #include "check.h"
@@ -60,6 +61,7 @@ int openxr_init_loader(android_app *app) {
 }
 
 static XrInstance s_instance = XR_NULL_HANDLE;
+static bool s_layer_settings = false;
 
 void openxr_create_instance(android_app *app, XrInstance *instance) {
     openxr_log_layers_and_extensions();
@@ -67,10 +69,24 @@ void openxr_create_instance(android_app *app, XrInstance *instance) {
     CHECK(*instance == XR_NULL_HANDLE)
 
     // Transform platform and graphics extension std::strings to C strings.
-    const std::vector<const char *> extensions = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
-                                                  XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
-                                                  XR_EXT_USER_PRESENCE_EXTENSION_NAME,
-                                                  XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME};
+    std::vector<const char *> extensions = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
+                                            XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
+                                            XR_EXT_USER_PRESENCE_EXTENSION_NAME,
+                                            XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME};
+    // Optional: better filtering of the settings panel's quad layer by the compositor
+    {
+        uint32_t n = 0;
+        xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr);
+        std::vector<XrExtensionProperties> props(n, {XR_TYPE_EXTENSION_PROPERTIES});
+        xrEnumerateInstanceExtensionProperties(nullptr, n, &n, props.data());
+        for (const auto &p: props) {
+            if (strcmp(p.extensionName, XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME) == 0) {
+                extensions.push_back(XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME);
+                s_layer_settings = true;
+            }
+        }
+        LOG_INFO("XR_FB_composition_layer_settings: %s", s_layer_settings ? "enabled" : "not available");
+    }
 
     XrInstanceCreateInfoAndroidKHR instance_create_info = {
             XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
@@ -506,6 +522,35 @@ int openxr_release_viewsurface(viewsurface_t &viewSurface) {
 
     return 0;
 }
+
+viewsurface_t openxr_create_panel_swapchain(XrSession *session, uint32_t width, uint32_t height) {
+    uint32_t count = 0;
+    CHECK_XRCMD(xrEnumerateSwapchainFormats(*session, 0, &count, nullptr))
+    std::vector<int64_t> formats(count);
+    CHECK_XRCMD(xrEnumerateSwapchainFormats(*session, count, &count, formats.data()))
+    const bool srgb = std::find(formats.begin(), formats.end(), (int64_t) GL_SRGB8_ALPHA8) != formats.end();
+
+    XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    info.arraySize = 1;
+    info.format = srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+    info.width = width;
+    info.height = height;
+    info.mipCount = 1;
+    info.faceCount = 1;
+    info.sampleCount = 1;
+    info.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+
+    viewsurface_t surface{};
+    surface.width = width;
+    surface.height = height;
+    surface.format = info.format;
+    CHECK_XRCMD(xrCreateSwapchain(*session, &info, &surface.swapchain))
+    openxr_allocate_swapchain_rendertargets(surface);
+    LOG_INFO("Panel swapchain %ux%u, %s", width, height, srgb ? "sRGB" : "linear RGBA8");
+    return surface;
+}
+
+bool openxr_has_layer_settings() { return s_layer_settings; }
 
 int openxr_acquire_swapchain_img(XrSwapchain swapchain) {
     struct timespec ts0{}, ts1{};
