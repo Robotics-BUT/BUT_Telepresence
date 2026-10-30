@@ -16,6 +16,7 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <poll.h>
 #include <sys/socket.h>
 #include "pch.h"
 #include "log.h"
@@ -205,8 +206,6 @@ std::optional<Sample> NtpTimer::GetOneNtpSample(const udp::endpoint &server,
     try {
         udp::socket socket(io);
         socket.open(udp::v4());
-        struct timeval tv{}; tv.tv_sec = 1; tv.tv_usec = 0;
-        setsockopt(socket.native_handle(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         std::array<uint8_t, 48> request{};
         request[0] = 0b11100011;  // LI=3, VN=4, Mode=3 (client)
@@ -222,6 +221,10 @@ std::optional<Sample> NtpTimer::GetOneNtpSample(const udp::endpoint &server,
         std::array<uint8_t, 48> response{};
         udp::endpoint senderEndpoint;
         boost::system::error_code recv_ec;
+        // Wait at most 1 s for the reply: Asio's blocking receive ignores SO_RCVTIMEO and would wait forever for a
+        // lost reply, stopping every later sync cycle
+        pollfd pfd{socket.native_handle(), POLLIN, 0};
+        if (::poll(&pfd, 1, 1000) <= 0) { outcome = SampleOutcome::Failed; return std::nullopt; }
         size_t len = socket.receive_from(boost::asio::buffer(response), senderEndpoint, 0, recv_ec);
         uint64_t T4 = GetCurrentTimeUsNonAdjusted();
 
