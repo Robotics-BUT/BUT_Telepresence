@@ -594,8 +594,13 @@ void TelepresenceProgram::PollPoses(XrTime predictedDisplayTime) {
         loc.next = &vel;
 
         CHECK_XRCMD(xrLocateSpace(input_.controllerSpace[i], app_reference_space_, predictedDisplayTime, &loc))
+        // When the cameras lose the controller (bright light, out of view) the runtime still reports its orientation
+        // from the IMU: keep aiming with it from the last known position rather than freezing the ray
+        if ((loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+            userState_.controllerPose[i].orientation = loc.pose.orientation;
+        }
         if ((loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0) {
-            userState_.controllerPose[i] = loc.pose;
+            userState_.controllerPose[i].position = loc.pose.position;
         }
     }
 }
