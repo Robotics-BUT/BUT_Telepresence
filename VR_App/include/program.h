@@ -79,6 +79,8 @@ private:
     void HandleControllers();
     void PlacePanel();
     bool RenderPanelLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings);
+    void RenderStatusLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings);
+    void UpdateStatusBar();
     void SendSystemBroadcast(const char *action);
     void FacePanelToHead();
 
@@ -92,6 +94,10 @@ private:
 
     std::vector<viewsurface_t> viewsurfaces_;
     viewsurface_t panelSurfaces_[2]{};   // the settings panel's quad layer, one per GuiPanelLayout
+    viewsurface_t statusSurface_{};      // the status bar's quad layer
+    double statusBarUpdatedS_ = 0.0;     // UpdateStatusBar: last refresh, and the loss counter a second ago
+    double lossCountedS_ = 0.0;
+    uint32_t lossCount_ = 0;
 
     std::vector<XrSpace> reference_spaces_;
     XrSpace app_reference_space_;

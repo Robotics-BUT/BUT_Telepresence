@@ -42,3 +42,6 @@ int draw_image_plane(const XrMatrix4x4f &vp, const Quad &quad, const CameraFrame
 /** Draw the settings panel into a swapchain image of its quad layer (srgbTarget: an sRGB swapchain). */
 void draw_settings_panel(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState,
                          const std::vector<GuiSetting> &settings);
+
+/** Draw the status bar into a swapchain image of its quad layer. */
+void draw_status_bar(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState);

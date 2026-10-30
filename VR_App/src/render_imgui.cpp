@@ -11,6 +11,9 @@
  * are queued in GUIControl and run by HandleControllers on the next frame, outside the drawing. All sizes are in
  * panel units (GuiPanelGeometry); the target holds renderScale pixels per unit. A wide panel (the Below layout) puts
  * the header on one line and the rows in two columns, with the latency bars beside the System rows.
+ *
+ * The status bar over the video (invoke_imgui_status_bar) is drawn with an ImGui context of its own, so drawing it
+ * between two panel frames cannot end a press on the panel.
  */
 #include <cfloat>
 #include <cmath>
@@ -44,6 +47,16 @@ constexpr uint32_t kText = 0xECEFF3, kMuted = 0x8D97A4, kAccent = 0x3D8BFF, kAcc
 constexpr uint32_t kGood = 0x36C67C, kWarn = 0xF2B53A, kBad = 0xFF5F5F;
 
 ImFont *gRegular = nullptr, *gSemibold = nullptr;
+
+// An ImGui context with its own fonts and renderer backend
+struct Ui { ImGuiContext *ctx = nullptr; ImFont *regular = nullptr, *semibold = nullptr; };
+Ui gPanelUi, gStatusUi;
+
+void useUi(const Ui &ui) {
+    ImGui::SetCurrentContext(ui.ctx);
+    gRegular = ui.regular;
+    gSemibold = ui.semibold;
+}
 
 ImVec4 rgba(uint32_t rgb, float a = 1.0f) {
     return ImVec4(((rgb >> 16) & 255) / 255.0f, ((rgb >> 8) & 255) / 255.0f, (rgb & 255) / 255.0f, a);
@@ -417,21 +430,74 @@ void render_settings_gui(const std::shared_ptr<AppState> &appState, const std::v
     ImGui::End();
 }
 
-}  // namespace
+// --- the status bar over the video
 
-int
-init_imgui() {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+struct BarItem { uint32_t dot; std::string label; bool strong; };
+
+void render_status_bar(const AppState &app) {
+    const StatusBarState &bar = app.statusBar;
+    ImGuiIO &io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(W, H), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+    ImGui::Begin("Status", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs);
+
+    // Always: the latency and the video; the rest only while it needs the operator's attention
+    std::vector<BarItem> items;
+    items.push_back(bar.video ? BarItem{kGood, fmt::format("{:.0f} fps", bar.fps), false}
+                              : BarItem{kBad, "No video", true});
+    if (bar.video && bar.lossPerS >= 0.5) items.push_back({kWarn, fmt::format("Loss {:.0f}/s", bar.lossPerS), false});
+    if (app.ntpSyncStatus != "Synced") items.push_back({app.ntpSyncStatus == "Not Synced" ? kWarn : kBad, "Clock " + app.ntpSyncStatus, false});
+    if (app.robotControlEnabled) items.push_back({kAccent, "Driving", false});
+    if (app.audioMicEnable && !app.micMuted && !app.micPushToTalk) items.push_back({kWarn, "Mic on", false});
+    const float hz = openxr_current_refresh_rate(), req = openxr_requested_refresh_rate();
+    if (hz > 0 && hz + 0.5f < req) items.push_back({kWarn, fmt::format("{:.0f} Hz", hz), false});
+
+    // Measure: the latency figure, then each item as dot + label
+    const float pad = 26, gap = 30, dotR = 7, fig = kBody + 6;
+    const std::string figure = bar.video && bar.latencyMs > 0 ? fmt::format("{:.0f}", bar.latencyMs) : "–";
+    const float figW = textSize(gSemibold, fig, figure).x, msW = textSize(gRegular, kSmall, "ms").x;
+    float total = pad + figW + 6 + msW;
+    for (auto &it : items) total += gap + 2 * dotR + 10 + textSize(it.strong ? gSemibold : gRegular, kBody - 4, it.label).x;
+    total += pad;
+
+    const float h = 62, x0 = std::floor((W - total) * 0.5f), y0 = std::floor((H - h) * 0.5f), cy = y0 + h * 0.5f;
+    dl()->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + total, y0 + h), col(kBg, 0.82f), h * 0.5f);
+    float x = x0 + pad;
+    const ImVec2 fs = textSize(gSemibold, fig, figure);
+    text(gSemibold, fig, ImVec2(x, std::floor(cy - fs.y * 0.5f)), kText, figure);
+    x += figW + 6;
+    text(gRegular, kSmall, ImVec2(x, std::floor(cy - fs.y * 0.5f) + fs.y - textSize(gRegular, kSmall, "ms").y - 3), kMuted, "ms");
+    x += msW;
+    for (auto &it : items) {
+        x += gap;
+        dl()->AddCircleFilled(ImVec2(x + dotR, cy), dotR, col(it.dot), 20);
+        x += 2 * dotR + 10;
+        ImFont *f = it.strong ? gSemibold : gRegular;
+        const ImVec2 ts = textSize(f, kBody - 4, it.label);
+        text(f, kBody - 4, ImVec2(x, std::floor(cy - ts.y * 0.5f)), it.strong ? kText : kText, it.label, it.strong ? 1.0f : 0.92f);
+        x += ts.x;
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+}
+
+// A context with the panel's fonts and style, and a renderer backend of its own
+Ui createUi() {
+    Ui ui;
+    ui.ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(ui.ctx);
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
 
     ImFontConfig cfg;
     cfg.OversampleH = 2;
-    gRegular = io.Fonts->AddFontFromMemoryCompressedBase85TTF(open_sans_regular_compressed_data_base85, kBody, &cfg);
-    gSemibold = io.Fonts->AddFontFromMemoryCompressedBase85TTF(open_sans_semibold_compressed_data_base85, kBody, &cfg);
-    io.FontDefault = gRegular;
+    ui.regular = io.Fonts->AddFontFromMemoryCompressedBase85TTF(open_sans_regular_compressed_data_base85, kBody, &cfg);
+    ui.semibold = io.Fonts->AddFontFromMemoryCompressedBase85TTF(open_sans_semibold_compressed_data_base85, kBody, &cfg);
+    io.FontDefault = ui.regular;
 
     ImGuiStyle &style = ImGui::GetStyle();
     ImGui::StyleColorsDark(&style);
@@ -448,12 +514,41 @@ init_imgui() {
     style.Colors[ImGuiCol_Border] = rgba(kLine);
 
     ImGui_ImplOpenGL3_Init(NULL);
+    return ui;
+}
+
+}  // namespace
+
+int
+init_imgui() {
+    IMGUI_CHECKVERSION();
+    gStatusUi = createUi();
+    gPanelUi = createUi();
+    useUi(gPanelUi);
+    return 0;
+}
+
+int
+invoke_imgui_status_bar(int win_w, int win_h, float scale, const std::shared_ptr<AppState> &appState) {
+    useUi(gStatusUi);
+    ImGuiIO &io = ImGui::GetIO();
+    io.DisplaySize = ImVec2((float) win_w, (float) win_h);
+    io.DisplayFramebufferScale = {scale, scale};
+    io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+    io.MouseDown[0] = false;
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui::NewFrame();
+    render_status_bar(*appState);
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    useUi(gPanelUi);
     return 0;
 }
 
 int
 invoke_imgui_settings(int win_w, int win_h, float scale, const std::shared_ptr<AppState> &appState,
                       const std::vector<GuiSetting> &settings) {
+    useUi(gPanelUi);
     ImGuiIO &io = ImGui::GetIO();
     io.DisplaySize = ImVec2((float) win_w, (float) win_h);
     io.DisplayFramebufferScale = {scale, scale};   // geometry and font glyphs are rasterised at this density

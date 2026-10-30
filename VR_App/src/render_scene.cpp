@@ -322,20 +322,35 @@ draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &app
     glDisableVertexAttribArray(gui_shader_object.loc_position);
 }
 
-void draw_settings_panel(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState,
-                         const std::vector<GuiSetting> &settings) {
+// Bind a quad layer's swapchain image and clear it transparent. ImGui's colours are sRGB values and it blends them as
+// such: they are stored unconverted in the sRGB swapchain, which the compositor decodes (EXT_sRGB_write_control)
+static void begin_layer_target(const render_target_t &target, bool srgbTarget) {
     glBindFramebuffer(GL_FRAMEBUFFER, target.fbo_id);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.texc_id, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
     glViewport(0, 0, target.width, target.height);
     glDisable(GL_DEPTH_TEST);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);   // transparent outside the panel's rounded window
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    // The panel's colours are sRGB values and ImGui blends them as such: store them unconverted in the sRGB
-    // swapchain, which the compositor decodes (EXT_sRGB_write_control)
     if (srgbTarget) glDisable(GL_FRAMEBUFFER_SRGB_EXT);
-    const GuiPanelGeometry g = appState->guiPanel.geometry();
-    invoke_imgui_settings(g.width, g.height, g.renderScale, appState, settings);
+}
+
+static void end_layer_target(bool srgbTarget) {
     if (srgbTarget) glEnable(GL_FRAMEBUFFER_SRGB_EXT);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void draw_status_bar(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState) {
+    begin_layer_target(target, srgbTarget);
+    const GuiPanelGeometry g = StatusBarState::GEOMETRY;
+    invoke_imgui_status_bar(g.width, g.height, g.renderScale, appState);
+    end_layer_target(srgbTarget);
+}
+
+void draw_settings_panel(const render_target_t &target, bool srgbTarget, const std::shared_ptr<AppState> &appState,
+                         const std::vector<GuiSetting> &settings) {
+    begin_layer_target(target, srgbTarget);   // transparent outside the panel's rounded window
+    const GuiPanelGeometry g = appState->guiPanel.geometry();
+    invoke_imgui_settings(g.width, g.height, g.renderScale, appState, settings);
+    end_layer_target(srgbTarget);
 }

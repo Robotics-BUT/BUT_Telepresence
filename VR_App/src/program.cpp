@@ -71,6 +71,11 @@ TelepresenceProgram::TelepresenceProgram(struct android_app *app) : app_(app) {
                 &openxr_session_, (uint32_t) std::lround(g.width * g.renderScale),
                 (uint32_t) std::lround(g.height * g.renderScale));
     }
+    {
+        const GuiPanelGeometry g = StatusBarState::GEOMETRY;
+        statusSurface_ = openxr_create_panel_swapchain(&openxr_session_, (uint32_t) std::lround(g.width * g.renderScale),
+                                                       (uint32_t) std::lround(g.height * g.renderScale));
+    }
 
     ntpTimer_ = std::make_unique<NtpTimer>(IpToString(appState_->streamingConfig.jetson_ip), "195.113.144.201");
     ntpTimer_->StartAutoSync();
@@ -180,6 +185,12 @@ void TelepresenceProgram::RenderFrame() {
     if (RenderLayer(display_time, projectionLayerViews, layer)) {
         layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&layer));
     }
+    // The status bar over the video, always shown
+    UpdateStatusBar();
+    XrCompositionLayerQuad statusLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerSettingsFB statusSettings{XR_TYPE_COMPOSITION_LAYER_SETTINGS_FB};
+    RenderStatusLayer(statusLayer, statusSettings);
+    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&statusLayer));
     // The settings panel as a quad layer over the scene: the compositor samples it once, straight to the display
     XrCompositionLayerQuad panelLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerSettingsFB panelSettings{XR_TYPE_COMPOSITION_LAYER_SETTINGS_FB};
@@ -220,6 +231,65 @@ bool TelepresenceProgram::RenderPanelLayer(XrCompositionLayerQuad &layer, XrComp
         layer.next = &settings;
     }
     return true;
+}
+
+/**
+ * Draw the status bar into its swapchain and describe its quad layer: head-locked, centred ELEVATION_DEG above the
+ * eyes at the video's distance, tilted to face them.
+ */
+void TelepresenceProgram::RenderStatusLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings) {
+    render_target_t target{};
+    XrSwapchainSubImage subImage{};
+    openxr_acquire_viewsurface(statusSurface_, target, subImage);
+    draw_status_bar(target, statusSurface_.format == GL_SRGB8_ALPHA8, appState_);
+    openxr_release_viewsurface(statusSurface_);
+
+    constexpr float UP = StatusBarState::ELEVATION_DEG * (float) M_PI / 180.0f;
+    constexpr float TALL = StatusBarState::HEIGHT_DEG * (float) M_PI / 180.0f;
+    const GuiPanelGeometry g = StatusBarState::GEOMETRY;
+    const XrVector3f &head = userState_.headInApp.position;
+    const float d = StatusBarState::DISTANCE_M, height = 2.0f * d * std::tan(TALL * 0.5f);
+    layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    layer.space = app_reference_space_;
+    layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    layer.subImage = subImage;
+    layer.pose.orientation = {std::sin(UP * 0.5f), 0.0f, 0.0f, std::cos(UP * 0.5f)};   // tilted down to the eyes
+    layer.pose.position = {head.x, head.y + d * std::sin(UP), head.z - d * std::cos(UP)};
+    layer.size = {height * (float) g.width / (float) g.height, height};
+    if (openxr_has_layer_settings()) {
+        settings.layerFlags = XR_COMPOSITION_LAYER_SETTINGS_QUALITY_SUPER_SAMPLING_BIT_FB;
+        layer.next = &settings;
+    }
+}
+
+/**
+ * Refresh what the status bar shows: the received frame rate and whether frames still arrive, the latency figure
+ * and packet loss over the last second.
+ */
+void TelepresenceProgram::UpdateStatusBar() {
+    auto &bar = appState_->statusBar;
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - statusBarUpdatedS_ < 0.25) return;
+    statusBarUpdatedS_ = now;
+
+    CameraStats *left = appState_->cameraStreamingStates.first.stats;
+    CameraStats *right = appState_->cameraStreamingStates.second.stats;
+    if (!left) {
+        bar.video = false;
+        return;
+    }
+    const CameraWindowSummary w = left->windowSummary();
+    bar.video = w.frames > 1 && (double) ntpTimer_->GetCurrentTimeUs() - w.newestUs < 1e6;
+    bar.fps = w.fps;
+    const CameraStatsSnapshot s = left->averagedSnapshot();
+    bar.latencyMs = (s.camera + s.vidConv + s.enc + s.rtpPay + s.udpStream + s.jbHold + s.rtpDepay + s.dec + s.appsink +
+                     s.presentation) / 1000.0;
+    const uint32_t lost = left->jbNumLost.load() + (right ? right->jbNumLost.load() : 0);
+    if (now - lossCountedS_ >= 1.0) {
+        bar.lossPerS = lost >= lossCount_ && lossCountedS_ > 0 ? (lost - lossCount_) / (now - lossCountedS_) : 0.0;
+        lossCount_ = lost;   // the counters restart on a rebuild
+        lossCountedS_ = now;
+    }
 }
 
 /**

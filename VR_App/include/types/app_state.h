@@ -213,6 +213,21 @@ struct ConnectionState {
 // =============================================================================
 
 /**
+ * What the status bar above the video shows, refreshed a few times a second (TelepresenceProgram::UpdateStatusBar).
+ * The bar is a head-locked quad layer centred ELEVATION_DEG above the eyes, just over the top edge of the Full FOV
+ * video (26.6 deg at 16:9), at the video's distance so both are seen at the same vergence.
+ */
+struct StatusBarState {
+    static constexpr GuiPanelGeometry GEOMETRY{1600, 90, 1.25f};   // the pill is drawn centred, sized to its items
+    static constexpr float DISTANCE_M = 2.0f, ELEVATION_DEG = 29.0f, HEIGHT_DEG = 3.0f;
+
+    bool video{false};          /* a frame arrived within the last second */
+    double fps{0.0};            /* frames received per second (left stream) */
+    double latencyMs{0.0};      /* the per-stage latency sum (the panel header's figure) */
+    double lossPerS{0.0};       /* RTP packets lost per second, both streams */
+};
+
+/**
  * Main application state container.
  * Shared across the application via std::shared_ptr for configuration and
  * runtime state. All modules (rendering, networking, GUI) read from and
@@ -248,6 +263,7 @@ struct AppState {
     /* GUI state */
     GUIControl guiControl{};
     GuiPanelState guiPanel{};
+    StatusBarState statusBar{};
 
     /* Head tracking settings - sent to the robot servo controller */
     uint32_t headMovementMaxSpeed{3000000};       /* camera-head speed, TGZ profile-generator inc/s (1e6 = 0.95 motor rev/s) */

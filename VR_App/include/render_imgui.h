@@ -20,3 +20,6 @@ int init_imgui();
 /** Draw the settings panel into the bound render target: win_w x win_h panel units, scale render-target pixels each. */
 int invoke_imgui_settings(int win_w, int win_h, float scale, const std::shared_ptr<AppState>& appState,
                           const std::vector<GuiSetting>& settings);
+
+/** Draw the status bar (AppState::statusBar) into the bound render target, sized as above. */
+int invoke_imgui_status_bar(int win_w, int win_h, float scale, const std::shared_ptr<AppState>& appState);
