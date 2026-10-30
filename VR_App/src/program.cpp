@@ -164,6 +164,28 @@ void TelepresenceProgram::UpdateFrame() {
         }
     }
 
+    // Test switch for codec changes: `adb shell setprop debug.but.codec h264` (or h265, jpeg; checked every 90
+    // frames) applies that codec as the panel's Apply does, once per change of the property
+    {
+        static int codecCheck = 0;
+        static std::string lastCodecProp;
+        if ((codecCheck++ % 90) == 0) {
+            char v[PROP_VALUE_MAX] = {0};
+            __system_property_get("debug.but.codec", v);
+            const std::string prop = v;
+            if (codecCheck > 1 && prop != lastCodecProp) {
+                const Codec codec = prop == "h264" ? Codec::H264 : prop == "h265" ? Codec::H265 : Codec::JPEG;
+                if (prop == "h264" || prop == "h265" || prop == "jpeg") {
+                    LOG_INFO("debug.but.codec: applying %s", prop.c_str());
+                    StreamingConfig cfg = appState_->streamingConfig;
+                    cfg.codec = codec;
+                    if (ApplyStreamingConfig(cfg)) appState_->streamingConfig = cfg;
+                }
+            }
+            lastCodecProp = prop;
+        }
+    }
+
     RenderFrame();
 }
 
