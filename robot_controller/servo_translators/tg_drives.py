@@ -22,7 +22,9 @@ signed) and angle (low 32 bits), as on the write side. Motor 1 = register group 
 (0x1902/0x1A02) the position generator's current setpoint.
 
 The head pose is smoothed with a One Euro filter (one_euro.py) in radians, with time steps taken from the
-headset timestamps, before conversion to motor units.
+headset timestamps, before conversion to motor units. The conversion is 1:1: both drives turn the camera directly and a
+position carries 2^32 units per revolution in its angle word, so a head angle commands the same camera angle about the
+centre of the axis' travel limits. The operator's sensitivity is applied in the headset, to the angles it sends.
 
 Outgoing format (GT protocol):
     Bytes 0-1:  0x47, 0x54 ("GT" magic bytes)
@@ -87,11 +89,12 @@ class TGDrivesTranslator(ServoTranslator):
     # Head-pose filter time-step bounds (seconds)
     FILTER_RESET_S = 0.5     # longer gap between samples: restart the filters at the new pose
     FILTER_MIN_DT_S = 0.001  # guard against duplicate or near-duplicate timestamps
+    UNITS_PER_RAD = 2 ** 32 / (2 * math.pi)   # position units per radian of camera rotation (direct drive)
 
     def __init__(self, servo_ip: str, servo_port: int, timeout: float,
                  azimuth_min: int = -180000, azimuth_max: int = 180000,
                  elevation_min: int = -90000, elevation_max: int = 90000,
-                 speed_max: int = 1000000, speed_multiplier: float = 0.0,
+                 speed_max: int = 1000000,
                  pg_acc: Optional[int] = None, pg_dec: Optional[int] = None, pg_type: Optional[int] = None,
                  filter_min_cutoff: float = 1.0, filter_beta: float = 20.0,
                  filter_d_cutoff: float = 5.0, swap_axes: bool = False,
@@ -113,7 +116,6 @@ class TGDrivesTranslator(ServoTranslator):
                 None = leave the drive's stored values
             pg_type: profile type written at start-up (0 harmonic non-symmetric, 1 harmonic symmetric,
                 2 full harmonic, 3 trapezoidal); None = leave the drive's stored value
-            speed_multiplier: Speed multiplier for accelerated movement
             filter_min_cutoff: One Euro cutoff at rest, Hz (lower = smoother when the head is still)
             filter_beta: One Euro cutoff increase per rad/s of head speed (higher = less lag when turning)
             filter_d_cutoff: One Euro cutoff of the speed estimate, Hz
@@ -130,7 +132,6 @@ class TGDrivesTranslator(ServoTranslator):
         self.elevation_min = elevation_min
         self.elevation_max = elevation_max
         self.speed_max = speed_max
-        self.speed_multiplier = speed_multiplier
         self.pg_params = {item: value for item, value in ((self.PG_ACC, pg_acc), (self.PG_DEC, pg_dec),
                                                          (self.PG_TYPE, pg_type)) if value is not None}
         self.swap_axes = swap_axes
@@ -331,20 +332,12 @@ class TGDrivesTranslator(ServoTranslator):
         Returns:
             Tuple of (azimuth_motor, elevation_motor) in motor units
         """
-        # Calculate range centers and max sides
-        azimuth_max_side = (self.azimuth_max - self.azimuth_min) // 2
-        azimuth_center = self.azimuth_max - azimuth_max_side
-
-        elevation_max_side = (self.elevation_max - self.elevation_min) // 2
-        elevation_center = self.elevation_max - elevation_max_side
-
-        # Convert radians to motor units
-        azimuth_motor = int(((azimuth_rad * 2.0) / math.pi) * azimuth_max_side + azimuth_center)
-        elevation_motor = int(((-elevation_rad * 2.0) / math.pi) * elevation_max_side + elevation_center)
-
-        # Apply speed multiplier
-        azimuth_motor += int((azimuth_motor - azimuth_center) * self.speed_multiplier)
-        elevation_motor += int((elevation_motor - elevation_center) * self.speed_multiplier)
+        # Head angle 0 points the camera at the centre of each axis' travel limits; one radian of head turn is one
+        # radian of camera turn
+        azimuth_center = self.azimuth_max - (self.azimuth_max - self.azimuth_min) // 2
+        elevation_center = self.elevation_max - (self.elevation_max - self.elevation_min) // 2
+        azimuth_motor = int(azimuth_center + azimuth_rad * self.UNITS_PER_RAD)
+        elevation_motor = int(elevation_center - elevation_rad * self.UNITS_PER_RAD)
 
         return azimuth_motor, elevation_motor
 

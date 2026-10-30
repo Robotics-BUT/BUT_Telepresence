@@ -168,7 +168,6 @@ class UDPRelayService:
                 elevation_min=self.config.tg_elevation_min,
                 elevation_max=self.config.tg_elevation_max,
                 speed_max=self.config.tg_speed_max,
-                speed_multiplier=self.config.tg_speed_multiplier,
                 pg_acc=self.config.tg_pg_acc,
                 pg_dec=self.config.tg_pg_dec,
                 pg_type=self.config.tg_pg_type,

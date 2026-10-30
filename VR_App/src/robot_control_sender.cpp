@@ -39,17 +39,22 @@ RobotControlSender::~RobotControlSender() {
 }
 
 void RobotControlSender::sendHeadPose(XrQuaternionf quatPose, XrQuaternionf quatPoseNow, uint64_t poseNowTimeUs,
-                                      float speed, uint32_t predictionMs,
+                                      float speed, uint32_t predictionMs, float sensitivity,
                                       BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
 
-    threadPool.detach_task([this, quatPose, quatPoseNow, poseNowTimeUs, speed, predictionMs]() {
+    threadPool.detach_task([this, quatPose, quatPoseNow, poseNowTimeUs, speed, predictionMs, sensitivity]() {
         // Convert quaternions to azimuth/elevation: the forecast commanded to the camera head, and the head
         // pose measured at the present instant
         auto azElev = quaternionToAzimuthElevation(quatPose);
         auto azElevNow = quaternionToAzimuthElevation(quatPoseNow);
+        // The operator's sensitivity: the camera head turns this many times the configured mapping's angle
+        azElev.azimuth *= sensitivity;
+        azElev.elevation *= sensitivity;
+        azElevNow.azimuth *= sensitivity;
+        azElevNow.elevation *= sensitivity;
 
         // Get current timestamp (NTP-corrected, robot-clock-aligned)
         uint64_t timestamp = ntpTimer_->GetCurrentTimeUs();

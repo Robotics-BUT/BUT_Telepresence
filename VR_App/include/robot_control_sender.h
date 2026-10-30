@@ -35,7 +35,9 @@
  *   (robot-clock-aligned) send time; prediction_ms is the forecast lead (M2M telemetry). azimuth_now/
  *   elevation_now are the head pose at the present instant and pose_now_time their sample time on the
  *   same clock (us): the reference for the head -> camera-head lag. prediction_ms = PREDICTION_NOW
- *   (0xFFFFFFFF) marks the measurement mode in which the command is the present-instant pose.
+ *   (0xFFFFFFFF) marks the measurement mode in which the command is the present-instant pose. Both poses are
+ *   multiplied by the operator's sensitivity before sending (1.0 = camera turns as far as the head), so the relay
+ *   compares like with like; the per-frame record (0x03) carries the head unscaled.
  *
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
@@ -78,7 +80,7 @@ public:
 
     /** Send head pose (quaternion is converted to azimuth/elevation internally). */
     void sendHeadPose(XrQuaternionf quatPose, XrQuaternionf quatPoseNow, uint64_t poseNowTimeUs, float speed,
-                      uint32_t predictionMs, BS::thread_pool<BS::tp::none> &threadPool);
+                      uint32_t predictionMs, float sensitivity, BS::thread_pool<BS::tp::none> &threadPool);
 
     /** Send robot mobile base velocity commands. */
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);

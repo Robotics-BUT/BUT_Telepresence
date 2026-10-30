@@ -735,7 +735,7 @@ void TelepresenceProgram::SendControllerDatagram() {
                                           userState_.hmdPoseNowTimeUs, appState_->headMovementMaxSpeed,
                                           leadNow_ ? RobotControlSender::PREDICTION_NOW
                                                    : (uint32_t) appState_->headMovementPredictionMs,
-                                          threadPool_);
+                                          appState_->headMovementSensitivity, threadPool_);
 
         // Send robot control when enabled
         if (appState_->robotControlEnabled && !renderGui_) {
@@ -1043,10 +1043,13 @@ void TelepresenceProgram::BuildSettings() {
             [this]() { if (appState_->headMovementMaxSpeed > 200000) appState_->headMovementMaxSpeed -= 100000; }
         },
         {
-            "Head movement speed multiplier", GuiSettingType::Text, "",
-            [this]() { return fmt::format("Head movement speed multiplier: {:.2}", appState_->headMovementSpeedMultiplier); },
-            [this]() { if (appState_->headMovementSpeedMultiplier < 2.0f) appState_->headMovementSpeedMultiplier += 0.1f; },
-            [this]() { if (appState_->headMovementSpeedMultiplier > 0.5f) appState_->headMovementSpeedMultiplier -= 0.1f; }
+            "Head movement sensitivity", GuiSettingType::Text, "",
+            [this]() { return fmt::format("Head movement sensitivity: {:.2f}x", appState_->headMovementSensitivity); },
+            // 0.25 to 5.00: steps of 0.05 up to 2.00, of 0.25 above it
+            [this]() { float &s = appState_->headMovementSensitivity;
+                       s = std::min(5.0f, s < 1.999f ? std::round(s * 20 + 1) / 20 : std::round(s * 4 + 1) / 4); },
+            [this]() { float &s = appState_->headMovementSensitivity;
+                       s = std::max(0.25f, s > 2.001f ? std::round(s * 4 - 1) / 4 : std::round(s * 20 - 1) / 20); }
         },
         {
             "Headset movement prediction", GuiSettingType::Text, "",

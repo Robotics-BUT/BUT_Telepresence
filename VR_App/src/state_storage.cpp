@@ -3,8 +3,8 @@
  *
  * Serializes AppState fields as string key-value pairs into Android
  * SharedPreferences ("AppStatePrefs"). All values are stored as strings
- * (integers converted via std::to_string). The headMovementSpeedMultiplier
- * is scaled by 10 before saving to work around integer-only formatting.
+ * (integers converted via std::to_string). Fractional settings are scaled to integers before saving
+ * (headMovementSensitivity x 100, stereoConvergence x 1000).
  * On load failure (missing keys or parse errors), returns a default AppState.
  */
 #include "state_storage.h"
@@ -54,7 +54,7 @@ void StateStorage::SaveAppState(const AppState &appState) {
         SaveKeyValuePair(editor, putString, "aspect_ratio_mode", static_cast<int>(appState.aspectRatioMode));
         SaveKeyValuePair(editor, putString, "head_movement_max_speed", appState.headMovementMaxSpeed);
         SaveKeyValuePair(editor, putString, "head_movement_prediction_ms", appState.headMovementPredictionMs);
-        SaveKeyValuePair(editor, putString, "head_movement_speed_multiplier", appState.headMovementSpeedMultiplier * 10); // To build around integer formatting
+        SaveKeyValuePair(editor, putString, "head_movement_sensitivity", static_cast<int>(std::lround(appState.headMovementSensitivity * 100)));
         SaveKeyValuePair(editor, putString, "robot_control_enabled", appState.robotControlEnabled);
         SaveKeyValuePair(editor, putString, "stereo_convergence", static_cast<int>(appState.stereoConvergence * 1000)); // scaled to survive integer formatting
 
@@ -123,7 +123,6 @@ void StateStorage::LoadAppState(AppState& appState) {
         appState.aspectRatioMode = static_cast<AspectRatioMode>(std::stoi(LoadValue(sharedPreferences, getString, "aspect_ratio_mode")));
         appState.headMovementMaxSpeed = std::stoi(LoadValue(sharedPreferences, getString, "head_movement_max_speed"));
         appState.headMovementPredictionMs = std::stoi(LoadValue(sharedPreferences, getString, "head_movement_prediction_ms"));
-        appState.headMovementSpeedMultiplier = std::stof(LoadValue(sharedPreferences, getString, "head_movement_speed_multiplier") ) / 10.0f; // To build around integer formatting
         appState.robotControlEnabled = std::stoi(LoadValue(sharedPreferences, getString, "robot_control_enabled"));
         appState.stereoConvergence = std::stof(LoadValue(sharedPreferences, getString, "stereo_convergence")) / 1000.0f;
 
@@ -136,6 +135,9 @@ void StateStorage::LoadAppState(AppState& appState) {
     } catch(const std::exception& e) {
         // Parse failure: leave appState as the caller's default-constructed state.
     }
+    try {   // added later than the keys above: read on its own so that, while missing, only it keeps its default
+        appState.headMovementSensitivity = std::stof(LoadValue(sharedPreferences, getString, "head_movement_sensitivity")) / 100.0f;
+    } catch(const std::exception& e) {}
 
     env_->DeleteLocalRef(sharedPreferences);
     env_->DeleteLocalRef(prefsClass);
