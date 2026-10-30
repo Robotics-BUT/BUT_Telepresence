@@ -220,14 +220,35 @@ bool TelepresenceProgram::RenderLayer(XrTime displayTime,
     timespec tsNow{};
     clock_gettime(CLOCK_MONOTONIC, &tsNow);
     const XrTime nowTime = (XrTime) tsNow.tv_sec * 1000000000LL + tsNow.tv_nsec;
+    const uint64_t nowNtpUs = ntpTimer_->GetCurrentTimeUs();
     {
         XrSpaceLocation nowLocation{XR_TYPE_SPACE_LOCATION};
-        const uint64_t nowNtpUs = ntpTimer_->GetCurrentTimeUs();
         if (XR_UNQUALIFIED_SUCCESS(xrLocateSpace(reference_spaces_[1], app_reference_space_, nowTime, &nowLocation)) &&
             (nowLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
             userState_.hmdPoseNow = nowLocation.pose;
             userState_.hmdPoseNowTimeUs = nowNtpUs;
         }
+    }
+
+    // The head at this frame's predicted display time, the pose the operator sees it from, with its angular velocity
+    // from the same query; the display time is carried over to the robot clock through the present instant. The head
+    // is the app's head-locked space located in the world (Local), so both are in the world frame, +Y up.
+    {
+        XrSpaceVelocity displayVelocity{XR_TYPE_SPACE_VELOCITY};
+        XrSpaceLocation displayLocation{XR_TYPE_SPACE_LOCATION, &displayVelocity};
+        uint8_t valid = 0;
+        if (XR_UNQUALIFIED_SUCCESS(xrLocateSpace(app_reference_space_, reference_spaces_[1], displayTime, &displayLocation))) {
+            if ((displayLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+                userState_.hmdPoseDisplay = displayLocation.pose;
+                valid |= 1;
+            }
+            if ((displayVelocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT) != 0) {
+                userState_.hmdAngularVelocityDisplay = displayVelocity.angularVelocity;
+                valid |= 2;
+            }
+        }
+        userState_.hmdDisplayValid = valid;
+        userState_.hmdDisplayTimeUs = (uint64_t) ((int64_t) nowNtpUs + (displayTime - nowTime) / 1000);
     }
 
     // Measurement mode for the Chapter 8 reference with no forward prediction: with
@@ -733,7 +754,9 @@ void TelepresenceProgram::SendControllerDatagram() {
             if (appState_->cameraStreamingStates.second.stats) {
                 rightSnap = appState_->cameraStreamingStates.second.stats->snapshot();
             }
-            robotControlSender_->sendDebugInfo(leftSnap, rightSnap, appState_->streamingConfig, threadPool_);
+            const RobotControlSender::HeadAtDisplay head{userState_.hmdDisplayTimeUs, userState_.hmdPoseDisplay.orientation,
+                                                         userState_.hmdAngularVelocityDisplay, userState_.hmdDisplayValid};
+            robotControlSender_->sendDebugInfo(leftSnap, rightSnap, appState_->streamingConfig, head, threadPool_);
         }
 
         // NTP quality / network telemetry, throttled to ~1 Hz (it only updates per

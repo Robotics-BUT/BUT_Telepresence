@@ -40,7 +40,7 @@
  * Message Type 0x02 - Robot Control (21 bytes):
  *   [0x02] [linear_x (float)] [linear_y (float)] [angular (float)] [timestamp (uint64)]
  *
- * Message Type 0x03 - Debug Info (166 bytes):
+ * Message Type 0x03 - Debug Info (195 bytes):
  *   [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (double)]
  *   [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)]
  *   [udpStream_us (uint64)] [jbHold_us (uint64)] [rtpDepay_us (uint64)] [dec_us (uint64)]
@@ -52,7 +52,13 @@
  *   --- per-eye network health (right = 0 in mono) ---
  *   [left_lost (uint32)] [left_rtx (uint32)] [left_jitter_us (uint32)] [left_bitrate_bps (uint32)]
  *   [right_lost (uint32)] [right_rtx (uint32)] [right_jitter_us (uint32)] [right_bitrate_bps (uint32)]
- *   The latency stages above are the left stream (per-eye-symmetric, representative).
+ *   --- head at the predicted display time of the last render ---
+ *   [display_time_us (uint64)] [head_azimuth (float)] [head_elevation (float)]
+ *   [head_wx (float)] [head_wy (float)] [head_wz (float)] [head_valid (uint8)]
+ *   The latency stages above are the left stream (per-eye-symmetric, representative). display_time_us is on the
+ *   NTP-corrected robot clock; azimuth/elevation (rad) are the head's yaw and pitch and w its angular velocity
+ *   (rad/s), both in the world (LOCAL space, +Y up); head_valid bit 0 = orientation valid, bit 1 = angular velocity
+ *   valid.
  *
  * This simple protocol allows the receiving server to implement its own
  * robot-specific control logic without coupling the VR headset to specific hardware.
@@ -77,10 +83,19 @@ public:
     /** Send robot mobile base velocity commands. */
     void sendRobotControl(float linearX, float linearY, float angular, BS::thread_pool<BS::tp::none> &threadPool);
 
-    /** Send pipeline latency + streaming config + per-eye stream-health telemetry.
+    /** The head at the predicted display time of the last render (UserState::hmdPoseDisplay and its companions). */
+    struct HeadAtDisplay {
+        uint64_t displayTimeUs;
+        XrQuaternionf orientation;
+        XrVector3f angularVelocity;
+        uint8_t valid;
+    };
+
+    /** Send pipeline latency + streaming config + per-eye stream-health telemetry + the head at display time.
      *  left/right are the two eyes' stats (right is default-zero in mono). */
     void sendDebugInfo(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
-                       const StreamingConfig &config, BS::thread_pool<BS::tp::none> &threadPool);
+                       const StreamingConfig &config, const HeadAtDisplay &head,
+                       BS::thread_pool<BS::tp::none> &threadPool);
 
     /** Send the robot->headset audio latency (source capture -> headset playout, µs)
      *  to the relay for InfluxDB/Grafana. 0x05: [0x05][latency_us (uint32)]. */
@@ -110,7 +125,7 @@ private:
                             float azimuthNow, float elevationNow, uint64_t poseNowTimeUs);
     void sendRobotControlPacket(float linearX, float linearY, float angular, uint64_t timestamp);
     void sendDebugInfoPacket(const CameraStatsSnapshot &left, const CameraStatsSnapshot &right,
-                             const StreamingConfig &config, uint64_t timestamp);
+                             const StreamingConfig &config, const HeadAtDisplay &head, uint64_t timestamp);
     void sendAudioMetricsPacket(uint32_t robotToHeadsetLatencyUs);
     void sendNtpMetricsPacket();
 

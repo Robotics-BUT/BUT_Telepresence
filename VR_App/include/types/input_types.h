@@ -38,6 +38,14 @@ struct UserState {
     XrPosef hmdPoseNow{};
     uint64_t hmdPoseNowTimeUs = 0;
 
+    // Head pose and angular velocity (world / LOCAL space, rad/s) at the predicted display time of the last render, and that
+    // display time on the NTP-corrected robot clock (us). Sent with every per-frame telemetry record, so the
+    // latency of a frame and the head motion while it is shown share one record.
+    XrPosef hmdPoseDisplay{};
+    XrVector3f hmdAngularVelocityDisplay{};
+    uint64_t hmdDisplayTimeUs = 0;
+    uint8_t hmdDisplayValid = 0;   // bit 0: orientation valid, bit 1: angular velocity valid
+
     // Controller poses (left/right)
     XrPosef controllerPose[Side::COUNT]{};
 

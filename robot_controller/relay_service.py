@@ -675,7 +675,7 @@ class UDPRelayService:
             data: Debug info data
             client_addr: Client address
 
-        Message format (166 bytes):
+        Message format (195 bytes):
             [0x03] [timestamp (uint64)] [frame_id (uint64)] [fps (double)]
             [camera_us (uint64)] [vidConv_us (uint64)] [enc_us (uint64)] [rtpPay_us (uint64)]
             [udpStream_us (uint64)] [jbHold_us (uint64)] [rtpDepay_us (uint64)] [dec_us (uint64)]
@@ -685,9 +685,15 @@ class UDPRelayService:
             [fps_config (uint16)] [bitrate_cfg (uint32)]
             [left_lost/rtx/jitter_us/bitrate_bps (4x uint32)]
             [right_lost/rtx/jitter_us/bitrate_bps (4x uint32)]
+            [display_time_us (uint64)] [head_azimuth (float)] [head_elevation (float)]
+            [head_wx (float)] [head_wy (float)] [head_wz (float)] [head_valid (uint8)]
+            The head at the predicted display time of the headset's last render: display time on the robot clock,
+            the head's yaw (azimuth) and pitch (elevation) in rad and its angular velocity in rad/s, both in the
+            world (the headset's LOCAL space, +Y up); head_valid bit 0 = orientation valid, bit 1 = angular velocity
+            valid.
         """
         try:
-            expected_length = 166
+            expected_length = 195
             if len(data) != expected_length:
                 self.logger.warning(f"Invalid debug info packet length: {len(data)} bytes, expected {expected_length}")
                 return
@@ -775,6 +781,10 @@ class UDPRelayService:
             right_bitrate_bps = struct.unpack('<I', data[offset:offset+4])[0]
             offset += 4
 
+            # Head at the predicted display time of the last render
+            display_time_us, head_az, head_el, head_wx, head_wy, head_wz, head_valid = struct.unpack_from('<QfffffB', data, offset)
+            offset += 29
+
             # Log the debug information
             self.logger.debug(
                 f"DEBUG INFO from {client_addr[0]}:{client_addr[1]} - "
@@ -831,8 +841,17 @@ class UDPRelayService:
                         .field("right_rtx", int(right_rtx))
                         .field("right_jitter_us", int(right_jitter_us))
                         .field("right_bitrate_bps", int(right_bitrate_bps))
+                        .field("display_time_us", int(display_time_us))
                         .time(timestamp_ns)
                     )
+                    if head_valid & 1:
+                        point = (point.field("head_az_deg", math.degrees(head_az))
+                                      .field("head_el_deg", math.degrees(head_el)))
+                    if head_valid & 2:
+                        point = (point.field("head_wx_dps", math.degrees(head_wx))
+                                      .field("head_wy_dps", math.degrees(head_wy))
+                                      .field("head_wz_dps", math.degrees(head_wz))
+                                      .field("head_rate_dps", math.degrees(math.sqrt(head_wx ** 2 + head_wy ** 2 + head_wz ** 2))))
 
                     # Buffer point for batch write (non-blocking)
                     with self.influx_buffer_lock:

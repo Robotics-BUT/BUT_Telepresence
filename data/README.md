@@ -71,6 +71,15 @@ makes degradation attributable to a stage instead of only visible in aggregate.
 depends on both ends agreeing on time, so these columns are what let you judge whether a given
 frame's decomposition is trustworthy.
 
+**Head motion**, from the headset's last render before the row was sent (rows recorded since the
+head-at-display telemetry; absent in older data): `display_time_us` (that render's predicted display
+time, on the same robot clock), `head_az_deg` / `head_el_deg` (head yaw and pitch at that time) and
+`head_wx_dps` / `head_wy_dps` / `head_wz_dps` / `head_rate_dps` (the head's angular velocity and
+its magnitude, deg/s), all in the headset's world frame (LOCAL space, +Y up). Rows recorded on
+2026-10-30 before about 11:20 UTC hold these in the head's own frame with the sign inverted; their
+`head_rate_dps` is correct. A frame's latency and the head motion while it was shown are in one row; the
+head's sweep during a frame's latency is `head_rate_dps × total_latency_us`.
+
 ### Reading it
 
 Two filters are required before any statistic will match the paper.

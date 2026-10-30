@@ -81,17 +81,18 @@ void RobotControlSender::sendRobotControl(float linearX, float linearY, float an
 void RobotControlSender::sendDebugInfo(const CameraStatsSnapshot &left,
                                        const CameraStatsSnapshot &right,
                                        const StreamingConfig &config,
+                                       const HeadAtDisplay &head,
                                        BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;
     }
 
-    threadPool.detach_task([this, left, right, config]() {
+    threadPool.detach_task([this, left, right, config, head]() {
         // Get current timestamp
         uint64_t timestamp = ntpTimer_->GetCurrentTimeUs();
 
         // Send the packet
-        sendDebugInfoPacket(left, right, config, timestamp);
+        sendDebugInfoPacket(left, right, config, head, timestamp);
     });
 }
 
@@ -245,9 +246,10 @@ void RobotControlSender::sendRobotControlPacket(float linearX, float linearY, fl
 
 void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &left,
                                              const CameraStatsSnapshot &right,
-                                             const StreamingConfig &config, uint64_t timestamp) {
+                                             const StreamingConfig &config, const HeadAtDisplay &head,
+                                             uint64_t timestamp) {
     std::vector<uint8_t> packet;
-    packet.reserve(166);
+    packet.reserve(195);
 
     // Message type
     packet.push_back(MSG_DEBUG_INFO);
@@ -289,6 +291,16 @@ void RobotControlSender::sendDebugInfoPacket(const CameraStatsSnapshot &left,
     serializeLittleEndian(packet, right.rtxCount);
     serializeLittleEndian(packet, right.jitterUs);
     serializeLittleEndian(packet, right.actualBitrateBps);
+
+    // Head at the predicted display time of the last render.
+    const auto headAzEl = quaternionToAzimuthElevation(head.orientation);
+    serializeLittleEndian(packet, head.displayTimeUs);
+    serializeLittleEndian(packet, headAzEl.azimuth);
+    serializeLittleEndian(packet, headAzEl.elevation);
+    serializeLittleEndian(packet, head.angularVelocity.x);
+    serializeLittleEndian(packet, head.angularVelocity.y);
+    serializeLittleEndian(packet, head.angularVelocity.z);
+    packet.push_back(head.valid);
 
     ssize_t sent = sendto(socket_, packet.data(), packet.size(), 0,
                           (sockaddr *) &destAddr_, sizeof(destAddr_));

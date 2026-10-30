@@ -80,7 +80,19 @@ def export_to_csv(
         "ntp_offset_us",
         "ntp_synced",
         "time_since_ntp_sync_us",
+        # --- the head at the predicted display time of the headset's last render ---
+        "display_time_us",
+        "head_az_deg",
+        "head_el_deg",
+        "head_wx_dps",
+        "head_wy_dps",
+        "head_wz_dps",
+        "head_rate_dps",
     ]
+    # the table has the head columns only once a relay that writes them has run: export what exists
+    have = set(client.query("SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name = 'pipeline_metrics'").column("column_name").to_pylist())
+    columns = [c for c in columns if c.strip('"') in have]
 
     select_clause = ", ".join(columns)
 
