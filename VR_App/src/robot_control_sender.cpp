@@ -127,6 +127,35 @@ void RobotControlSender::sendAudioMetricsPacket(uint32_t robotToHeadsetLatencyUs
     }
 }
 
+void RobotControlSender::sendServoReset(BS::thread_pool<BS::tp::none> &threadPool) {
+    if (!isInitialized_) {
+        return;
+    }
+    threadPool.detach_task([this]() {
+        const uint8_t packet = MSG_SERVO_RESET;
+        if (sendto(socket_, &packet, 1, 0, (sockaddr *) &destAddr_, sizeof(destAddr_)) < 0) ++consecutiveFailures_;
+    });
+}
+
+bool RobotControlSender::pollServoStatus(ServoStatus &status, double nowS) {
+    if (!isInitialized_) return false;
+    bool got = false;
+    uint8_t buf[256];
+    for (;;) {
+        const ssize_t n = recv(socket_, buf, sizeof(buf), MSG_DONTWAIT);
+        if (n < 0) break;
+        if (n < 3 || buf[0] != MSG_SERVO_STATUS || 3 + buf[2] > n) continue;
+        status.known = true;
+        status.answering = (buf[1] & 1) != 0;
+        status.fault = (buf[1] & 2) != 0;
+        status.canReset = (buf[1] & 4) != 0;
+        status.description.assign(reinterpret_cast<const char *>(buf + 3), buf[2]);
+        status.receivedAtS = nowS;
+        got = true;
+    }
+    return got;
+}
+
 void RobotControlSender::sendNtpMetrics(BS::thread_pool<BS::tp::none> &threadPool) {
     if (!isInitialized_) {
         return;

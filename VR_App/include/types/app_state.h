@@ -212,6 +212,16 @@ struct ConnectionState {
 // Application State
 // =============================================================================
 
+/** The camera head's servo drive as the robot last reported it (0x08 servo status, about once a second). */
+struct ServoStatus {
+    bool known{false};          /* a report has arrived (the robot's servo translator can observe its drive) */
+    bool answering{false};      /* the drive replies to the robot */
+    bool fault{false};          /* a fault is latched: the head ignores commands until reset */
+    bool canReset{false};       /* the robot can clear faults (0x07) */
+    std::string description;    /* the fault in the robot's words */
+    double receivedAtS{0.0};    /* steady-clock time of the last report */
+};
+
 /**
  * What the status bar above the video shows, refreshed a few times a second (TelepresenceProgram::UpdateStatusBar).
  * The bar is a head-locked quad layer centred ELEVATION_DEG above the eyes, just over the top edge of the Full FOV
@@ -225,6 +235,8 @@ struct StatusBarState {
     double fps{0.0};            /* frames received per second (left stream) */
     double latencyMs{0.0};      /* the per-stage latency sum (the panel header's figure) */
     double lossPerS{0.0};       /* RTP packets lost per second, both streams */
+    bool relaySilent{false};    /* drive reports stopped arriving */
+    ServoStatus servo{};
 };
 
 /**

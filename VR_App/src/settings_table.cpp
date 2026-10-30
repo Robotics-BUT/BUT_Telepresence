@@ -168,6 +168,17 @@ std::vector<GuiSetting> BuildSettingsTable(const std::shared_ptr<AppState> &appS
             [appState]() { return fmt::format("{:+.2f}", appState->stereoConvergence); },
             [appState]() { if (appState->stereoConvergence < 0.495f) appState->stereoConvergence += 0.01f; },
             [appState]() { if (appState->stereoConvergence > -0.495f) appState->stereoConvergence -= 0.01f; });
+    {
+        // A drive that latched a fault ignores the head until reset: offered while the robot reports one it can clear
+        GuiSetting s;
+        s.label = "Reset camera head"; s.control = GuiControl::Button; s.tab = GuiTab::Camera;
+        s.onActivate = actions.resetHeadDrives;
+        s.isVisible = [appState]() {
+            const auto &servo = appState->statusBar.servo;
+            return servo.known && servo.canReset && servo.fault;
+        };
+        add(std::move(s));
+    }
 
     // --- Audio ---
     toggle("Robot sound", GuiTab::Audio,

@@ -19,7 +19,14 @@ socket send one SequenceRegisterRead (0x03) per register pair and parse the repl
 'GT' + [op, reg(BE16), status, count, count x value(LE32)]... The 64-bit position is revolution (high 32 bits,
 signed) and angle (low 32 bits), as on the write side. Motor 1 = register group 0x19 (ELEVATION), motor 2 = 0x1A
 (AZIMUTH): Monitor1/2_aAngle+aRevol (0x1310/0x1410) is the measured position, PG1/2_APosAngle+APosRevol
-(0x1902/0x1A02) the position generator's current setpoint.
+(0x1902/0x1A02) the position generator's current setpoint. The same poll reads each axis' drive status and latched
+error (Monitor1/2_aDriveStatus+aDriveError, 0x1325/0x1425).
+
+Drive supervision (ServoTranslator.health / reset_faults): a drive that latches an error (over-current, following
+error, e-stop, ...) ignores motion commands until 0x08 is written to its command register (Control1/2_Command,
+0x1100/0x1200, the register the enable writes 1 to). health() reports the latched errors in words, from the
+read-back's drive state or, without a recent one, from a read of its own; reset_faults() clears both axes and enables
+them again. The error codes stay in this translator.
 
 The head pose is smoothed with a One Euro filter (one_euro.py) in radians, with time steps taken from the
 headset timestamps, before conversion to motor units. The conversion is 1:1: both drives turn the camera directly and a
@@ -39,7 +46,7 @@ import time
 from typing import Callable, Tuple, Optional, Dict
 import math
 
-from .base import ServoTranslator
+from .base import ServoHealth, ServoTranslator
 from .one_euro import OneEuroFilter
 
 
@@ -84,6 +91,20 @@ class TGDrivesTranslator(ServoTranslator):
         "act_az": 0x1410,   # Monitor2_aAngle, aRevol: measured position, motor 2 (group 0x1A, AZIMUTH)
         "pg_el": 0x1902,    # PG1_APosAngle, APosRevol: position generator setpoint, motor 1
         "pg_az": 0x1A02,    # PG2_APosAngle, APosRevol: position generator setpoint, motor 2
+    }
+    DRIVE_STATE_REGISTERS = {
+        "el": 0x1325,       # Monitor1_aDriveStatus, aDriveError
+        "az": 0x1425,       # Monitor2_aDriveStatus, aDriveError
+    }
+
+    # Command register value that clears an axis' latched errors (TGZ48 Commands::ResetErrors)
+    RESET_ERRORS = 0x08
+    # aDriveError bits (TGZ48Common::DriveError in asgard-hardwaresupport)
+    DRIVE_ERRORS = {
+        0x00000004: "Internal", 0x00000008: "OverVoltage", 0x00000010: "LowVoltage", 0x00000040: "StaticBrake",
+        0x00000200: "MotorOverTemperature", 0x00000800: "DriveOverTemperature", 0x00001000: "Feedback",
+        0x00008000: "Position", 0x00010000: "Trajectory", 0x00020000: "FieldBus", 0x00100000: "EmergencyStop",
+        0x00200000: "OverCurrent", 0x08000000: "Parameter",
     }
 
     # Head-pose filter time-step bounds (seconds)
@@ -151,6 +172,8 @@ class TGDrivesTranslator(ServoTranslator):
         # Position read-back thread
         self._poll_thread: Optional[threading.Thread] = None
         self._poll_stop = threading.Event()
+        # The drive state from the last answered read-back: (monotonic time, {axis: (status, error)})
+        self._drive_state: Optional[Tuple[float, Dict[str, Tuple[int, int]]]] = None
 
     def initialize(self) -> bool:
         """
@@ -415,21 +438,88 @@ class TGDrivesTranslator(ServoTranslator):
 
         return bytes(message)
 
+    # ------------------------------------------------------------------ error reset
+    @classmethod
+    def describe_error(cls, code: int) -> str:
+        """Names of the bits set in an aDriveError value ('None' for 0)."""
+        if not code:
+            return "None"
+        names = [name for bit, name in cls.DRIVE_ERRORS.items() if code & bit]
+        rest = code & ~sum(cls.DRIVE_ERRORS)
+        return "+".join(names + ([f"0x{rest:08x}"] if rest else []))
+
+    STATE_FRESH_S = 0.5   # a read-back drive state older than this is read again for health()
+
+    def health(self) -> Optional[ServoHealth]:
+        """Whether the drive answers and which errors its axes have latched (ServoTranslator.health)."""
+        state = self._drive_state
+        if state is None or time.monotonic() - state[0] > self.STATE_FRESH_S:
+            axes = self.read_drive_state(timeout=0.2)   # no recent read-back (off, or the drive stopped answering)
+            if not axes:
+                return ServoHealth(answering=False)
+            state = (time.monotonic(), axes)
+        errors = {axis: error for axis, (_, error) in state[1].items() if error}
+        if not errors:
+            return ServoHealth(answering=True)
+        names = sorted({self.describe_error(e) for e in errors.values()})
+        where = "both axes" if len(errors) == len(self.DRIVE_STATE_REGISTERS) else "one axis"
+        return ServoHealth(answering=True, fault=True, description=f"{', '.join(names)} ({where})")
+
+    def supports_fault_reset(self) -> bool:
+        return True
+
+    def reset_faults(self) -> bool:
+        """Clear both axes' latched errors, then put them back in position mode and enable them; the next head pose
+        moves them."""
+        reset = bytearray([self.IDENTIFIER_1, self.IDENTIFIER_2])
+        enable = bytearray([self.IDENTIFIER_1, self.IDENTIFIER_2])
+        for group in (self.ENABLE_AZIMUTH, self.ENABLE_ELEVATION):
+            reset.extend([self.WRITE, group, self.ENABLE] + list(struct.pack('<I', self.RESET_ERRORS)))
+            enable.extend([self.WRITE, group, self.ENABLE, 0x01, 0x00, 0x00, 0x00])
+        self.socket.sendto(bytes(reset), (self.servo_ip, self.servo_port))
+        time.sleep(0.05)
+        self._set_mode()
+        self.socket.sendto(bytes(enable), (self.servo_ip, self.servo_port))
+        self.logger.info("TG Drives: errors reset on both axes, axes enabled")
+        return True
+
+    def read_drive_state(self, timeout: float = 0.5) -> Optional[Dict[str, Tuple[int, int]]]:
+        """One read of each axis' (drive status, drive error) on a socket of its own; None if the drive does not
+        answer."""
+        msg = bytearray([self.IDENTIFIER_1, self.IDENTIFIER_2])
+        for reg in self.DRIVE_STATE_REGISTERS.values():
+            msg.extend([self.SEQUENCE_REGISTER_READ, (reg >> 8) & 0xFF, reg & 0xFF, 0x02])
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(timeout)
+            sock.sendto(bytes(msg), (self.servo_ip, self.servo_port))
+            values = self.parse_readback(sock.recvfrom(1024)[0])
+        except socket.timeout:
+            return None
+        finally:
+            sock.close()
+        return {axis: tuple(values[reg][:2]) for axis, reg in self.DRIVE_STATE_REGISTERS.items() if reg in values}
+
     # ------------------------------------------------------------------ position read-back
     def _build_readback_request(self) -> bytes:
         msg = bytearray([self.IDENTIFIER_1, self.IDENTIFIER_2])
-        for reg in self.READBACK_REGISTERS.values():
+        for reg in list(self.READBACK_REGISTERS.values()) + list(self.DRIVE_STATE_REGISTERS.values()):
             msg.extend([self.SEQUENCE_REGISTER_READ, (reg >> 8) & 0xFF, reg & 0xFF, 0x02])
         return bytes(msg)
 
+    @staticmethod
+    def position(values: Tuple[int, ...]) -> int:
+        """The 64-bit position from an (angle, revolution) register pair."""
+        return (struct.unpack('<i', struct.pack('<I', values[1]))[0] << 32) | values[0]
+
     @classmethod
-    def parse_readback(cls, data: bytes) -> Dict[int, int]:
+    def parse_readback(cls, data: bytes) -> Dict[int, Tuple[int, ...]]:
         """
-        Parse a TGZ48 reply into {first register: 64-bit position} for every pair read with status OK.
+        Parse a TGZ48 reply into {first register: values (unsigned 32-bit)} for every sequence read with status OK.
         Layout per operation: op, register (BE16), status, then for a sequence read: count, count x LE32.
         Register writes in the same reply (4 bytes each) are skipped.
         """
-        out: Dict[int, int] = {}
+        out: Dict[int, Tuple[int, ...]] = {}
         if len(data) < 6 or data[0] != cls.IDENTIFIER_1 or data[1] != cls.IDENTIFIER_2:
             return out
         i = 2
@@ -439,8 +529,7 @@ class TGDrivesTranslator(ServoTranslator):
                 count = data[i + 4]
                 values = struct.unpack_from('<' + 'I' * count, data, i + 5) if i + 5 + 4 * count <= len(data) else ()
                 if status == cls.STATUS_OK and count >= 2 and values:
-                    angle, revol = values[0], struct.unpack('<i', struct.pack('<I', values[1]))[0]
-                    out[reg] = (revol << 32) | angle
+                    out[reg] = values
                 i += 5 + 4 * count
             elif op == 0x01:                       # single register read
                 i += 8 if status == cls.STATUS_OK else 4
@@ -452,8 +541,9 @@ class TGDrivesTranslator(ServoTranslator):
 
     def start_position_readback(self, rate_hz: float, callback: Callable[[Dict], None]):
         """
-        Poll the drive's measured position and position-generator setpoint at rate_hz on a separate socket, and
-        call callback(sample) with robot-clock send/receive times (ns) and the 64-bit positions in motor units.
+        Poll the drive's measured position, position-generator setpoint and drive state at rate_hz on a separate
+        socket, and call callback(sample) with robot-clock send/receive times (ns), the 64-bit positions in motor
+        units and each axis' drive status and error (status_el, error_el, status_az, error_az).
         A sample whose reply does not arrive within the timeout is reported with timeout=True.
         """
         if rate_hz <= 0 or self._poll_thread:
@@ -476,7 +566,12 @@ class TGDrivesTranslator(ServoTranslator):
                     t_recv = time.time_ns()
                     values = self.parse_readback(data)
                     sample = {"t_send_ns": t_send, "t_recv_ns": t_recv, "timeout": False}
-                    sample.update({names[r]: v for r, v in values.items() if r in names})
+                    sample.update({names[r]: self.position(v) for r, v in values.items() if r in names})
+                    axes = {axis: tuple(values[reg][:2]) for axis, reg in self.DRIVE_STATE_REGISTERS.items() if reg in values}
+                    for axis, (status, error) in axes.items():
+                        sample[f"status_{axis}"], sample[f"error_{axis}"] = status, error
+                    if len(axes) == len(self.DRIVE_STATE_REGISTERS):
+                        self._drive_state = (time.monotonic(), axes)
                     callback(sample)
                 except socket.timeout:
                     callback({"t_send_ns": t_send, "t_recv_ns": time.time_ns(), "timeout": True})

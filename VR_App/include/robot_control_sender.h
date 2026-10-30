@@ -103,6 +103,14 @@ public:
      *  to the relay for InfluxDB/Grafana. 0x05: [0x05][latency_us (uint32)]. */
     void sendAudioMetrics(uint32_t robotToHeadsetLatencyUs, BS::thread_pool<BS::tp::none> &threadPool);
 
+    /** Ask the relay to clear the camera-head drives' latched errors (one byte, 0x07). */
+    void sendServoReset(BS::thread_pool<BS::tp::none> &threadPool);
+
+    /** Read the relay's servo status reports (0x08) waiting on the socket, without blocking; the newest goes into
+     *  status. Returns whether one arrived. 0x08: [0x08][flags u8][length u8][description, UTF-8], flags bit 0 = the
+     *  drive answers, bit 1 = a fault is latched, bit 2 = the robot can reset faults. */
+    bool pollServoStatus(ServoStatus &status, double nowS);
+
     /** Send NTP quality / network metrics (offset, RTT, jitter, dispersion, offset
      *  error bound, skew, sample loss, staleness) to the relay for InfluxDB/Grafana. */
     void sendNtpMetrics(BS::thread_pool<BS::tp::none> &threadPool);
@@ -148,4 +156,6 @@ private:
     static constexpr uint8_t MSG_DEBUG_INFO = 0x03;
     static constexpr uint8_t MSG_AUDIO_METRICS_HEADSET = 0x05;  // robot->headset audio latency
     static constexpr uint8_t MSG_NTP_METRICS = 0x06;            // NTP quality / network metrics
+    static constexpr uint8_t MSG_SERVO_RESET = 0x07;            // clear the servo drives' errors
+    static constexpr uint8_t MSG_SERVO_STATUS = 0x08;           // relay->headset: the servo drives' state
 };

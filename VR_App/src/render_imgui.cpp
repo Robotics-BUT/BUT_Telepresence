@@ -450,6 +450,12 @@ void render_status_bar(const AppState &app) {
                               : BarItem{kBad, "No video", true});
     if (bar.video && bar.lossPerS >= 0.5) items.push_back({kWarn, fmt::format("Loss {:.0f}/s", bar.lossPerS), false});
     if (app.ntpSyncStatus != "Synced") items.push_back({app.ntpSyncStatus == "Not Synced" ? kWarn : kBad, "Clock " + app.ntpSyncStatus, false});
+    const auto &servo = bar.servo;
+    if (bar.relaySilent) items.push_back({kWarn, "Robot relay silent", true});
+    else if (servo.known && !servo.answering) items.push_back({kBad, "Camera head not answering", true});
+    else if (servo.known && servo.fault)
+        items.push_back({kBad, "Camera head stopped: " + (servo.description.empty() ? std::string("fault") : servo.description) +
+                               (servo.canReset ? ", reset in Camera tab" : ""), true});
     if (app.robotControlEnabled) items.push_back({kAccent, "Driving", false});
     if (app.audioMicEnable && !app.micMuted && !app.micPushToTalk) items.push_back({kWarn, "Mic on", false});
     const float hz = openxr_current_refresh_rate(), req = openxr_requested_refresh_rate();

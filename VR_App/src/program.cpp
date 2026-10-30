@@ -263,12 +263,14 @@ void TelepresenceProgram::RenderStatusLayer(XrCompositionLayerQuad &layer, XrCom
 }
 
 /**
- * Refresh what the status bar shows: the received frame rate and whether frames still arrive, the latency figure
- * and packet loss over the last second.
+ * Refresh what the status bar shows: the received frame rate and whether frames still arrive, the latency figure,
+ * packet loss over the last second, and the drives' state the relay reports.
  */
 void TelepresenceProgram::UpdateStatusBar() {
     auto &bar = appState_->statusBar;
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (robotControlSender_) robotControlSender_->pollServoStatus(bar.servo, now);
+    bar.relaySilent = bar.servo.known && now - bar.servo.receivedAtS > 3.0;
     if (now - statusBarUpdatedS_ < 0.25) return;
     statusBarUpdatedS_ = now;
 
@@ -1070,6 +1072,9 @@ void TelepresenceProgram::BuildSettings() {
         // The system's VR power manager treats the headset as worn until told to use the proximity sensor again
         appState_->keepRunningOffHead = on;
         SendSystemBroadcast(on ? "com.oculus.vrpowermanager.prox_close" : "com.oculus.vrpowermanager.automation_disable");
+    };
+    actions.resetHeadDrives = [this]() {
+        if (robotControlSender_ && robotControlSender_->isInitialized()) robotControlSender_->sendServoReset(threadPool_);
     };
     actions.setPanelLayout = [this](GuiPanelLayout layout) {
         appState_->guiPanel.layout = layout;

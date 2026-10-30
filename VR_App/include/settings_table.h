@@ -21,6 +21,7 @@ struct SettingsActions {
     std::function<void(bool)> setRobotDrive;                    /* enable the robot base (sends a stop when disabling) */
     std::function<void(bool)> setKeepRunningOffHead;            /* override the proximity sensor, or restore it */
     std::function<void(GuiPanelLayout)> setPanelLayout;         /* switch the panel's layout and place it for it */
+    std::function<void()> resetHeadDrives;                      /* ask the robot to clear the camera head's faults */
     std::function<const StreamingConfig *()> appliedConfig;     /* the config in force, or null before the first apply */
 };
 

@@ -18,7 +18,7 @@ from typing import Optional, Tuple, List
 from .config import load_configuration, RelayConfig
 from .exceptions import RelayServiceError
 from .protocol import MessageDetector, MessageType
-from .servo_translators import ServoTranslator, TGDrivesTranslator
+from .servo_translators import ServoHealth, ServoTranslator, TGDrivesTranslator
 from .robot_translators import RobotTranslator, AsgardTranslator
 
 try:
@@ -28,6 +28,34 @@ except ImportError:
     INFLUXDB_AVAILABLE = False
 
 
+def create_servo_translator(config: RelayConfig) -> ServoTranslator:
+    """Create the servo translator the configuration names (used by the relay and by servo_reset)."""
+    translator_type = config.servo_translator.lower()
+
+    if translator_type == 'tg_drives':
+        return TGDrivesTranslator(
+            config.servo_ip,
+            config.servo_port,
+            config.servo_response_timeout,
+            azimuth_min=config.tg_azimuth_min,
+            azimuth_max=config.tg_azimuth_max,
+            elevation_min=config.tg_elevation_min,
+            elevation_max=config.tg_elevation_max,
+            speed_max=config.tg_speed_max,
+            pg_acc=config.tg_pg_acc,
+            pg_dec=config.tg_pg_dec,
+            pg_type=config.tg_pg_type,
+            filter_min_cutoff=config.tg_filter_min_cutoff,
+            filter_beta=config.tg_filter_beta,
+            filter_d_cutoff=config.tg_filter_d_cutoff,
+            swap_axes=config.tg_swap_axes,
+            invert_azimuth=config.tg_invert_azimuth,
+            invert_elevation=config.tg_invert_elevation
+        )
+    else:
+        raise RelayServiceError(f"Unknown servo translator type: {translator_type}")
+
+
 class UDPRelayService:
     """
     Main UDP relay service.
@@ -35,6 +63,12 @@ class UDPRelayService:
     Receives UDP messages on ingest port, routes them based on message type:
     - Head pose messages (0x01 prefix) -> servo translator -> servo driver
     - Robot control messages (0x02 prefix) -> robot controller
+    - Servo reset (0x07, one byte) -> clear the servo drives' latched errors
+
+    Back to the headset (to the address the head poses come from), once a second and at once on a change, when the
+    servo translator can observe its drive (ServoTranslator.health):
+    - Servo status (0x08): [0x08][flags u8][length u8][description, UTF-8]; flags bit 0 = the drive answers,
+      bit 1 = a fault is latched, bit 2 = the translator can reset faults (0x07)
     """
 
     def __init__(self, config: RelayConfig):
@@ -56,6 +90,7 @@ class UDPRelayService:
 
         # Servo translator (initialized based on config)
         self.servo_translator: Optional[ServoTranslator] = None
+        self._headset_addr: Optional[Tuple[str, int]] = None   # where head poses come from: servo status goes there
 
         # Robot translator (initialized based on config)
         self.robot_translator: Optional[RobotTranslator] = None
@@ -147,39 +182,8 @@ class UDPRelayService:
         self.logger.info("InfluxDB batch writer thread stopped")
 
     def _create_servo_translator(self) -> ServoTranslator:
-        """
-        Create servo translator based on configuration.
-
-        Returns:
-            Servo translator instance
-
-        Raises:
-            RelayServiceError: If translator type is unknown
-        """
-        translator_type = self.config.servo_translator.lower()
-
-        if translator_type == 'tg_drives':
-            return TGDrivesTranslator(
-                self.config.servo_ip,
-                self.config.servo_port,
-                self.config.servo_response_timeout,
-                azimuth_min=self.config.tg_azimuth_min,
-                azimuth_max=self.config.tg_azimuth_max,
-                elevation_min=self.config.tg_elevation_min,
-                elevation_max=self.config.tg_elevation_max,
-                speed_max=self.config.tg_speed_max,
-                pg_acc=self.config.tg_pg_acc,
-                pg_dec=self.config.tg_pg_dec,
-                pg_type=self.config.tg_pg_type,
-                filter_min_cutoff=self.config.tg_filter_min_cutoff,
-                filter_beta=self.config.tg_filter_beta,
-                filter_d_cutoff=self.config.tg_filter_d_cutoff,
-                swap_axes=self.config.tg_swap_axes,
-                invert_azimuth=self.config.tg_invert_azimuth,
-                invert_elevation=self.config.tg_invert_elevation
-            )
-        else:
-            raise RelayServiceError(f"Unknown servo translator type: {translator_type}")
+        """Create servo translator based on configuration (raises RelayServiceError if unknown)."""
+        return create_servo_translator(self.config)
 
     def _create_robot_translator(self) -> RobotTranslator:
         """
@@ -227,6 +231,7 @@ class UDPRelayService:
             if hasattr(self.servo_translator, "start_position_readback"):
                 self.servo_translator.start_position_readback(self.config.tg_position_readback_hz,
                                                               self._record_servo_state)
+            self.servo_translator.start_supervision(self._send_servo_status)
 
             # Initialize robot translator
             self.robot_translator = self._create_robot_translator()
@@ -262,6 +267,7 @@ class UDPRelayService:
 
         if self.servo_translator:
             try:
+                self.servo_translator.stop_supervision()
                 self.servo_translator.close()
             except Exception as e:
                 self.logger.warning(f"Error closing servo translator: {e}")
@@ -303,6 +309,7 @@ class UDPRelayService:
         message_type = self.message_detector.detect_message_type(data)
 
         if message_type == MessageType.HEAD_POSE:
+            self._headset_addr = client_addr
             self._forward_to_servo(data, client_addr)
 
         elif message_type == MessageType.ROBOT_CONTROL:
@@ -319,6 +326,9 @@ class UDPRelayService:
 
         elif message_type == MessageType.NTP_METRICS:
             self._handle_ntp_metrics(data, client_addr)
+
+        elif message_type == MessageType.SERVO_RESET:
+            self._reset_servo(client_addr)
 
         else:
             self.logger.warning(f"Unknown message type from {client_addr[0]}:{client_addr[1]}, dropping")
@@ -449,16 +459,37 @@ class UDPRelayService:
         except Exception as e:
             self.logger.debug(f"servo command metrics error: {e}")
 
+    def _reset_servo(self, client_addr: Tuple[str, int]):
+        """Clear the servo drive's latched faults (headset request), off the receive loop."""
+        if not self.servo_translator.supports_fault_reset():
+            self.logger.warning("Servo reset requested, but this servo translator cannot reset faults")
+            return
+        health = self.servo_translator.health()
+        if health is not None and health.answering and not health.fault:
+            self.logger.info(f"Servo reset requested by {client_addr[0]}: no fault latched, not resetting")
+            return
+        self.logger.info(f"Servo reset requested by {client_addr[0]}")
+        Thread(target=self.servo_translator.reset_faults, daemon=True, name="servo-reset").start()
+
+    def _send_servo_status(self, health: ServoHealth):
+        """Forward the servo drive's health to the headset (0x08); called by the translator's supervision."""
+        if not self._headset_addr or not self.servo_translator:
+            return
+        text = health.description.encode("utf-8")[:200]
+        flags = (1 if health.answering else 0) | (2 if health.fault else 0) | \
+                (4 if self.servo_translator.supports_fault_reset() else 0)
+        self.ingest_socket.sendto(struct.pack('<BBB', 0x08, flags, len(text)) + text, self._headset_addr)
+
     def _record_servo_state(self, sample: dict):
-        """Record one position read-back sample ('servo_state'); called from the translator's read-back thread."""
+        """Record one read-back sample ('servo_state'), with every numeric field the translator reports; called from
+        the translator's read-back thread."""
         if not self.influx_client:
             return
         try:
             point = Point("servo_state").field("timeout", bool(sample["timeout"]))
-            point = point.field("t_send_ns", int(sample["t_send_ns"])).field("t_recv_ns", int(sample["t_recv_ns"]))
-            for k in ("act_az", "act_el", "pg_az", "pg_el"):
-                if k in sample:
-                    point = point.field(k, int(sample[k]))
+            for k, v in sample.items():
+                if k != "timeout" and isinstance(v, int):
+                    point = point.field(k, v)
             point = point.time((sample["t_send_ns"] + sample["t_recv_ns"]) // 2)
             with self.influx_buffer_lock:
                 self.influx_buffer.append(point)

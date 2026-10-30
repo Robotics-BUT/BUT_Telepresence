@@ -5,7 +5,7 @@ Each robot may use a different servo driver with a different protocol.
 This package provides translators for different servo driver types.
 """
 
-from .base import ServoTranslator
+from .base import ServoHealth, ServoTranslator
 from .tg_drives import TGDrivesTranslator
 
-__all__ = ['ServoTranslator', 'TGDrivesTranslator']
+__all__ = ['ServoHealth', 'ServoTranslator', 'TGDrivesTranslator']
