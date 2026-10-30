@@ -859,7 +859,7 @@ void TelepresenceProgram::SendControllerDatagram() {
     if (robotControlSender_->isInitialized()) {
         // Always send head pose
         robotControlSender_->sendHeadPose(userState_.hmdPose.orientation, userState_.hmdPoseNow.orientation,
-                                          userState_.hmdPoseNowTimeUs, appState_->headMovementMaxSpeed,
+                                          userState_.hmdPoseNowTimeUs, appState_->headMaxSpeedDegS * (float) M_PI / 180.0f,
                                           leadNow_ ? RobotControlSender::PREDICTION_NOW
                                                    : (uint32_t) appState_->headMovementPredictionMs,
                                           appState_->headMovementSensitivity, threadPool_);

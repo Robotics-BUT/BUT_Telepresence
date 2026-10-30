@@ -52,7 +52,7 @@ void StateStorage::SaveAppState(const AppState &appState) {
         SaveKeyValuePair(editor, putString, "fps", appState.streamingConfig.fps);
 
         SaveKeyValuePair(editor, putString, "aspect_ratio_mode", static_cast<int>(appState.aspectRatioMode));
-        SaveKeyValuePair(editor, putString, "head_movement_max_speed", appState.headMovementMaxSpeed);
+        SaveKeyValuePair(editor, putString, "head_max_speed_dps", static_cast<int>(std::lround(appState.headMaxSpeedDegS)));
         SaveKeyValuePair(editor, putString, "head_movement_prediction_ms", appState.headMovementPredictionMs);
         SaveKeyValuePair(editor, putString, "head_movement_sensitivity", static_cast<int>(std::lround(appState.headMovementSensitivity * 100)));
         SaveKeyValuePair(editor, putString, "robot_control_enabled", appState.robotControlEnabled);
@@ -122,7 +122,6 @@ void StateStorage::LoadAppState(AppState& appState) {
         appState.streamingConfig.fps = std::stoi(LoadValue(sharedPreferences, getString, "fps"));
 
         appState.aspectRatioMode = static_cast<AspectRatioMode>(std::stoi(LoadValue(sharedPreferences, getString, "aspect_ratio_mode")));
-        appState.headMovementMaxSpeed = std::stoi(LoadValue(sharedPreferences, getString, "head_movement_max_speed"));
         appState.headMovementPredictionMs = std::stoi(LoadValue(sharedPreferences, getString, "head_movement_prediction_ms"));
         appState.robotControlEnabled = std::stoi(LoadValue(sharedPreferences, getString, "robot_control_enabled"));
         appState.stereoConvergence = std::stof(LoadValue(sharedPreferences, getString, "stereo_convergence")) / 1000.0f;
@@ -138,6 +137,9 @@ void StateStorage::LoadAppState(AppState& appState) {
     }
     try {   // added later than the keys above: read on its own so that, while missing, only it keeps its default
         appState.headMovementSensitivity = std::stof(LoadValue(sharedPreferences, getString, "head_movement_sensitivity")) / 100.0f;
+    } catch(const std::exception& e) {}
+    try {   // likewise
+        appState.headMaxSpeedDegS = std::stof(LoadValue(sharedPreferences, getString, "head_max_speed_dps"));
     } catch(const std::exception& e) {}
     try {   // likewise
         appState.guiPanel.layout = std::stoi(LoadValue(sharedPreferences, getString, "panel_layout")) == 1

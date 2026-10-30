@@ -7,7 +7,7 @@ Incoming format (41 bytes):
     Byte 0:      0x01 (message type)
     Bytes 1-4:   azimuth (float32, little-endian) in radians, the forecast pose commanded to the camera head
     Bytes 5-8:   elevation (float32, little-endian) in radians, the same
-    Bytes 9-12:  speed (float32, little-endian) in motor units
+    Bytes 9-12:  speed (float32, little-endian) in rad/s, the largest camera-head speed the operator allows
     Bytes 13-20: timestamp (uint64, little-endian), microseconds, NTP-corrected to the robot clock (send time)
     Bytes 21-24: prediction_ms (uint32, little-endian), consumed by the relay
     Bytes 25-28: measured azimuth (float32) in radians: the head pose at the present instant, not forecast
@@ -115,7 +115,7 @@ class TGDrivesTranslator(ServoTranslator):
     def __init__(self, servo_ip: str, servo_port: int, timeout: float,
                  azimuth_min: int = -180000, azimuth_max: int = 180000,
                  elevation_min: int = -90000, elevation_max: int = 90000,
-                 speed_max: int = 1000000,
+                 speed_max: int = 1000000, speed_units_per_rev: int = 2 ** 20,
                  pg_acc: Optional[int] = None, pg_dec: Optional[int] = None, pg_type: Optional[int] = None,
                  filter_min_cutoff: float = 1.0, filter_beta: float = 20.0,
                  filter_d_cutoff: float = 5.0, swap_axes: bool = False,
@@ -133,6 +133,8 @@ class TGDrivesTranslator(ServoTranslator):
             elevation_max: Maximum elevation value in motor units
             speed_max: Largest profile-generator speed (PG PosSpeed, inc/s) written to the drive; the speed in each
                 head-pose packet is clamped to it. With BitsPerRevol = 20, 1,000,000 inc/s = 0.95 motor rev/s.
+            speed_units_per_rev: PG speed increments per motor revolution (2^BitsPerRevol), to convert the head-pose
+                packet's rad/s (direct drive: a motor revolution is a camera revolution)
             pg_acc, pg_dec: profile-generator acceleration / deceleration (inc/s^2) written to both axes at start-up;
                 None = leave the drive's stored values
             pg_type: profile type written at start-up (0 harmonic non-symmetric, 1 harmonic symmetric,
@@ -153,6 +155,7 @@ class TGDrivesTranslator(ServoTranslator):
         self.elevation_min = elevation_min
         self.elevation_max = elevation_max
         self.speed_max = speed_max
+        self.speed_units_per_rad = speed_units_per_rev / (2 * math.pi)
         self.pg_params = {item: value for item, value in ((self.PG_ACC, pg_acc), (self.PG_DEC, pg_dec),
                                                          (self.PG_TYPE, pg_type)) if value is not None}
         self.swap_axes = swap_axes
@@ -262,7 +265,7 @@ class TGDrivesTranslator(ServoTranslator):
         try:
             azimuth_rad = struct.unpack('<f', data[1:5])[0]
             elevation_rad = struct.unpack('<f', data[5:9])[0]
-            speed_motor = struct.unpack('<f', data[9:13])[0]
+            speed_rad_s = struct.unpack('<f', data[9:13])[0]
             timestamp = struct.unpack('<Q', data[13:21])[0]
             prediction_ms = struct.unpack('<I', data[21:25])[0]
             meas_az_rad, meas_el_rad = struct.unpack('<ff', data[25:33])
@@ -286,7 +289,7 @@ class TGDrivesTranslator(ServoTranslator):
             dt_s = self.FILTER_RESET_S
         dt_s = max(dt_s, self.FILTER_MIN_DT_S)
 
-        self.logger.debug(f"Received: azimuth={azimuth_rad:.3f} rad, elevation={elevation_rad:.3f} rad, speed={speed_motor}, ts={timestamp}")
+        self.logger.debug(f"Received: azimuth={azimuth_rad:.3f} rad, elevation={elevation_rad:.3f} rad, speed={speed_rad_s:.2f} rad/s, ts={timestamp}")
 
         # Into the servo frame (swap, invert), smooth on the sample clock, convert to motor units, clamp
         cmd_az_rad, cmd_el_rad = self._to_servo_frame(azimuth_rad, elevation_rad)
@@ -311,7 +314,7 @@ class TGDrivesTranslator(ServoTranslator):
         }
 
         # Build GT protocol message
-        speed = max(0, min(int(speed_motor), self.speed_max))
+        speed = max(0, min(int(speed_rad_s * self.speed_units_per_rad), self.speed_max))
         gt_message = self._build_gt_message(azimuth_motor, elevation_motor, speed)
 
         # Send to servo driver

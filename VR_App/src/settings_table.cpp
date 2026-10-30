@@ -160,10 +160,9 @@ std::vector<GuiSetting> BuildSettingsTable(const std::shared_ptr<AppState> &appS
             [appState]() { auto &p = appState->headMovementPredictionMs; p = std::min<uint32_t>(100, p / 5 * 5 + 5); },
             [appState]() { auto &p = appState->headMovementPredictionMs; p = p <= 5 ? 0 : (p + 4) / 5 * 5 - 5; });
     stepper("Max speed", GuiTab::Camera,
-            // profile-generator inc/s, 2^20 per motor revolution; direct drive, so camera deg/s
-            [appState]() { return fmt::format("{:.0f}°/s", appState->headMovementMaxSpeed / 1048576.0 * 360.0); },
-            [appState]() { if (appState->headMovementMaxSpeed < 5000000) appState->headMovementMaxSpeed += 100000; },
-            [appState]() { if (appState->headMovementMaxSpeed > 200000) appState->headMovementMaxSpeed -= 100000; });
+            [appState]() { return fmt::format("{:.0f}°/s", appState->headMaxSpeedDegS); },
+            [appState]() { appState->headMaxSpeedDegS = std::min(1800.0f, appState->headMaxSpeedDegS + 30.0f); },
+            [appState]() { appState->headMaxSpeedDegS = std::max(30.0f, appState->headMaxSpeedDegS - 30.0f); });
     toggle("Drive robot base", GuiTab::Camera,
            [appState]() { return appState->robotControlEnabled; },
            [set = actions.setRobotDrive](bool on) { set(on); });

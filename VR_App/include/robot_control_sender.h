@@ -29,7 +29,7 @@
  * Protocol formats (little-endian):
  *
  * Message Type 0x01 - Head Pose (41 bytes):
- *   [0x01] [azimuth (float)] [elevation (float)] [speed (float)] [timestamp (uint64)] [prediction_ms (uint32)]
+ *   [0x01] [azimuth (float)] [elevation (float)] [speed (float, rad/s)] [timestamp (uint64)] [prediction_ms (uint32)]
  *   [azimuth_now (float)] [elevation_now (float)] [pose_now_time (uint64)]
  *   azimuth/elevation are the forecast commanded to the camera head; timestamp is NTP-corrected
  *   (robot-clock-aligned) send time; prediction_ms is the forecast lead (M2M telemetry). azimuth_now/

@@ -278,7 +278,7 @@ struct AppState {
     StatusBarState statusBar{};
 
     /* Head tracking settings - sent to the robot servo controller */
-    uint32_t headMovementMaxSpeed{3000000};       /* camera-head speed, TGZ profile-generator inc/s (1e6 = 0.95 motor rev/s) */
+    float headMaxSpeedDegS{1030.0f};               /* largest camera-head speed, deg/s (the robot converts it for its drive) */
     uint32_t headMovementPredictionMs{40};         /* lead beyond the predicted display time, ms (matches the drive at 3e6) */
     float headMovementSensitivity{1.0f};           /* camera-head angle per head angle (1.0 = 1:1; the relay maps angles 1:1) */
 

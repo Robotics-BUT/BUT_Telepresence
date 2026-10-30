@@ -38,6 +38,7 @@ class RelayConfig:
     tg_elevation_min: int = -90000
     tg_elevation_max: int = 90000
     tg_speed_max: int = 1000000
+    tg_speed_units_per_rev: int = 2 ** 20
     tg_pg_acc: Optional[int] = None
     tg_pg_dec: Optional[int] = None
     tg_pg_type: Optional[int] = None
@@ -196,6 +197,8 @@ class RelayConfig:
                 config_dict['tg_elevation_min'] = data['tg_drives'].get('elevation_min', cls.tg_elevation_min)
                 config_dict['tg_elevation_max'] = data['tg_drives'].get('elevation_max', cls.tg_elevation_max)
                 config_dict['tg_speed_max'] = data['tg_drives'].get('speed_max', cls.tg_speed_max)
+                config_dict['tg_speed_units_per_rev'] = data['tg_drives'].get('speed_units_per_rev',
+                                                                              cls.tg_speed_units_per_rev)
                 config_dict['tg_pg_acc'] = data['tg_drives'].get('pg_acc', cls.tg_pg_acc)
                 config_dict['tg_pg_dec'] = data['tg_drives'].get('pg_dec', cls.tg_pg_dec)
                 config_dict['tg_pg_type'] = data['tg_drives'].get('pg_type', cls.tg_pg_type)

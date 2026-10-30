@@ -42,6 +42,7 @@ def create_servo_translator(config: RelayConfig) -> ServoTranslator:
             elevation_min=config.tg_elevation_min,
             elevation_max=config.tg_elevation_max,
             speed_max=config.tg_speed_max,
+            speed_units_per_rev=config.tg_speed_units_per_rev,
             pg_acc=config.tg_pg_acc,
             pg_dec=config.tg_pg_dec,
             pg_type=config.tg_pg_type,
@@ -368,7 +369,7 @@ class UDPRelayService:
         """
         Extract azimuth from head pose packet and send camera select if changed.
 
-        Head pose packet: [0x01] [azimuth (float)] [elevation (float)] [speed (float)] [timestamp (uint64)]
+        Head pose packet: [0x01] [azimuth (float)] [elevation (float)] [speed (float, rad/s)] [timestamp (uint64)]
         """
         if len(data) < 5 or not self._camera_select_socket:
             return
