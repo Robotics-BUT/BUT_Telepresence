@@ -16,6 +16,7 @@
 #include "xr_timing.h"
 
 #include "util_openxr.h"
+#include <sys/system_properties.h>
 
 namespace Math::Pose {
     XrPosef Identity() {
@@ -656,50 +657,89 @@ int openxr_begin_session(XrSession *session) {
     return 0;
 }
 
-void openxr_request_highest_refresh_rate(XrInstance *instance, XrSession *session) {
-    PFN_xrEnumerateDisplayRefreshRatesFB xrEnumerateDisplayRefreshRatesFB = nullptr;
-    PFN_xrRequestDisplayRefreshRateFB xrRequestDisplayRefreshRateFB = nullptr;
-    PFN_xrGetDisplayRefreshRateFB xrGetDisplayRefreshRateFB = nullptr;
+// Display refresh rate: requested once the session begins and requested again when the runtime changes it (a thermal
+// throttle may lower it to 72 Hz). The rate in force is what the HUD shows and what the telemetry's display times reveal.
+static PFN_xrEnumerateDisplayRefreshRatesFB s_xrEnumerateDisplayRefreshRatesFB = nullptr;
+static PFN_xrRequestDisplayRefreshRateFB s_xrRequestDisplayRefreshRateFB = nullptr;
+static PFN_xrGetDisplayRefreshRateFB s_xrGetDisplayRefreshRateFB = nullptr;
+static float s_refresh_requested = 0.0f;   // Hz
+static float s_refresh_current = 0.0f;     // Hz, as the runtime reports it
+static int64_t s_refresh_rerequest_ns = 0;
+static constexpr float DEFAULT_REFRESH_RATE = 120.0f;
 
+static int64_t monotonic_ns() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t) ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+static void request_rate(XrSession *session, float rate) {
+    XrResult result = s_xrRequestDisplayRefreshRateFB(*session, rate);
+    if (XR_SUCCEEDED(result)) {
+        LOG_INFO("Display refresh rate: requested %.0f Hz", rate);
+    } else {
+        LOG_ERROR("Display refresh rate: request for %.0f Hz failed (%d)", rate, result);
+    }
+}
+
+void openxr_request_refresh_rate(XrInstance *instance, XrSession *session) {
     xrGetInstanceProcAddr(*instance, "xrEnumerateDisplayRefreshRatesFB",
-                          (PFN_xrVoidFunction *)&xrEnumerateDisplayRefreshRatesFB);
+                          (PFN_xrVoidFunction *)&s_xrEnumerateDisplayRefreshRatesFB);
     xrGetInstanceProcAddr(*instance, "xrRequestDisplayRefreshRateFB",
-                          (PFN_xrVoidFunction *)&xrRequestDisplayRefreshRateFB);
+                          (PFN_xrVoidFunction *)&s_xrRequestDisplayRefreshRateFB);
     xrGetInstanceProcAddr(*instance, "xrGetDisplayRefreshRateFB",
-                          (PFN_xrVoidFunction *)&xrGetDisplayRefreshRateFB);
-
-    if (!xrEnumerateDisplayRefreshRatesFB || !xrRequestDisplayRefreshRateFB || !xrGetDisplayRefreshRateFB) {
+                          (PFN_xrVoidFunction *)&s_xrGetDisplayRefreshRateFB);
+    if (!s_xrEnumerateDisplayRefreshRatesFB || !s_xrRequestDisplayRefreshRateFB || !s_xrGetDisplayRefreshRateFB) {
         LOG_ERROR("FB_display_refresh_rate function pointers not available");
         return;
     }
 
-    // Log available refresh rates
+    // The rate: `adb shell setprop debug.but.refresh_rate 90` (read when the session starts), else 120 Hz.
+    char prop[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.but.refresh_rate", prop);
+    const float desired = prop[0] ? (float) atof(prop) : DEFAULT_REFRESH_RATE;
+
     uint32_t rateCount = 0;
-    xrEnumerateDisplayRefreshRatesFB(*session, 0, &rateCount, nullptr);
+    s_xrEnumerateDisplayRefreshRatesFB(*session, 0, &rateCount, nullptr);
     std::vector<float> rates(rateCount);
-    xrEnumerateDisplayRefreshRatesFB(*session, rateCount, &rateCount, rates.data());
+    s_xrEnumerateDisplayRefreshRatesFB(*session, rateCount, &rateCount, rates.data());
+    std::string offered;
+    for (float r : rates) offered += std::to_string((int) (r + 0.5f)) + " ";
+    LOG_INFO("Display refresh rates offered: %s(Hz)", offered.c_str());
 
-    float maxRate = 0.0f;
-    for (float rate : rates) {
-        LOG_INFO("Available refresh rate: %.0f Hz", rate);
-        if (rate > maxRate) maxRate = rate;
-    }
-
-    // Request highest available rate
-    if (maxRate > 0.0f) {
-        XrResult result = xrRequestDisplayRefreshRateFB(*session, maxRate);
-        if (XR_SUCCEEDED(result)) {
-            LOG_INFO("Requested refresh rate: %.0f Hz", maxRate);
-        } else {
-            LOG_ERROR("Failed to request refresh rate %.0f Hz", maxRate);
+    s_refresh_requested = desired;
+    if (XR_FAILED(s_xrRequestDisplayRefreshRateFB(*session, desired))) {
+        // Not accepted: the highest offered rate below it.
+        float fallback = 0.0f;
+        for (float r : rates) if (r <= desired && r > fallback) fallback = r;
+        LOG_ERROR("Display refresh rate: request for %.0f Hz failed, falling back to %.0f Hz", desired, fallback);
+        if (fallback > 0.0f) {
+            s_refresh_requested = fallback;
+            request_rate(session, fallback);
         }
+    } else {
+        LOG_INFO("Display refresh rate: requested %.0f Hz", desired);
     }
-
-    // Confirm current rate
-    float currentRate = 0.0f;
-    xrGetDisplayRefreshRateFB(*session, &currentRate);
-    LOG_INFO("Current display refresh rate: %.0f Hz", currentRate);
+    s_xrGetDisplayRefreshRateFB(*session, &s_refresh_current);
+    LOG_INFO("Display refresh rate in force: %.0f Hz", s_refresh_current);
 }
+
+static void on_refresh_rate_changed(XrSession *session, const XrEventDataDisplayRefreshRateChangedFB &ev) {
+    s_refresh_current = ev.toDisplayRefreshRate;
+    LOG_INFO("Display refresh rate changed: %.0f -> %.0f Hz (requested %.0f Hz)",
+             ev.fromDisplayRefreshRate, ev.toDisplayRefreshRate, s_refresh_requested);
+    // Lowered by the runtime (a thermal throttle): ask again, at most every 10 s so a throttle is not fought per frame.
+    const int64_t now = monotonic_ns();
+    if (s_xrRequestDisplayRefreshRateFB && ev.toDisplayRefreshRate + 0.5f < s_refresh_requested &&
+        now - s_refresh_rerequest_ns > 10'000'000'000LL) {
+        s_refresh_rerequest_ns = now;
+        request_rate(session, s_refresh_requested);
+    }
+}
+
+float openxr_current_refresh_rate() { return s_refresh_current; }
+
+float openxr_requested_refresh_rate() { return s_refresh_requested; }
 
 int openxr_handle_session_state_changed(XrSession *session, XrEventDataSessionStateChanged &ev, bool *exitLoop, bool *reqRestart) {
     XrSessionState old_state = s_session_state;
@@ -718,7 +758,7 @@ int openxr_handle_session_state_changed(XrSession *session, XrEventDataSessionSt
     switch (new_state) {
         case XR_SESSION_STATE_READY:
             openxr_begin_session(session);
-            openxr_request_highest_refresh_rate(&s_instance, session);
+            openxr_request_refresh_rate(&s_instance, session);
             s_session_running = true;
             break;
 
@@ -776,6 +816,10 @@ openxr_poll_events(XrInstance *instance, XrSession *session, bool *exit, bool *r
 
             case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
                 LOG_ERROR("XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING");
+                break;
+
+            case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB:
+                on_refresh_rate_changed(session, *(XrEventDataDisplayRefreshRateChangedFB *) ev);
                 break;
 
             case XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT: {

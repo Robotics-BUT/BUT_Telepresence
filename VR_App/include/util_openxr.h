@@ -136,8 +136,14 @@ XrSpace openxr_create_action_space(XrSession *session, XrAction action, XrPath p
 
 int openxr_begin_session(XrSession *session);
 
-/** Request the highest available display refresh rate (e.g. 120Hz on Quest Pro). */
-void openxr_request_highest_refresh_rate(XrInstance *instance, XrSession *session);
+/** Request the display refresh rate: `debug.but.refresh_rate` (Hz) if set, else 120 Hz; logs the rates offered and the
+ *  rate in force, and falls back to the highest offered rate below a rate the runtime rejects. */
+void openxr_request_refresh_rate(XrInstance *instance, XrSession *session);
+
+/** The display refresh rate in force (as the runtime last reported it) and the rate requested, in Hz (0 before the
+ *  session begins). */
+float openxr_current_refresh_rate();
+float openxr_requested_refresh_rate();
 
 int openxr_handle_session_state_changed(XrSession *session, XrEventDataSessionStateChanged &ev, bool *exitLoop, bool *reqRestart);
 

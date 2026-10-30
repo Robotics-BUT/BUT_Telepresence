@@ -59,6 +59,12 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_telepresence_launcher">
 
+        <!-- The headsets the app runs on. Without this the runtime treats the app as written for an older headset and
+             offers it only the 90 Hz maximum display refresh rate. -->
+        <meta-data
+            android:name="com.oculus.supportedDevices"
+            android:value="quest2|questpro|quest3|quest3s" />
+
         <!-- The activity is the built-in NativeActivity framework class. -->
         <!-- launchMode is set to singleTask because there should never be multiple copies of the app running. -->
         <!-- Theme.Black.NoTitleBar.Fullscreen gives solid black instead of a (bad stereoscopic) gradient on app transition. -->
