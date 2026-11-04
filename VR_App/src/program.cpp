@@ -163,6 +163,7 @@ void TelepresenceProgram::UpdateFrame() {
             adaptation_->reportResult(req->first, ok);
         }
     }
+    CheckReceiveWatchdog();
 
     // Test switch for codec changes: `adb shell setprop debug.but.codec h264` (or h265, jpeg; checked every 90
     // frames) applies that codec as the panel's Apply does, once per change of the property
@@ -281,6 +282,52 @@ void TelepresenceProgram::RenderStatusLayer(XrCompositionLayerQuad &layer, XrCom
     if (openxr_has_layer_settings()) {
         settings.layerFlags = XR_COMPOSITION_LAYER_SETTINGS_QUALITY_SUPER_SAMPLING_BIT_FB;
         layer.next = &settings;
+    }
+}
+
+/**
+ * Rebuild the decode pipeline when an eye that had a stream stops producing frames although the robot is reachable
+ * and nothing is being lost. A pipeline could wedge when the robot re-created its encoders under it, as a live
+ * frame-rate change did. Frame-rate changes are now ordered rebuilds, and the watchdog stays as the safety net for a rebuild under
+ * loss that leaves an eye without frames. A wedged pipeline stops its own probes, so it looks like a link that carries
+ * nothing; the robot's reachability (the clock sync, which uses no video port) tells the two apart. The stall counts
+ * from the last loss too, so an eye only waiting for the key frame after a loss is left alone: 3 s is longer than a
+ * key-frame interval at 30 FPS. Rebuilds at most once every 5 s.
+ */
+void TelepresenceProgram::CheckReceiveWatchdog() {
+    constexpr uint64_t STALL_US = 3'000'000, CHECK_US = 250'000, MIN_INTERVAL_US = 5'000'000,
+                       LOSS_WINDOW_US = 1'000'000;
+    if (!ntpTimer_ || !lastAppliedConfig_) return;
+    const uint64_t now = ntpTimer_->GetCurrentTimeUs();
+    if (now - watchdogCheckedUs_ < CHECK_US) return;
+    watchdogCheckedUs_ = now;
+
+    CameraStats *eyes[2] = {appState_->cameraStreamingStates.first.stats, appState_->cameraStreamingStates.second.stats};
+    for (int i = 0; i < 2; i++) {   // loss over the last second, per eye (the counters restart on a rebuild)
+        if (!eyes[i] || now - watchdogLostUs_[i] < LOSS_WINDOW_US) continue;
+        const uint32_t lost = eyes[i]->jbNumLost.load(std::memory_order_relaxed);
+        if (lost != watchdogLost_[i]) watchdogLastLossUs_[i] = now;
+        watchdogLost_[i] = lost;
+        watchdogLostUs_[i] = now;
+    }
+    if (now - lastRebuildUs_ < MIN_INTERVAL_US) return;
+    if (!ntpTimer_->HasInitialOffset() || ntpTimer_->IsSyncStale()) return;   // the robot itself is out of reach
+
+    for (int i = 0; i < 2; i++) {
+        CameraStats *stats = eyes[i];
+        if (!stats) continue;
+        const uint64_t first = stats->firstPacketUs.load(std::memory_order_relaxed);
+        if (first == 0) continue;   // no stream on this eye yet (mono, or nothing sent since the last rebuild)
+        const CameraWindowSummary w = stats->windowSummary();
+        const uint64_t frame = w.frames ? static_cast<uint64_t>(w.newestUs) : 0;
+        // The stall is counted from the newest frame, the last rebuild, the first packet (a new pipeline that has not
+        // decoded anything yet) or the last loss (a decoder waiting for the key frame after a loss), whichever is latest
+        const uint64_t since = std::max({frame, lastRebuildUs_, first, watchdogLastLossUs_[i]});
+        if (since >= now || now - since <= STALL_US) continue;   // a frame can land after `now` was read
+        LOG_INFO("Watchdog: eye %d has no frame for %.1f s since its last frame, loss or rebuild, while the robot is "
+                 "reachable -> rebuilding the decode pipeline", i, (now - since) / 1e6);
+        ApplyStreamingConfig(*lastAppliedConfig_, true);
+        return;
     }
 }
 
@@ -993,27 +1040,29 @@ bool TelepresenceProgram::ApplyStreamingConfig(StreamingConfig cfg, bool rebuild
         ? classifyStreamConfigChange(*lastAppliedConfig_, cfg)
         : StreamConfigChange::Structural;  // no baseline yet, or asked to -> rebuild
 
-    // A codec change stops the decoder before the robot switches and builds the new one after, so a fresh decoder
-    // is never fed the previous codec's stream: fed H.264, a new H.265 decoder never configured and the video
-    // stalled (2026-10-14 and 10-20). Other structural changes keep the faster overlapped rebuild.
+    // A codec or frame-rate change stops the decoder before the robot switches and builds the new one after, so a
+    // decoder is never fed a changed stream: fed H.264, a new H.265 decoder never configured and the video stalled
+    // fed the stream of the robot's re-created encoders after a frame-rate change, a running
+    // decoder could stop taking packets. Other structural changes keep the faster overlapped
+    // rebuild.
     const bool ordered = change == StreamConfigChange::Structural && lastAppliedConfig_ &&
-                         lastAppliedConfig_->codec != cfg.codec;
+                         (lastAppliedConfig_->codec != cfg.codec || lastAppliedConfig_->fps != cfg.fps);
     int updateResult = 0;
     if (ordered) {
         videoPlayer_->stopPipelines();
         updateResult = restClient_->UpdateStreamingConfig(cfg);
-        LOG_INFO("Apply: codec change, decoder stopped and config sent before the rebuild");
+        LOG_INFO("Apply: codec or frame-rate change, decoder stopped and config sent before the rebuild");
     }
 
     switch (change) {
         case StreamConfigChange::Structural:
             LOG_INFO("Apply: structural change -> rebuilding decode pipeline + GL render targets");
+            lastRebuildUs_ = ntpTimer_ ? ntpTimer_->GetCurrentTimeUs() : 0;
             init_scene(cfg.resolution.getWidth(), cfg.resolution.getHeight(), true);
             videoPlayer_->configurePipelines(gstreamerThreadPool_, cfg);
             break;
         case StreamConfigChange::LiveOnly:
-            LOG_INFO("Apply: live-only change (bitrate/quality/fps) -> no rebuild, keeping pipeline");
-            videoPlayer_->setStreamFps(cfg.fps);
+            LOG_INFO("Apply: live-only change (bitrate/quality) -> no rebuild, keeping pipeline");
             break;
         case StreamConfigChange::None:
             LOG_INFO("Apply: no streaming-config change -> nothing to rebuild");

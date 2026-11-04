@@ -60,9 +60,6 @@ public:
     /** Stop both decode pipelines (state NULL) without releasing them; configurePipelines() rebuilds. */
     void stopPipelines();
 
-    /** A frame-rate change applied without a rebuild: update the stats window. */
-    void setStreamFps(int fps) { windowFrames_.store(fps > 0 ? fps : 60); }
-
 private:
 
     /** Callback context: camera pair for frame output, NTP timer for timestamps,

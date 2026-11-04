@@ -89,7 +89,8 @@ void AdaptationController::reportResult(uint64_t id, bool ok) {
             lastRecoverS_ = now;
         }
         lastActionS_[static_cast<int>(inFlightLever_)] = now;
-        const bool structural = inFlightLever_ == Lever::Resolution || inFlightLever_ == Lever::Mono;
+        const bool structural = inFlightLever_ == Lever::Resolution || inFlightLever_ == Lever::Mono ||
+                                inFlightLever_ == Lever::Fps;   // a frame-rate change rebuilds the headset decoders
         settleUntilS_ = now + (structural ? cfg_.settleStructuralS : cfg_.settleLiveS);
         nominalSinceS_ = -1.0;
         LOG_INFO("Adapt: applied id=%llu %s %s, stack depth %zu", (unsigned long long) id,
@@ -225,7 +226,7 @@ void AdaptationController::poll() {
     if (mode == AdaptMode::Off || pending_ || inFlightId_ != 0 || now < settleUntilS_) return;
 
     auto ready = [&](Lever l) {
-        const bool structural = l == Lever::Resolution || l == Lever::Mono;
+        const bool structural = l == Lever::Resolution || l == Lever::Mono || l == Lever::Fps;
         return now - lastActionS_[static_cast<int>(l)] >= (structural ? 10.0 : 3.0);
     };
     auto tryCascade = [&](std::initializer_list<Lever> levers, const char *why) {

@@ -925,6 +925,8 @@ void VideoPlayer::onRtpHeaderMetadata(GstElement *identity, GstBuffer *buffer, g
     gst_rtp_buffer_map(buffer, GST_MAP_READ, &rtp_buf);
     uint32_t rtpTs = gst_rtp_buffer_get_timestamp(&rtp_buf);
     uint64_t now = ntpTimer->GetCurrentTimeUs();
+    uint64_t none = 0;
+    stats->firstPacketUs.compare_exchange_strong(none, now, std::memory_order_relaxed);
 
     // The robot-side and network terms go into THIS frame's record, keyed by its
     // RTP timestamp, and are read back at the queue probe for the same frame. Writing

@@ -324,6 +324,7 @@ struct CameraStats {
     // the named rtpjitterbuffer "stats"; jitter/bitrate are computed at the udpsrc
     // probe. The *Win*/jitterPrev* accumulators are internal scratch for those
     // computations (written only by this stream's probe thread).
+    std::atomic<uint64_t> firstPacketUs{0};  // arrival of this pipeline's first RTP packet, NTP-corrected us (receive watchdog)
     std::atomic<uint32_t> jbNumLost{0};
     std::atomic<uint32_t> rtxCount{0};
     std::atomic<uint32_t> jitterUs{0};

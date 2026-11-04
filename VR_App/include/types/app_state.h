@@ -56,7 +56,7 @@ struct StreamingConfig {
  * - LiveOnly:   only bitrate / encoding quality changed. The robot updates the
  *               encoder in place and the headset keeps decoding the same stream,
  *               so neither side tears anything down (fast, no glitch).
- * - Structural: resolution, codec, video mode, ip, or ports changed. Both
+ * - Structural: resolution, codec, frame rate, video mode, ip, or ports changed. Both
  *               ends must rebuild: the robot re-launches its GStreamer pipeline
  *               (fresh SPS/keyframe at the new format) and the headset rebuilds
  *               its decode pipeline + GL render targets.
@@ -69,8 +69,11 @@ struct StreamingConfig {
  */
 enum class StreamConfigChange { None, LiveOnly, Structural };
 
-// A frame-rate change is live: the robot retimes in place (rate_capsfilter) and the headset keeps its
-// decoder (the decoder caps keep the old frame rate, which the decoder does not need to match).
+// A frame-rate change is structural on the headset. The robot retimes in place (rate_capsfilter), but that re-creates
+// its encoders, and a headset decoder fed the new stream in place could stop taking packets until a rebuild
+// Rebuilding a decoder in that state could crash GStreamer's
+// Android decoder element. So the headset stops its decoders before the robot changes and builds fresh ones after,
+// as for a codec change (TelepresenceProgram::ApplyStreamingConfig).
 inline StreamConfigChange classifyStreamConfigChange(const StreamingConfig& a,
                                                      const StreamingConfig& b) {
     const bool structural =
@@ -81,13 +84,13 @@ inline StreamConfigChange classifyStreamConfigChange(const StreamingConfig& a,
         a.codec      != b.codec ||
         a.resolution.getWidth()  != b.resolution.getWidth() ||
         a.resolution.getHeight() != b.resolution.getHeight() ||
-        a.videoMode  != b.videoMode;
+        a.videoMode  != b.videoMode ||
+        a.fps        != b.fps;
     if (structural) return StreamConfigChange::Structural;
 
     const bool live =
         a.bitrate != b.bitrate ||
-        a.encodingQuality != b.encodingQuality ||
-        a.fps != b.fps;
+        a.encodingQuality != b.encodingQuality;
     return live ? StreamConfigChange::LiveOnly : StreamConfigChange::None;
 }
 

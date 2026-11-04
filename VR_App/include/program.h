@@ -81,6 +81,7 @@ private:
     bool RenderPanelLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings);
     void RenderStatusLayer(XrCompositionLayerQuad &layer, XrCompositionLayerSettingsFB &settings);
     void UpdateStatusBar();
+    void CheckReceiveWatchdog();
     void SendSystemBroadcast(const char *action);
     void FacePanelToHead();
 
@@ -98,6 +99,11 @@ private:
     double statusBarUpdatedS_ = 0.0;     // UpdateStatusBar: last refresh, and the loss counter a second ago
     double lossCountedS_ = 0.0;
     uint32_t lossCount_ = 0;
+    uint64_t lastRebuildUs_ = 0;         // last structural rebuild of the decode pipeline (receive watchdog)
+    uint64_t watchdogCheckedUs_ = 0;
+    uint32_t watchdogLost_[2]{};          // each eye's jitter-buffer loss count, sampled once a second
+    uint64_t watchdogLostUs_[2]{};
+    uint64_t watchdogLastLossUs_[2]{};    // when a lost packet was last seen on each eye
 
     std::vector<XrSpace> reference_spaces_;
     XrSpace app_reference_space_;
