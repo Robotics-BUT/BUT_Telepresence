@@ -34,13 +34,13 @@ enum class AdaptMode { Off = 0, Stages = 1, Naive = 2 };
 struct AdaptConfig {
     double pollS{1.0};
     // Delivery: lost RTP packets per second (both eyes), delivered / configured frame rate, newest frame's age.
-    // Set from the quiet link of 2026-10-23 (stereo H.265 60 FPS 10 Mbit/s, lit scene): occasional 1-4 lost/s and
+    // Set from a quiet link (stereo H.265 60 FPS 10 Mbit/s, lit scene): occasional 1-4 lost/s and
     // delivery down to 0.97 with nothing wrong, so the "nominal" side leaves room for both; an 8 Mbit/s cap gives
     // hundreds of lost/s and ~3 FPS, a 1 % drop ~18 lost/s.
     double lossDownPerS{10.0}, lossUpPerS{3.0};
     double deliveryDownRatio{0.85}, deliveryUpRatio{0.95};
     double stallMs{300.0};
-    // Stage P95 over the window (ms). Quiet that day: network 3-9, encode 11-15, decode ~5.
+    // Stage P95 over the window (ms). On that quiet link: network 3-9, encode 11-15, decode ~5.
     double netDownMs{25.0}, netUpMs{15.0};
     double encDownMs{30.0}, encUpMs{25.0};
     double decDownMs{30.0}, decUpMs{25.0};

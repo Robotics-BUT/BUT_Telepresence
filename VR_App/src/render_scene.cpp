@@ -292,7 +292,7 @@ draw_controller_ray(const XrMatrix4x4f &vp, const std::shared_ptr<AppState> &app
     glUniformMatrix4fv(gui_shader_object.loc_mvp, 1, GL_FALSE, (const GLfloat *) &vp);
 
     // Client-side vertex arrays need the default VAO; with another one bound the attribute and index-buffer changes
-    // below would land in it (the video plane's VAO lost its index buffer and attributes this way on 2026-10-30)
+    // below would land in it (the video plane's VAO lost its index buffer and attributes this way)
     glBindVertexArray(0);
     float vertices[] = {
             panel.rayOrigin.x, panel.rayOrigin.y, panel.rayOrigin.z,

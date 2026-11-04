@@ -301,9 +301,9 @@ static void oesBlitOnGstGlThread(GstGLContext *ctx, gpointer data) {
 // ---------------------------------------------------------------------------
 // Publishing to the render thread. Every CameraFrame field the renderer reads
 // (hasGlTexture, glTexture, dataHandle contents, frameWidth/frameHeight) is
-// written only by these three functions, under frameMutex. On 2026-10-20 a
-// single write outside the lock (the decoder's texture target, set before the
-// copy) made the renderer sample the video pane black several times a second.
+// written only by these three functions, under frameMutex. A single write
+// outside the lock (the decoder's texture target, set before the copy) made the
+// renderer sample the video pane black several times a second.
 // ---------------------------------------------------------------------------
 
 /** HW path: copy the decoder's external-OES image into the frame's 2D texture and publish it. */
@@ -337,7 +337,7 @@ static void deleteCopyTargetOnGstGlThread(GstGLContext * /*ctx*/, gpointer data)
 /** Before a pipeline rebuild: drop the previous frame and size the CPU buffer for the new resolution.
  *  Runs after the pipelines are stopped. The copy texture and FBO are freed in the GstGL context that
  *  created them: an FBO name is only meaningful there, and a texture still attached to that FBO would
- *  stay allocated if deleted from here (each rebuild leaked two 1080p textures before 2026-10-20). */
+ *  stay allocated if deleted from here (each rebuild leaked two 1080p textures). */
 static void resetFrameForRebuild(CameraFrame &frame, int w, int h) {
     std::lock_guard<std::mutex> lk(frame.frameMutex);
     if (frame.hwBackingCtx) {
@@ -521,8 +521,7 @@ VideoPlayer::configureSinglePipeline(GstElement *pipeline, const char *pipelineN
 
         GstElement *dec_capsfilter = getElementOptional(pipeline, "dec_capsfilter");
         if (dec_capsfilter) {
-            // The frame rate stays in the caps even though a later frame-rate change keeps this
-            // decoder (fps_live): without it the H.265 decoder never configures (2026-10-20).
+            // The frame rate stays in the caps: without it the H.265 decoder never configures.
             GstCaps *decCaps = buildDecoderSrcCaps(config.codec,
                                                    config.resolution.getWidth(),
                                                    config.resolution.getHeight(),
@@ -886,7 +885,7 @@ VideoPlayer::newFrameCallback(GstElement *sink, GStreamerCallbackObj *callbackOb
         // consumer waits on its sync meta, or when the previous frame's buffer
         // is freed. Without the wait the blit copies the previous decoded
         // frame: one output frame of latency that no in-band probe sees
-        // (measured 2026-09-21: 15 ms off photon-to-photon at 60 FPS, 32 ms at
+        // (measured against photon-to-photon: 15 ms at 60 FPS, 32 ms at
         // 30 FPS; the wait itself costs about 1 ms).
         if (GstGLSyncMeta *syncMeta = gst_buffer_get_gl_sync_meta(buffer)) {
             gst_gl_sync_meta_wait(syncMeta, gl_ctx);

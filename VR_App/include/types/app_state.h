@@ -70,10 +70,10 @@ struct StreamingConfig {
 enum class StreamConfigChange { None, LiveOnly, Structural };
 
 // A frame-rate change is structural on the headset. The robot retimes in place (rate_capsfilter), but that re-creates
-// its encoders, and a headset decoder fed the new stream in place could stop taking packets until a rebuild
-// Rebuilding a decoder in that state could crash GStreamer's
-// Android decoder element. So the headset stops its decoders before the robot changes and builds fresh ones after,
-// as for a codec change (TelepresenceProgram::ApplyStreamingConfig).
+// its encoders, and a headset decoder fed the new stream in place could stop taking packets until a rebuild.
+// Rebuilding a decoder in that state could crash GStreamer's Android decoder element. So the headset stops its
+// decoders before the robot changes and builds fresh ones after, as for a codec change
+// (TelepresenceProgram::ApplyStreamingConfig).
 inline StreamConfigChange classifyStreamConfigChange(const StreamingConfig& a,
                                                      const StreamingConfig& b) {
     const bool structural =

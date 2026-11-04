@@ -288,13 +288,13 @@ void TelepresenceProgram::RenderStatusLayer(XrCompositionLayerQuad &layer, XrCom
 /**
  * Rebuild the decode pipeline when an eye that had a stream stops producing frames although the robot is reachable
  * and nothing is being lost. A pipeline could wedge when the robot re-created its encoders under it, as a live
- * frame-rate change did. Frame-rate changes are now ordered rebuilds, and the watchdog stays as the safety net for a rebuild under
- * loss that leaves an eye without frames. A wedged pipeline stops its own probes, so it looks like a link that carries
- * nothing; the robot's reachability (the clock sync, which uses no video port) tells the two apart. The stall counts
- * from the last loss too, so an eye only waiting for the key frame after a loss is left alone: 3 s is longer than a
- * key-frame interval at 30 FPS. Rebuilds at most once every 5 s, and while its rebuilds bring no frame (a camera dead
- * on the robot, a decoder that cannot start) the wait doubles up to a minute, since each rebuild also sends the
- * configuration to the robot.
+ * frame-rate change did. Frame-rate changes are now ordered rebuilds, and the watchdog stays as the safety net for a
+ * rebuild under loss that leaves an eye without frames. A wedged pipeline stops its own probes, so it looks like a link
+ * that carries nothing; the robot's reachability (the clock sync, which uses no video port) tells the two apart. The
+ * stall counts from the last loss too, so an eye only waiting for the key frame after a loss is left alone: 3 s is
+ * longer than a key-frame interval at 30 FPS. Rebuilds at most once every 5 s, and while its rebuilds bring no frame
+ * (a camera dead on the robot, a decoder that cannot start) the wait doubles up to a minute, since each rebuild also
+ * sends the configuration to the robot.
  */
 void TelepresenceProgram::CheckReceiveWatchdog() {
     constexpr uint64_t STALL_US = 3'000'000, CHECK_US = 250'000, MIN_INTERVAL_US = 5'000'000,
@@ -1054,10 +1054,9 @@ bool TelepresenceProgram::ApplyStreamingConfig(StreamingConfig cfg, bool rebuild
         : StreamConfigChange::Structural;  // no baseline yet, or asked to -> rebuild
 
     // A codec or frame-rate change stops the decoder before the robot switches and builds the new one after, so a
-    // decoder is never fed a changed stream: fed H.264, a new H.265 decoder never configured and the video stalled
-    // fed the stream of the robot's re-created encoders after a frame-rate change, a running
-    // decoder could stop taking packets. Other structural changes keep the faster overlapped
-    // rebuild.
+    // decoder is never fed a changed stream: fed H.264, a new H.265 decoder never configured and the video stalled;
+    // fed the stream of the robot's re-created encoders after a frame-rate change, a running decoder could stop taking
+    // packets. Other structural changes keep the faster overlapped rebuild.
     const bool ordered = change == StreamConfigChange::Structural && lastAppliedConfig_ &&
                          (lastAppliedConfig_->codec != cfg.codec || lastAppliedConfig_->fps != cfg.fps);
     int updateResult = 0;

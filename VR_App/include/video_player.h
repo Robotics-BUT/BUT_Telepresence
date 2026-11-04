@@ -28,7 +28,7 @@
 // HW decoder selection
 // 1 = Quest dedicated low-latency AVC/HEVC components.
 // 0 = stock decoders.
-// Stock is the default: against the photon-to-photon rig (2026-09-21) the
+// Stock is the default: against the photon-to-photon rig the
 // low-latency variants gave no measurable latency benefit on either codec, and
 // on HEVC at 30 FPS under packet loss they broke the per-frame keying of the
 // decode stage (decode term read 0-220 ms while the frames were on time).

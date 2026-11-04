@@ -48,7 +48,7 @@ inline constexpr const char *CAMERA_EXPOSURE_LOCK = "";
 // plain I-frames (non-IDR) and packet-loss corruption survives until the next real IDR.
 // Matching them gives a clean, complete reset every KEYFRAME_INTERVAL_FRAMES.
 //
-// REVERTED FROM CYCLIC INTRA-REFRESH 2026-07-31. The previous config was
+// REVERTED FROM CYCLIC INTRA-REFRESH. The previous config was
 // `iframeinterval=0 SliceIntraRefreshInterval=30`, i.e. NO IDR frames at all, with recovery
 // left entirely to a cyclic intra-refresh sweep. That is better for bitrate smoothness (no
 // keyframe spikes) but it does not actually clean up after loss on nvv4l2: without
