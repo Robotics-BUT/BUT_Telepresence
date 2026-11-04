@@ -104,6 +104,8 @@ private:
     uint32_t watchdogLost_[2]{};          // each eye's jitter-buffer loss count, sampled once a second
     uint64_t watchdogLostUs_[2]{};
     uint64_t watchdogLastLossUs_[2]{};    // when a lost packet was last seen on each eye
+    uint32_t watchdogStreak_ = 0;         // watchdog rebuilds in a row that brought no frame (backoff)
+    int watchdogEye_ = -1;                // the eye whose stall caused the last watchdog rebuild
 
     std::vector<XrSpace> reference_spaces_;
     XrSpace app_reference_space_;

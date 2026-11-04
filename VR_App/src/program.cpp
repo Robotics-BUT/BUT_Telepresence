@@ -292,11 +292,13 @@ void TelepresenceProgram::RenderStatusLayer(XrCompositionLayerQuad &layer, XrCom
  * loss that leaves an eye without frames. A wedged pipeline stops its own probes, so it looks like a link that carries
  * nothing; the robot's reachability (the clock sync, which uses no video port) tells the two apart. The stall counts
  * from the last loss too, so an eye only waiting for the key frame after a loss is left alone: 3 s is longer than a
- * key-frame interval at 30 FPS. Rebuilds at most once every 5 s.
+ * key-frame interval at 30 FPS. Rebuilds at most once every 5 s, and while its rebuilds bring no frame (a camera dead
+ * on the robot, a decoder that cannot start) the wait doubles up to a minute, since each rebuild also sends the
+ * configuration to the robot.
  */
 void TelepresenceProgram::CheckReceiveWatchdog() {
     constexpr uint64_t STALL_US = 3'000'000, CHECK_US = 250'000, MIN_INTERVAL_US = 5'000'000,
-                       LOSS_WINDOW_US = 1'000'000;
+                       MAX_INTERVAL_US = 60'000'000, LOSS_WINDOW_US = 1'000'000;
     if (!ntpTimer_ || !lastAppliedConfig_) return;
     const uint64_t now = ntpTimer_->GetCurrentTimeUs();
     if (now - watchdogCheckedUs_ < CHECK_US) return;
@@ -310,7 +312,15 @@ void TelepresenceProgram::CheckReceiveWatchdog() {
         watchdogLost_[i] = lost;
         watchdogLostUs_[i] = now;
     }
-    if (now - lastRebuildUs_ < MIN_INTERVAL_US) return;
+    if (watchdogEye_ >= 0 && eyes[watchdogEye_]) {   // the eye it rebuilt for shows a frame again: the streak ends
+        const CameraWindowSummary w = eyes[watchdogEye_]->windowSummary();
+        if (w.frames && static_cast<uint64_t>(w.newestUs) > lastRebuildUs_) {
+            watchdogStreak_ = 0;
+            watchdogEye_ = -1;
+        }
+    }
+    const uint64_t interval = std::min(MIN_INTERVAL_US << std::min<uint32_t>(watchdogStreak_, 4), MAX_INTERVAL_US);
+    if (now - lastRebuildUs_ < interval) return;
     if (!ntpTimer_->HasInitialOffset() || ntpTimer_->IsSyncStale()) return;   // the robot itself is out of reach
 
     for (int i = 0; i < 2; i++) {
@@ -325,7 +335,10 @@ void TelepresenceProgram::CheckReceiveWatchdog() {
         const uint64_t since = std::max({frame, lastRebuildUs_, first, watchdogLastLossUs_[i]});
         if (since >= now || now - since <= STALL_US) continue;   // a frame can land after `now` was read
         LOG_INFO("Watchdog: eye %d has no frame for %.1f s since its last frame, loss or rebuild, while the robot is "
-                 "reachable -> rebuilding the decode pipeline", i, (now - since) / 1e6);
+                 "reachable -> rebuilding the decode pipeline (rebuild %u in a row)", i, (now - since) / 1e6,
+                 watchdogStreak_ + 1);
+        watchdogStreak_++;
+        watchdogEye_ = i;
         ApplyStreamingConfig(*lastAppliedConfig_, true);
         return;
     }
