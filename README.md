@@ -2,7 +2,7 @@
 
 A low-latency standalone VR telepresence system for remote robot control. This system enables researchers to control a mobile robot through a Meta Quest VR headset with live camera streaming and head tracking. Supports stereo, mono, and panoramic (multi-camera) video modes.
 
-**Paper:** [[Preprint]](https://www.researchsquare.com/article/rs-8855703/v1)
+**Paper:** S. Svědiroh and L. Žalud, "BUT Telepresence: A Fully Open-Source VR Framework for Low-Latency Stereoscopic Video Streaming with End-to-End Latency Instrumentation," *Virtual Reality*, 2026. [doi:10.1007/s10055-026-01535-8](https://doi.org/10.1007/s10055-026-01535-8) (see [Citation](#citation))
 
 ## Architecture Overview
 
@@ -351,6 +351,23 @@ Export and visualize data:
 cd scripts
 python export_telemetry.py --output data.csv
 python visualize_telemetry.py data.csv
+```
+
+---
+
+# Citation
+
+If you use BUT Telepresence in your research, please cite:
+
+```bibtex
+@article{svediroh2026buttelepresence,
+  author  = {Sv{\v{e}}diroh, Stanislav and {\v{Z}}alud, Lud{\v{e}}k},
+  title   = {{BUT} Telepresence: A Fully Open-Source {VR} Framework for Low-Latency Stereoscopic Video Streaming
+             with End-to-End Latency Instrumentation},
+  journal = {Virtual Reality},
+  year    = {2026},
+  doi     = {10.1007/s10055-026-01535-8}
+}
 ```
 
 ---
